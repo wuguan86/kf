@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen } from 'ele
 import { join, dirname } from 'path'
 import { writeFile, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, execSync, type ChildProcessWithoutNullStreams } from 'child_process'
 import os from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 
@@ -10,13 +10,31 @@ let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let wechatBridgeProcess: ReturnType<typeof spawn> | null = null
 
-const getSidecarWeChatDir = (): string => {
-  const appPath = app.getAppPath()
-  const candidate = join(dirname(appPath), 'sidecar_wechat')
-  return candidate
+const killProcessTree = (pid: number): void => {
+  try {
+    if (process.platform === 'win32') {
+      execSync(`taskkill /pid ${pid} /T /F`)
+    } else {
+      process.kill(-pid) // Kill process group for Unix
+    }
+  } catch (e) {
+    // Ignore error if process already dead
+    console.log(`Failed to kill process ${pid}:`, e)
+  }
 }
 
-const getWeChatBridgeScript = (): string => {
+const getSidecarWeChatDir = (): string => {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'sidecar')
+  }
+  const appPath = app.getAppPath()
+  return join(dirname(appPath), 'sidecar_wechat')
+}
+
+const getWeChatBridgeExecutable = (): string => {
+  if (app.isPackaged) {
+    return join(getSidecarWeChatDir(), 'wechat_bridge.exe')
+  }
   return join(getSidecarWeChatDir(), 'wechat_bridge.py')
 }
 
@@ -375,33 +393,51 @@ ipcMain.handle('simulate-reply', async (_, { text, focusCoords, sendCoords }) =>
 
 ipcMain.handle('wechat-bridge-start', async () => {
   if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
-    await waitForWeChatBridgeReady(2000)
+    try {
+      await waitForWeChatBridgeReady(2000)
+    } catch (e) {
+    }
     return { ok: true }
   }
-  const scriptPath = getWeChatBridgeScript()
+  const execPath = getWeChatBridgeExecutable()
   const configPath = getWeChatBridgeConfig()
-  if (!existsSync(scriptPath)) {
-    return { ok: false, error: `wechat_bridge.py not found: ${scriptPath}` }
+
+  if (!existsSync(execPath)) {
+    return { ok: false, error: `WeChat bridge executable not found: ${execPath}` }
   }
   if (!existsSync(configPath)) {
     return { ok: false, error: `config.yaml not found: ${configPath}` }
   }
-  wechatBridgeProcess = spawn('python', [scriptPath, '--config', configPath], {
-    cwd: getSidecarWeChatDir(),
-    windowsHide: true
-  })
+
+  if (app.isPackaged) {
+    wechatBridgeProcess = spawn(execPath, ['--config', configPath], {
+      cwd: getSidecarWeChatDir(),
+      windowsHide: true
+    })
+  } else {
+    wechatBridgeProcess = spawn('python', [execPath, '--config', configPath], {
+      cwd: getSidecarWeChatDir(),
+      windowsHide: true
+    })
+  }
+
   wechatBridgeProcess.on('exit', () => {
     wechatBridgeProcess = null
   })
-  await waitForWeChatBridgeReady(8000)
+  try {
+    await waitForWeChatBridgeReady(8000)
+  } catch (e) {
+  }
   return { ok: true }
 })
 
 ipcMain.handle('wechat-bridge-stop', async () => {
-  if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
+  if (wechatBridgeProcess && wechatBridgeProcess.pid) {
     try {
-      wechatBridgeProcess.kill()
+      console.log('Stopping WeChat Bridge Process:', wechatBridgeProcess.pid)
+      killProcessTree(wechatBridgeProcess.pid)
     } catch (e) {
+      console.error('Failed to stop WeChat Bridge:', e)
     }
   }
   wechatBridgeProcess = null
@@ -453,10 +489,12 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
+  if (wechatBridgeProcess && wechatBridgeProcess.pid) {
     try {
-      wechatBridgeProcess.kill()
+      console.log('Killing WeChat Bridge before quit...')
+      killProcessTree(wechatBridgeProcess.pid)
     } catch (e) {
+      console.error('Failed to kill WeChat Bridge before quit:', e)
     }
   }
   wechatBridgeProcess = null

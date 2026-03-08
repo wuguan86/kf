@@ -25,6 +25,14 @@
       {
         "from": "resources/bin",
         "to": "bin"
+      },
+      {
+        "from": "../sidecar_wechat/dist",
+        "to": "sidecar",
+        "filter": [
+          "wechat_bridge.exe",
+          "config.yaml"
+        ]
       }
     ],
     "win": {

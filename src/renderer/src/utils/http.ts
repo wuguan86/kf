@@ -25,7 +25,7 @@ export interface HttpInstance extends AxiosInstance {
 }
 
 const http = axios.create({
-  baseURL: AppConfig.apiBaseUrl,
+  baseURL: AppConfig.apiBaseUrl.replace(/\/api\/?$/, '').replace(/\/$/, ''),
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json'
@@ -38,7 +38,7 @@ http.interceptors.request.use(
     const { token, tenantId } = readAuthSnapshot()
     const storedBaseUrl = localStorage.getItem('backendBaseUrl')
     if (storedBaseUrl) {
-      config.baseURL = storedBaseUrl
+      config.baseURL = storedBaseUrl.replace(/\/api\/?$/, '').replace(/\/$/, '')
     }
     if (token) {
       config.headers.Authorization = `Bearer ${token}`

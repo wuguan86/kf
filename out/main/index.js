@@ -9,12 +9,28 @@ const utils = require("@electron-toolkit/utils");
 let mainWindow = null;
 let captureWindow = null;
 let wechatBridgeProcess = null;
-const getSidecarWeChatDir = () => {
-  const appPath = electron.app.getAppPath();
-  const candidate = path.join(path.dirname(appPath), "sidecar_wechat");
-  return candidate;
+const killProcessTree = (pid) => {
+  try {
+    if (process.platform === "win32") {
+      child_process.execSync(`taskkill /pid ${pid} /T /F`);
+    } else {
+      process.kill(-pid);
+    }
+  } catch (e) {
+    console.log(`Failed to kill process ${pid}:`, e);
+  }
 };
-const getWeChatBridgeScript = () => {
+const getSidecarWeChatDir = () => {
+  if (electron.app.isPackaged) {
+    return path.join(process.resourcesPath, "sidecar");
+  }
+  const appPath = electron.app.getAppPath();
+  return path.join(path.dirname(appPath), "sidecar_wechat");
+};
+const getWeChatBridgeExecutable = () => {
+  if (electron.app.isPackaged) {
+    return path.join(getSidecarWeChatDir(), "wechat_bridge.exe");
+  }
   return path.join(getSidecarWeChatDir(), "wechat_bridge.py");
 };
 const getWeChatBridgeConfig = () => {
@@ -309,32 +325,47 @@ electron.ipcMain.handle("simulate-reply", async (_, { text, focusCoords, sendCoo
 });
 electron.ipcMain.handle("wechat-bridge-start", async () => {
   if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
-    await waitForWeChatBridgeReady(2e3);
+    try {
+      await waitForWeChatBridgeReady(2e3);
+    } catch (e) {
+    }
     return { ok: true };
   }
-  const scriptPath = getWeChatBridgeScript();
+  const execPath = getWeChatBridgeExecutable();
   const configPath = getWeChatBridgeConfig();
-  if (!fs.existsSync(scriptPath)) {
-    return { ok: false, error: `wechat_bridge.py not found: ${scriptPath}` };
+  if (!fs.existsSync(execPath)) {
+    return { ok: false, error: `WeChat bridge executable not found: ${execPath}` };
   }
   if (!fs.existsSync(configPath)) {
     return { ok: false, error: `config.yaml not found: ${configPath}` };
   }
-  wechatBridgeProcess = child_process.spawn("python", [scriptPath, "--config", configPath], {
-    cwd: getSidecarWeChatDir(),
-    windowsHide: true
-  });
+  if (electron.app.isPackaged) {
+    wechatBridgeProcess = child_process.spawn(execPath, ["--config", configPath], {
+      cwd: getSidecarWeChatDir(),
+      windowsHide: true
+    });
+  } else {
+    wechatBridgeProcess = child_process.spawn("python", [execPath, "--config", configPath], {
+      cwd: getSidecarWeChatDir(),
+      windowsHide: true
+    });
+  }
   wechatBridgeProcess.on("exit", () => {
     wechatBridgeProcess = null;
   });
-  await waitForWeChatBridgeReady(8e3);
+  try {
+    await waitForWeChatBridgeReady(8e3);
+  } catch (e) {
+  }
   return { ok: true };
 });
 electron.ipcMain.handle("wechat-bridge-stop", async () => {
-  if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
+  if (wechatBridgeProcess && wechatBridgeProcess.pid) {
     try {
-      wechatBridgeProcess.kill();
+      console.log("Stopping WeChat Bridge Process:", wechatBridgeProcess.pid);
+      killProcessTree(wechatBridgeProcess.pid);
     } catch (e) {
+      console.error("Failed to stop WeChat Bridge:", e);
     }
   }
   wechatBridgeProcess = null;
@@ -378,10 +409,12 @@ electron.app.on("window-all-closed", () => {
   }
 });
 electron.app.on("before-quit", () => {
-  if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
+  if (wechatBridgeProcess && wechatBridgeProcess.pid) {
     try {
-      wechatBridgeProcess.kill();
+      console.log("Killing WeChat Bridge before quit...");
+      killProcessTree(wechatBridgeProcess.pid);
     } catch (e) {
+      console.error("Failed to kill WeChat Bridge before quit:", e);
     }
   }
   wechatBridgeProcess = null;
