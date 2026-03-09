@@ -175,7 +175,7 @@ function LoginPage(props: Props): JSX.Element {
               <div className="wechat-status">{statusText || '准备中...'}</div>
 
               <div className="wechat-actions">
-                <button className="btn-ghost-purple" type="button" onClick={refreshQrCode} disabled={isLoadingQr}>
+                <button className="btn-ghost-blue" type="button" onClick={refreshQrCode} disabled={isLoadingQr}>
                   {isLoadingQr ? '刷新中...' : '刷新二维码'}
                 </button>
               </div>

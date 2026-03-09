@@ -9,6 +9,8 @@ const utils = require("@electron-toolkit/utils");
 let mainWindow = null;
 let captureWindow = null;
 let wechatBridgeProcess = null;
+let wechatBridgeReady = false;
+let wechatBridgeLastError = "";
 const killProcessTree = (pid) => {
   try {
     if (process.platform === "win32") {
@@ -327,9 +329,19 @@ electron.ipcMain.handle("wechat-bridge-start", async () => {
   if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
     try {
       await waitForWeChatBridgeReady(2e3);
+      wechatBridgeReady = true;
+      wechatBridgeLastError = "";
+      return { ok: true };
     } catch (e) {
+      if (wechatBridgeProcess.pid) {
+        try {
+          killProcessTree(wechatBridgeProcess.pid);
+        } catch (_) {
+        }
+      }
+      wechatBridgeProcess = null;
+      wechatBridgeReady = false;
     }
-    return { ok: true };
   }
   const execPath = getWeChatBridgeExecutable();
   const configPath = getWeChatBridgeConfig();
@@ -350,12 +362,23 @@ electron.ipcMain.handle("wechat-bridge-start", async () => {
       windowsHide: true
     });
   }
+  wechatBridgeReady = false;
+  wechatBridgeLastError = "";
+  wechatBridgeProcess.on("error", (err) => {
+    wechatBridgeReady = false;
+    wechatBridgeLastError = err?.message || "spawn_failed";
+  });
   wechatBridgeProcess.on("exit", () => {
     wechatBridgeProcess = null;
+    wechatBridgeReady = false;
   });
   try {
     await waitForWeChatBridgeReady(8e3);
+    wechatBridgeReady = true;
   } catch (e) {
+    wechatBridgeReady = false;
+    wechatBridgeLastError = e?.message || "bridge_not_ready";
+    return { ok: false, error: wechatBridgeLastError };
   }
   return { ok: true };
 });
@@ -369,28 +392,48 @@ electron.ipcMain.handle("wechat-bridge-stop", async () => {
     }
   }
   wechatBridgeProcess = null;
+  wechatBridgeReady = false;
+  wechatBridgeLastError = "";
   return { ok: true };
 });
 electron.ipcMain.handle("wechat-bridge-poll", async () => {
-  const res = await fetch(`${getWeChatBridgeBaseUrl()}/poll`, { method: "GET" });
-  const text = await res.text();
   try {
-    return JSON.parse(text);
+    if (!wechatBridgeProcess || wechatBridgeProcess.killed || !wechatBridgeReady) {
+      return { ok: false, error: wechatBridgeLastError || "bridge_not_ready", messages: [] };
+    }
+    const res = await fetch(`${getWeChatBridgeBaseUrl()}/poll`, { method: "GET" });
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return { ok: false, error: "invalid_json", raw: text, messages: [] };
+    }
   } catch (e) {
-    return { ok: false, error: "invalid_json", raw: text };
+    wechatBridgeReady = false;
+    wechatBridgeLastError = e?.message || "bridge_unreachable";
+    return { ok: false, error: wechatBridgeLastError, messages: [] };
   }
 });
 electron.ipcMain.handle("wechat-bridge-send", async (_, payload) => {
-  const res = await fetch(`${getWeChatBridgeBaseUrl()}/command`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const text = await res.text();
   try {
-    return JSON.parse(text);
+    if (!wechatBridgeProcess || wechatBridgeProcess.killed || !wechatBridgeReady) {
+      return { ok: false, error: wechatBridgeLastError || "bridge_not_ready" };
+    }
+    const res = await fetch(`${getWeChatBridgeBaseUrl()}/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return { ok: false, error: "invalid_json", raw: text };
+    }
   } catch (e) {
-    return { ok: false, error: "invalid_json", raw: text };
+    wechatBridgeReady = false;
+    wechatBridgeLastError = e?.message || "bridge_unreachable";
+    return { ok: false, error: wechatBridgeLastError };
   }
 });
 electron.app.whenReady().then(() => {
@@ -418,4 +461,6 @@ electron.app.on("before-quit", () => {
     }
   }
   wechatBridgeProcess = null;
+  wechatBridgeReady = false;
+  wechatBridgeLastError = "";
 });

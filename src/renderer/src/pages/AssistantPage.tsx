@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import http from '../utils/http'
+import { readAuthSnapshot } from '../auth/authStore'
+import { ProcessVisualizer, ProcessItem, ProcessStep } from '../components/ProcessVisualizer'
+import '../components/ProcessVisualizer.css'
+import { AppConfig } from '../config'
 
 type CaptureBounds = { x: number; y: number; w: number; h: number }
 type Task = { id: number; name: string; content: string; status: string; type: string }
@@ -394,6 +398,7 @@ function AssistantPage(props: Props): JSX.Element {
   const [isRunning, setIsRunning] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [difyResponse, setDifyResponse] = useState<string>('')
+  const [processItems, setProcessItems] = useState<ProcessItem[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isSending, setIsSending] = useState(false)
   const [activeTask, setActiveTask] = useState<Task | null>(null)
@@ -405,6 +410,7 @@ function AssistantPage(props: Props): JSX.Element {
   const activeTaskRef = useRef<Task | null>(null)
   const contactQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const lastProcessedByContactRef = useRef<Map<string, { text: string; at: number }>>(new Map())
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const fetchRunningTask = async (): Promise<Task | null> => {
     try {
@@ -495,40 +501,162 @@ function AssistantPage(props: Props): JSX.Element {
     lastProcessedByContactRef.current.set(contact, { text: normalizedText, at: now })
 
     setIsSending(true)
-    setDifyResponse('正在思考...')
+    setDifyResponse('')
+    
+    // 初始化可视化流程
+    const initialItems: ProcessItem[] = [{
+      id: `step-intent-${now}`,
+      step: 'INTENT',
+      status: 'running',
+      content: '正在分析用户意图...',
+      timestamp: new Date().toLocaleTimeString()
+    }]
+    setProcessItems(initialItems)
 
     try {
       const task = activeTaskRef.current
       if (!task?.id) {
         setDifyResponse('请先在任务设置中开启一个任务')
+        setProcessItems([])
         return
       }
-      const res = await http.post<{ answer: string }>(
-        '/api/user/dify/monitor-chat',
-        {
+
+      // Abort previous request if any
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+      const ac = new AbortController()
+      abortControllerRef.current = ac
+
+      const { token, tenantId } = readAuthSnapshot()
+      const storedBaseUrl = localStorage.getItem('backendBaseUrl')
+      const baseURL = (storedBaseUrl || AppConfig.apiBaseUrl).replace(/\/api\/?$/, '').replace(/\/$/, '')
+      
+      const response = await fetch(`${baseURL}/api/user/dify/monitor-chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+          'X-Tenant-Id': tenantId || ''
+        },
+        body: JSON.stringify({
           taskId: task.id,
           message: normalizedText,
           role: task.content || '',
           wechatContact: contact
-        }
-      )
-      // res is the data object directly
-      const reply = (res as any).answer
-      setDifyResponse(reply)
-      if (reply) {
-        const api = (window as any).api
-        const sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
-        if (!sendRes?.ok || sendRes?.success === false) {
-          setDifyResponse(reply + '\n\n(自动发送失败)')
-        } else {
-          setLastReplied({ contact, text: reply, at: Date.now() })
+        }),
+        signal: ac.signal
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('Response body is null')
+      
+      const decoder = new TextDecoder()
+      let buffer = ''
+      const localItems = [...initialItems]
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            const jsonStr = line.replace('data:', '').trim()
+            if (!jsonStr) continue
+            
+            try {
+              const data = JSON.parse(jsonStr)
+              const { step, content } = data
+              
+              if (step === 'INTENT') {
+                const item = localItems.find(i => i.step === 'INTENT')
+                if (item) {
+                  item.status = 'completed'
+                  item.content = content
+                }
+                if (!localItems.find(i => i.step === 'KNOWLEDGE')) {
+                  localItems.push({
+                    id: `step-knowledge-${Date.now()}`,
+                    step: 'KNOWLEDGE',
+                    status: 'running',
+                    content: '正在检索知识库...',
+                    timestamp: new Date().toLocaleTimeString()
+                  })
+                }
+              } else if (step === 'KNOWLEDGE') {
+                const item = localItems.find(i => i.step === 'KNOWLEDGE')
+                if (item) {
+                  item.status = 'completed'
+                  item.content = content
+                }
+                if (!localItems.find(i => i.step === 'LOGIC')) {
+                  localItems.push({
+                    id: `step-logic-${Date.now()}`,
+                    step: 'LOGIC',
+                    status: 'running',
+                    content: '正在规划回复逻辑...',
+                    timestamp: new Date().toLocaleTimeString()
+                  })
+                }
+              } else if (step === 'LOGIC') {
+                const item = localItems.find(i => i.step === 'LOGIC')
+                if (item) {
+                  item.status = 'completed'
+                  item.content = content
+                }
+                if (!localItems.find(i => i.step === 'OUTPUT')) {
+                  localItems.push({
+                    id: `step-output-${Date.now()}`,
+                    step: 'OUTPUT',
+                    status: 'running',
+                    content: '正在生成最终回复...',
+                    timestamp: new Date().toLocaleTimeString()
+                  })
+                }
+              } else if (step === 'OUTPUT') {
+                const item = localItems.find(i => i.step === 'OUTPUT')
+                if (item) {
+                  item.status = 'completed'
+                  item.content = content
+                }
+                
+                // Send WeChat Message
+                const reply = content
+                if (reply) {
+                   const api = (window as any).api
+                   const sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
+                   if (!sendRes?.ok || sendRes?.success === false) {
+                     setDifyResponse(reply + '\n\n(自动发送失败)')
+                   } else {
+                     setLastReplied({ contact, text: reply, at: Date.now() })
+                   }
+                }
+              }
+              
+              setProcessItems([...localItems])
+            } catch (e) {
+              console.error('Error parsing SSE data', e)
+            }
+          }
         }
       }
+
     } catch (err: any) {
-      // http.ts handles 401 logout
+      if (err.name === 'AbortError') return
       setDifyResponse('发送失败: ' + (err.message || 'Error'))
+      // Mark running items as failed (or just leave them)
+      setProcessItems(prev => prev.map(i => i.status === 'running' ? { ...i, status: 'completed', content: '发生错误: ' + err.message } : i))
     } finally {
       setIsSending(false)
+      abortControllerRef.current = null
     }
   }
 
@@ -709,12 +837,16 @@ function AssistantPage(props: Props): JSX.Element {
               </div>
             </div>
 
-            {difyResponse && (
+            {(processItems.length > 0 || difyResponse) && (
               <div className="card-divider">
-                <h5 className="section-title">🤖 AI 建议</h5>
-                <div className="ai-response-box">
-                  {difyResponse}
-                </div>
+                <h5 className="section-title">🤖 AI 思考过程</h5>
+                {processItems.length > 0 ? (
+                  <ProcessVisualizer items={processItems} />
+                ) : (
+                  <div className="ai-response-box">
+                    {difyResponse}
+                  </div>
+                )}
               </div>
             )}
 
