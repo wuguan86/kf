@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchWeChatLoginStatus, fetchWeChatQrCode } from '../auth/wechatLogin'
 import TitleBar from '../components/TitleBar'
+import styles from './LoginPage.module.css'
 
 type Props = {
   backendBaseUrl: string
@@ -121,61 +122,61 @@ function LoginPage(props: Props): JSX.Element {
   }, [])
 
   return (
-    <div className="login-page">
+    <div className={styles.loginPage}>
       <TitleBar />
-      <div className="login-surface">
-        <div className="login-brand">
-          <div className="login-logo">
-            <div className="login-logo-mark">视界</div>
+      <div className={styles.loginSurface}>
+        <div className={styles.loginBrand}>
+          <div className={styles.loginLogo}>
+            <div className={styles.loginLogoMark}>视界</div>
           </div>
-          <div className="login-subtitle">{subtitle}</div>
+          <div className={styles.loginSubtitle}>{subtitle}</div>
         </div>
 
-        <div className="login-actions">
-          <button className="login-wechat-btn" type="button" onClick={handleWeChatLogin}>
+        <div className={styles.loginActions}>
+          <button className={styles.loginWechatBtn} type="button" onClick={handleWeChatLogin}>
             微信登录
           </button>
           
-          <div className="login-compliance">
+          <div className={styles.loginCompliance}>
             <input 
               type="checkbox" 
               id="compliance-check" 
-              className="compliance-checkbox"
+              className={styles.complianceCheckbox}
               checked={isAgreed} 
               onChange={(e) => setIsAgreed(e.target.checked)}
             />
             <label htmlFor="compliance-check">
-              登录即代表同意<span className="protocol-link">服务协议</span>和<span className="protocol-link">隐私政策</span>
+              登录即代表同意<span className={styles.protocolLink}>服务协议</span>和<span className={styles.protocolLink}>隐私政策</span>
             </label>
           </div>
 
-          <div className="login-hint">扫码登录后自动进入主界面</div>
-          {errorText && <div className="login-hint" style={{ color: '#ff4d4f' }}>{errorText}</div>}
+          <div className={styles.loginHint}>扫码登录后自动进入主界面</div>
+          {errorText && <div className={styles.loginHint} style={{ color: '#ff4d4f' }}>{errorText}</div>}
         </div>
       </div>
 
       {isModalOpen && (
-        <div className="wechat-modal-mask" role="dialog" aria-modal="true">
-          <div className="wechat-modal">
-            <div className="wechat-modal-header">
-              <div className="wechat-modal-title">微信扫码登录</div>
-              <button className="wechat-modal-close" type="button" onClick={closeModal}>
+        <div className={styles.wechatModalMask} role="dialog" aria-modal="true">
+          <div className={styles.wechatModal}>
+            <div className={styles.wechatModalHeader}>
+              <div className={styles.wechatModalTitle}>微信扫码登录</div>
+              <button className={styles.wechatModalClose} type="button" onClick={closeModal}>
                 ×
               </button>
             </div>
 
-            <div className="wechat-modal-body">
-              <div className="wechat-qr">
+            <div className={styles.wechatModalBody}>
+              <div className={styles.wechatQr}>
                 {qrDataUrl ? (
                   <img src={qrDataUrl} alt="wechat-qrcode" style={{ width: 260, height: 260, borderRadius: 12 }} />
                 ) : (
-                  <div className="wechat-qr-placeholder">{isLoadingQr ? '加载中...' : '暂无二维码'}</div>
+                  <div className={styles.wechatQrPlaceholder}>{isLoadingQr ? '加载中...' : '暂无二维码'}</div>
                 )}
               </div>
-              <div className="wechat-status">{statusText || '准备中...'}</div>
+              <div className={styles.wechatStatus}>{statusText || '准备中...'}</div>
 
-              <div className="wechat-actions">
-                <button className="btn-ghost-blue" type="button" onClick={refreshQrCode} disabled={isLoadingQr}>
+              <div className={styles.wechatActions}>
+                <button className={styles.btnGhostBlue} type="button" onClick={refreshQrCode} disabled={isLoadingQr}>
                   {isLoadingQr ? '刷新中...' : '刷新二维码'}
                 </button>
               </div>

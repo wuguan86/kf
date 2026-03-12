@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import styles from './Capture.module.css'
 
 const Capture: React.FC = () => {
   const [isSelecting, setIsSelecting] = useState(false)
@@ -144,15 +145,7 @@ const Capture: React.FC = () => {
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        cursor: 'crosshair',
-        backgroundColor: 'transparent'
-      }}
+      className={styles.captureCanvas}
     />
   )
 }

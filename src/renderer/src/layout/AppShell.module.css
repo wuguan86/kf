@@ -1,0 +1,168 @@
+
+/* --- Layout --- */
+
+.appShell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.appSidebar {
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-sidebar);
+  border-right: 1px solid var(--border-subtle);
+  z-index: 10;
+  transition: var(--transition-smooth);
+}
+
+.appBrand {
+  padding: 40px 24px 32px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.appBrandAvatar {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, var(--color-primary), #69b1ff);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 18px;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.3);
+  font-family: var(--font-display);
+}
+
+.appBrandTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.appNav {
+  flex: 1;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.navItem {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  transition: var(--transition-base);
+  border: 1px solid transparent;
+}
+
+.navItem:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+  color: var(--text-main);
+}
+
+.navItem.active {
+  background: rgba(22, 119, 255, 0.08);
+  color: var(--color-primary);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(22, 119, 255, 0.1);
+}
+
+.navItem.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-primary);
+  box-shadow: 2px 0 8px rgba(22, 119, 255, 0.4);
+}
+
+.navItem.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 100px;
+  background: linear-gradient(90deg, rgba(22, 119, 255, 0.05), transparent);
+  pointer-events: none;
+}
+
+.navIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.navLabel {
+  font-weight: 500;
+}
+
+.navIconSvg {
+  width: 20px;
+  height: 20px;
+  opacity: 0.7;
+}
+
+.navItem.active .navIconSvg {
+  opacity: 1;
+  color: var(--color-primary);
+  filter: drop-shadow(0 0 5px rgba(22, 119, 255, 0.2));
+}
+
+.appNavFooter {
+  /* Added missing style if needed, or just container */
+  padding: 0 16px 16px;
+}
+
+.navAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: var(--transition-base);
+}
+
+.navItem:hover .navAvatar, .navItem.active .navAvatar {
+  background: linear-gradient(135deg, var(--color-primary), #69b1ff);
+  color: white;
+  border-color: transparent;
+}
+
+.appMain {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.appContent {
+  flex: 1;
+  overflow: auto;
+  padding: 32px 0 0 0;
+  scroll-behavior: smooth;
+}

@@ -2,11 +2,33 @@ import React, { useEffect, useRef, useState } from 'react'
 import http from '../utils/http'
 import { readAuthSnapshot } from '../auth/authStore'
 import { ProcessVisualizer, ProcessItem, ProcessStep } from '../components/ProcessVisualizer'
-import '../components/ProcessVisualizer.css'
+import styles from './AssistantPage.module.css'
 import { AppConfig } from '../config'
 
 type CaptureBounds = { x: number; y: number; w: number; h: number }
-type Task = { id: number; name: string; content: string; status: string; type: string }
+type Role = { id: number; name: string; content: string; status: string }
+type SessionConfig = {
+  sceneConfig: {
+    replyIntervalStartSec: number
+    replyIntervalEndSec: number
+  }
+}
+type MarketingLikeConfig = {
+  enabled: boolean
+  likeIntervalStart: number
+  likeIntervalEnd: number
+  maxDailyLikesPerFriend: number
+  maxDailyTotalLikes: number
+  keywordFilter: string[]
+}
+type MarketingCommentConfig = {
+  enabled: boolean
+  commentIntervalStart: number
+  commentIntervalEnd: number
+  maxDailyCommentsPerFriend: number
+  maxDailyTotalComments: number
+  keywordFilter: string[]
+}
 type ChatMessage = {
   id: string
   contact: string
@@ -168,6 +190,34 @@ const getCleanText = (items: any[], bounds: any, realImageSize?: { w: number; h:
 
 const normalizeMessage = (text: string): string => {
   return text.replace(/\s+/g, ' ').replace(/\u200B/g, '').trim()
+}
+
+const normalizeLikeConfig = (raw: any): MarketingLikeConfig => {
+  const start = Math.max(1, Number(raw?.likeIntervalStart ?? 60) || 60)
+  const endCandidate = Math.max(1, Number(raw?.likeIntervalEnd ?? start) || start)
+  const end = endCandidate < start ? start : endCandidate
+  return {
+    enabled: Boolean(raw?.enabled),
+    likeIntervalStart: start,
+    likeIntervalEnd: end,
+    maxDailyLikesPerFriend: Math.max(1, Number(raw?.maxDailyLikesPerFriend ?? 3) || 3),
+    maxDailyTotalLikes: Math.max(1, Number(raw?.maxDailyTotalLikes ?? 100) || 100),
+    keywordFilter: Array.isArray(raw?.keywordFilter) ? raw.keywordFilter.map((item: any) => String(item)) : []
+  }
+}
+
+const normalizeCommentConfig = (raw: any): MarketingCommentConfig => {
+  const start = Math.max(1, Number(raw?.commentIntervalStart ?? 120) || 120)
+  const endCandidate = Math.max(1, Number(raw?.commentIntervalEnd ?? start) || start)
+  const end = endCandidate < start ? start : endCandidate
+  return {
+    enabled: Boolean(raw?.enabled),
+    commentIntervalStart: start,
+    commentIntervalEnd: end,
+    maxDailyCommentsPerFriend: Math.max(1, Number(raw?.maxDailyCommentsPerFriend ?? 3) || 3),
+    maxDailyTotalComments: Math.max(1, Number(raw?.maxDailyTotalComments ?? 50) || 50),
+    keywordFilter: Array.isArray(raw?.keywordFilter) ? raw.keywordFilter.map((item: any) => String(item)) : []
+  }
 }
 
 const buildAutoSendPayload = (
@@ -380,7 +430,7 @@ const PlayIcon = () => (
 )
 
 const LoaderIcon = () => (
-  <svg className="icon-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <svg className={styles.iconSpin} width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M12 2V6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
     <path d="M12 18V22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
     <path d="M4.93 4.93L7.76 7.76" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -401,27 +451,63 @@ function AssistantPage(props: Props): JSX.Element {
   const [processItems, setProcessItems] = useState<ProcessItem[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isSending, setIsSending] = useState(false)
-  const [activeTask, setActiveTask] = useState<Task | null>(null)
+  const [activeRole, setActiveRole] = useState<Role | null>(null)
   const [lastReplied, setLastReplied] = useState<{ contact: string; text: string; at: number } | null>(null)
+  const [managedMode, setManagedMode] = useState<'full' | 'semi'>('full')
+  const managedModeRef = useRef<'full' | 'semi'>('full')
+
+  useEffect(() => {
+    managedModeRef.current = managedMode
+  }, [managedMode])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const marketingLikeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const marketingCommentTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isRunningRef = useRef(false)
-  const activeTaskRef = useRef<Task | null>(null)
+  const activeRoleRef = useRef<Role | null>(null)
+  const sessionConfigRef = useRef<SessionConfig | null>(null)
   const contactQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const lastProcessedByContactRef = useRef<Map<string, { text: string; at: number }>>(new Map())
   const abortControllerRef = useRef<AbortController | null>(null)
 
-  const fetchRunningTask = async (): Promise<Task | null> => {
+  const fetchRunningRole = async (): Promise<Role | null> => {
     try {
-      const res = await http.get<Task[]>('/api/user/tasks')
-      // http.ts returns res.data directly if success, which is Task[]
-      const tasks = res as unknown as Task[]
-      const running = tasks.find((task) => task.status === 'RUNNING') || null
-      setActiveTask(running)
+      const res = await http.get<Role[]>('/api/user/roles')
+      // http.ts returns res.data directly if success, which is Role[]
+      const roles = res as unknown as Role[]
+      const running = roles.find((role) => role.status === 'RUNNING') || null
+      setActiveRole(running)
       return running
     } catch (error) {
-      setActiveTask(null)
+      setActiveRole(null)
+      return null
+    }
+  }
+
+  const fetchSessionConfig = async () => {
+    try {
+      const res = await http.get<SessionConfig>('/api/user/session-management/config?sceneType=SINGLE')
+      sessionConfigRef.current = res as unknown as SessionConfig
+    } catch (e) {
+      console.error('Failed to fetch session config', e)
+    }
+  }
+
+  const fetchLikeConfig = async (): Promise<MarketingLikeConfig | null> => {
+    try {
+      const res = await http.get<MarketingLikeConfig>('/api/user/marketing/like')
+      return normalizeLikeConfig(res)
+    } catch (e) {
+      return null
+    }
+  }
+
+  const fetchCommentConfig = async (): Promise<MarketingCommentConfig | null> => {
+    try {
+      const res = await http.get<MarketingCommentConfig>('/api/user/marketing/comment')
+      return normalizeCommentConfig(res)
+    } catch (e) {
       return null
     }
   }
@@ -431,14 +517,15 @@ function AssistantPage(props: Props): JSX.Element {
   }, [isRunning])
 
   useEffect(() => {
-    activeTaskRef.current = activeTask
-  }, [activeTask])
+    activeRoleRef.current = activeRole
+  }, [activeRole])
 
   useEffect(() => {
     if (backendBaseUrl && userToken) {
-      fetchRunningTask()
+      fetchRunningRole()
+      fetchSessionConfig()
     } else {
-      setActiveTask(null)
+      setActiveRole(null)
     }
   }, [backendBaseUrl, userToken])
 
@@ -514,9 +601,9 @@ function AssistantPage(props: Props): JSX.Element {
     setProcessItems(initialItems)
 
     try {
-      const task = activeTaskRef.current
-      if (!task?.id) {
-        setDifyResponse('请先在任务设置中开启一个任务')
+      const role = activeRoleRef.current
+      if (!role?.id) {
+        setDifyResponse('请先在角色配置中开启一个角色')
         setProcessItems([])
         return
       }
@@ -540,9 +627,9 @@ function AssistantPage(props: Props): JSX.Element {
           'X-Tenant-Id': tenantId || ''
         },
         body: JSON.stringify({
-          taskId: task.id,
+          roleId: role.id,
           message: normalizedText,
-          role: task.content || '',
+          role: role.content || '',
           wechatContact: contact
         }),
         signal: ac.signal
@@ -630,7 +717,22 @@ function AssistantPage(props: Props): JSX.Element {
                 
                 // Send WeChat Message
                 const reply = content
-                if (reply) {
+                if (reply && managedModeRef.current === 'full') {
+                   // Calculate delay based on session config
+                   const config = sessionConfigRef.current?.sceneConfig
+                   if (config) {
+                     const min = (config.replyIntervalStartSec || 0) * 1000
+                     const max = (config.replyIntervalEndSec || 0) * 1000
+                     if (max >= min && min >= 0) {
+                       const delayMs = Math.floor(min + Math.random() * (max - min))
+                       const elapsed = Date.now() - now
+                       if (delayMs > elapsed) {
+                         const waitTime = delayMs - elapsed
+                         await new Promise(resolve => setTimeout(resolve, waitTime))
+                       }
+                     }
+                   }
+
                    const api = (window as any).api
                    const sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
                    if (!sendRes?.ok || sendRes?.success === false) {
@@ -699,6 +801,112 @@ function AssistantPage(props: Props): JSX.Element {
     }
   }, [isRunning])
 
+  useEffect(() => {
+    if (marketingLikeTimeoutRef.current) {
+      clearTimeout(marketingLikeTimeoutRef.current)
+      marketingLikeTimeoutRef.current = null
+    }
+    if (!isRunning) {
+      return
+    }
+
+    const loop = async () => {
+      if (!isRunningRef.current) return
+      let nextDelay = 90_000
+      try {
+        const likeConfig = await fetchLikeConfig()
+        if (likeConfig && likeConfig.enabled) {
+          const minMs = likeConfig.likeIntervalStart * 1000
+          const maxMs = likeConfig.likeIntervalEnd * 1000
+          nextDelay = minMs + Math.floor(Math.random() * Math.max(1, maxMs - minMs + 1))
+          
+          if (managedModeRef.current === 'full') {
+            const api = (window as any).api
+            if (api?.executeWeChatCommand) {
+              await api.executeWeChatCommand({
+                action: 'marketing_like',
+                config: likeConfig
+              })
+            }
+          }
+        }
+      } catch (e) {
+      } finally {
+        if (isRunningRef.current) {
+          marketingLikeTimeoutRef.current = setTimeout(loop, nextDelay)
+        }
+      }
+    }
+
+    marketingLikeTimeoutRef.current = setTimeout(loop, 8_000)
+    return () => {
+      if (marketingLikeTimeoutRef.current) {
+        clearTimeout(marketingLikeTimeoutRef.current)
+      }
+    }
+  }, [isRunning])
+
+  useEffect(() => {
+    if (marketingCommentTimeoutRef.current) {
+      clearTimeout(marketingCommentTimeoutRef.current)
+      marketingCommentTimeoutRef.current = null
+    }
+    if (!isRunning) {
+      return
+    }
+
+    const loop = async () => {
+      if (!isRunningRef.current) return
+      let nextDelay = 120_000
+      try {
+        const commentConfig = await fetchCommentConfig()
+        if (commentConfig && commentConfig.enabled) {
+          const minMs = commentConfig.commentIntervalStart * 1000
+          const maxMs = commentConfig.commentIntervalEnd * 1000
+          nextDelay = minMs + Math.floor(Math.random() * Math.max(1, maxMs - minMs + 1))
+          
+          if (managedModeRef.current === 'full') {
+            const { token } = readAuthSnapshot()
+            const storedBaseUrl = localStorage.getItem('backendBaseUrl')
+            const baseURL = (storedBaseUrl || AppConfig.apiBaseUrl).replace(/\/api\/?$/, '').replace(/\/$/, '')
+
+            const api = (window as any).api
+            if (api?.executeWeChatCommand) {
+              console.log('开始朋友圈自动评论任务', { enabled: commentConfig.enabled })
+              await api.executeWeChatCommand({
+                action: 'marketing_comment',
+                config: {
+                  ...commentConfig,
+                  backendUrl: baseURL,
+                  token: token,
+                  tenantId: tenantId
+                }
+              })
+            }
+          }
+        }
+      } catch (e) {
+      } finally {
+        if (isRunningRef.current) {
+          marketingCommentTimeoutRef.current = setTimeout(loop, nextDelay)
+        }
+      }
+    }
+
+    marketingCommentTimeoutRef.current = setTimeout(loop, 12_000)
+    return () => {
+      if (marketingCommentTimeoutRef.current) {
+        clearTimeout(marketingCommentTimeoutRef.current)
+      }
+    }
+  }, [isRunning])
+
+  const handleUpdateProcessItem = (id: string, newContent: string) => {
+    setProcessItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, content: newContent } : item))
+    )
+  }
+
   const toggleRunning = async () => {
     const api = (window as any).api
     if (!api?.startWeChatBridge) {
@@ -718,9 +926,9 @@ function AssistantPage(props: Props): JSX.Element {
     setDifyResponse('')
 
     try {
-      const runningTask = await fetchRunningTask()
-      if (!runningTask?.id) {
-        setDifyResponse('请先在任务设置中开启一个任务')
+      const runningRole = await fetchRunningRole()
+      if (!runningRole?.id) {
+        setDifyResponse('请先在角色配置中开启一个角色')
         return
       }
       await api.startWeChatBridge()
@@ -732,11 +940,11 @@ function AssistantPage(props: Props): JSX.Element {
     }
   }
 
-  let btnClass = 'btn-start-action'
+  let btnClass = styles.btnStartAction
   let btnContent: React.ReactNode = null
   
   if (isConnecting) {
-    btnClass += ' starting'
+    btnClass += ` ${styles.starting}`
     btnContent = (
       <>
         <LoaderIcon />
@@ -744,15 +952,15 @@ function AssistantPage(props: Props): JSX.Element {
       </>
     )
   } else if (isRunning) {
-    btnClass += ' running'
+    btnClass += ` ${styles.running}`
     btnContent = (
       <>
-        <div className="icon-breathing" />
+        <div className={styles.iconBreathing} />
         <span>停止运行</span>
       </>
     )
   } else {
-    btnClass += ' ready'
+    btnClass += ` ${styles.ready}`
     btnContent = (
       <>
         <PlayIcon />
@@ -762,102 +970,117 @@ function AssistantPage(props: Props): JSX.Element {
   }
 
   return (
-    <div className="page">
-      <header className="page-header">
-        <div className="page-header-title-group">
-          <h4 className="page-title">AI 运营助手</h4>
-          <div className={`status-badge ${isRunning ? 'active' : ''}`}>
-            <div className="status-indicator"></div>
+    <div className={styles.assistantPage}>
+      <header className={styles.pageHeader}>
+        <div className={styles.pageHeaderTitleGroup}>
+          <h4 className={styles.pageTitle}>AI 运营助手</h4>
+          <div className={`${styles.statusBadge} ${isRunning ? styles.active : ''}`}>
+            <div className={styles.statusIndicator}></div>
             {isRunning ? '运行中' : '就绪'}
           </div>
         </div>
         
-        <div className="page-header-actions">
+        <div className={styles.pageHeaderActions}>
+          <div className={styles.modeToggle}>
+            <button
+              onClick={() => setManagedMode('full')}
+              className={`${styles.modeBtn} ${managedMode === 'full' ? styles.active : ''}`}
+            >
+              全托管
+            </button>
+            <button
+              onClick={() => setManagedMode('semi')}
+              className={`${styles.modeBtn} ${managedMode === 'semi' ? styles.active : ''}`}
+            >
+              半托管
+            </button>
+          </div>
           <button className={btnClass} onClick={toggleRunning} disabled={isSending || isConnecting}>
             {btnContent}
           </button>
         </div>
       </header>
 
-      <div className="page-body">
-        <div className="assistant-container">
-          <div className="card card-content-stack">
-            <div>
-              <h5 className="section-title">📝 微信消息</h5>
-              <div className="chat-history-container">
-                {messages.length === 0 && (
-                  <div style={{ color: '#999', textAlign: 'center', marginTop: '150px' }}>
-                    启动后，收到的微信消息会出现在这里...
-                  </div>
-                )}
-                {messages.map((msg, index) => {
-                  const isLatest = index === messages.length - 1
-                  return (
-                    <div
-                      key={msg.id}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: msg.isSelf ? 'flex-end' : 'flex-start',
-                        marginBottom: '15px'
-                      }}
-                    >
-                      <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', display: 'flex', alignItems: 'center' }}>
-                        {!msg.isSelf && isLatest && (
-                          <span style={{ 
-                            background: '#ff4d4f', color: 'white', fontSize: '10px', 
-                            padding: '1px 4px', borderRadius: '4px', marginRight: '6px' 
-                          }}>
-                            NEW
-                          </span>
-                        )}
-                        <span>{msg.isSelf ? '我' : msg.contact}</span>
-                        <span style={{ marginLeft: '8px' }}>{new Date(msg.timestamp).toLocaleTimeString()}</span>
-                      </div>
-                      <div
-                        style={{
-                          background: msg.isSelf ? '#95ec69' : '#ffffff',
-                          color: '#333',
-                          padding: '10px 14px',
-                          borderRadius: '8px',
-                          maxWidth: '85%',
-                          wordBreak: 'break-word',
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                          lineHeight: '1.5',
-                          fontSize: '14px',
-                          border: msg.isSelf ? 'none' : '1px solid #e8e8e8'
-                        }}
-                      >
-                        {msg.content}
-                      </div>
+      <div className={styles.pageBody}>
+        <div className={styles.assistantContainer}>
+          <div className={styles.mainCard}>
+            
+            {/* Top Section: AI Thinking Process */}
+            <div className={styles.topSection}>
+              <div className={styles.sectionHeader}>
+                <h5 className={styles.sectionTitle}>
+                  <span className={styles.aiThinkingDot}></span>
+                  视界正在查看你的屏幕，正在阅读你的聊天内容
+                </h5>
+              </div>
+              <div className={styles.sectionContent}>
+                {(processItems.length > 0 || difyResponse) ? (
+                  processItems.length > 0 ? (
+                    <ProcessVisualizer items={processItems} managedMode={managedMode} onUpdateItem={handleUpdateProcessItem} />
+                  ) : (
+                    <div className={styles.aiResponseBox}>
+                      {difyResponse}
                     </div>
                   )
-                })}
-                <div ref={messagesEndRef} />
+                ) : (
+                   <div className={styles.emptyState}>
+                     <div className={styles.emptyIcon}>🧠</div>
+                     <div>等待触发任务...</div>
+                   </div>
+                )}
               </div>
             </div>
 
-            {(processItems.length > 0 || difyResponse) && (
-              <div className="card-divider">
-                <h5 className="section-title">🤖 AI 思考过程</h5>
-                {processItems.length > 0 ? (
-                  <ProcessVisualizer items={processItems} />
-                ) : (
-                  <div className="ai-response-box">
-                    {difyResponse}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {lastReplied && (
-              <div className="card-divider">
-                <h5 className="section-title">📤 已回复</h5>
-                <div className="ai-response-box">
-                  {`${lastReplied.contact}\n${new Date(lastReplied.at).toLocaleTimeString()}\n\n${lastReplied.text}`}
-                </div>
-              </div>
-            )}
+            {/* Bottom Section: WeChat Messages */}
+            <div className={styles.bottomSection}>
+               <div className={styles.sectionHeader}>
+                 <h5 className={styles.sectionTitle}>
+                   实时对话读取
+                 </h5>
+                 {lastReplied && (
+                    <span className={styles.lastRepliedBadge}>
+                      最近回复: {lastReplied.contact}
+                    </span>
+                 )}
+               </div>
+               
+               <div className={styles.chatHistoryContainer}>
+                  {messages.length === 0 && (
+                    <div className={styles.emptyState} style={{ marginTop: '60px' }}>
+                      启动后，收到的微信消息会出现在这里...
+                    </div>
+                  )}
+                  {messages.map((msg, index) => {
+                    const isLatest = index === messages.length - 1
+                    return (
+                      <div
+                        key={msg.id}
+                        className={styles.messageItem}
+                        style={{
+                          alignItems: msg.isSelf ? 'flex-end' : 'flex-start',
+                        }}
+                      >
+                        <div className={styles.messageMeta}>
+                          {!msg.isSelf && isLatest && (
+                            <span className={styles.newBadge}>
+                              NEW
+                            </span>
+                          )}
+                          <span>{msg.isSelf ? '我' : msg.contact}</span>
+                          <span style={{ marginLeft: '8px' }}>{new Date(msg.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        <div
+                          className={`${styles.messageBubble} ${msg.isSelf ? styles.messageBubbleSelf : styles.messageBubbleOther}`}
+                        >
+                          {msg.content}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div ref={messagesEndRef} />
+               </div>
+            </div>
+            
           </div>
         </div>
       </div>

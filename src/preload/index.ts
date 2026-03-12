@@ -16,6 +16,7 @@ const api = {
   stopWeChatBridge: () => ipcRenderer.invoke('wechat-bridge-stop'),
   pollWeChatMessages: () => ipcRenderer.invoke('wechat-bridge-poll'),
   sendWeChatMessage: (data: { target: string; content: string }) => ipcRenderer.invoke('wechat-bridge-send', data),
+  executeWeChatCommand: (data: Record<string, any>) => ipcRenderer.invoke('wechat-bridge-command', data),
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close')

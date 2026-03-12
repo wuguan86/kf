@@ -5,7 +5,10 @@ import AppShell, { AppRoute } from "./layout/AppShell";
 import AssistantPage from "./pages/AssistantPage";
 import LoginPage from "./pages/LoginPage";
 import MePage from "./pages/MePage";
+import KnowledgeBasePage from "./pages/KnowledgeBasePage";
 import SettingsPage from "./pages/SettingsPage";
+import SessionManagementPage from "./pages/SessionManagementPage";
+import MarketingManagementPage from "./pages/MarketingManagementPage";
 
 type HashRoute = AppRoute | "capture";
 
@@ -13,6 +16,9 @@ const parseHashRoute = (hash: string): HashRoute => {
   const value = (hash || "#/").toLowerCase();
   if (value === "#capture" || value === "#/capture") return "capture";
   if (value.startsWith("#/settings")) return "settings";
+  if (value.startsWith("#/knowledge")) return "knowledge";
+  if (value.startsWith("#/session-management")) return "session-management";
+  if (value.startsWith("#/marketing")) return "marketing";
   if (value.startsWith("#/me")) return "me";
   return "assistant";
 };
@@ -100,6 +106,21 @@ function App(): JSX.Element {
           setUserToken={setUserToken}
         />
       )}
+      {activeRoute === "knowledge" && (
+        <KnowledgeBasePage
+          backendBaseUrl={backendBaseUrl}
+          tenantId={tenantId}
+          userToken={userToken}
+        />
+      )}
+      {activeRoute === "session-management" && (
+        <SessionManagementPage
+          backendBaseUrl={backendBaseUrl}
+          tenantId={tenantId}
+          userToken={userToken}
+        />
+      )}
+      {activeRoute === "marketing" && <MarketingManagementPage />}
       {activeRoute === "me" && (
         <MePage
           backendBaseUrl={backendBaseUrl}

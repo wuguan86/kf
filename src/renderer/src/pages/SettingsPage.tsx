@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import http from '../utils/http'
+import styles from './SettingsPage.module.css'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 type Props = {
   backendBaseUrl: string
@@ -8,35 +10,40 @@ type Props = {
   setUserToken: (token: string) => void
 }
 
-interface Task {
-  id: number
+interface Role {
+  id: string
   name: string
   content: string
   status: string
-  type: string
-  userId: number
-  promptTemplateId?: number
+  userId: string
+  promptTemplateId?: string
   knowledgeBaseId?: string
 }
 
 interface PromptTemplate {
-  id: number
+  id: string
   name: string
   content: string
+}
+
+interface KnowledgeBase {
+  id: string
+  name: string
+  description: string
+  status: string
 }
 
 export default function SettingsPage(props: Props): JSX.Element {
   const { backendBaseUrl, tenantId, userToken } = props
 
   const [view, setView] = useState<'list' | 'form'>('list')
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
   const [loading, setLoading] = useState(false)
-  const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [editingRole, setEditingRole] = useState<Role | null>(null)
 
-  const [formData, setFormData] = useState<Partial<Task>>({
+  const [formData, setFormData] = useState<Partial<Role>>({
     name: '',
     content: '',
-    type: '长期任务',
     status: 'PENDING',
     knowledgeBaseId: ''
   })
@@ -44,20 +51,17 @@ export default function SettingsPage(props: Props): JSX.Element {
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false)
   const [templates, setTemplates] = useState<PromptTemplate[]>([])
   const [isKnowledgeModalOpen, setIsKnowledgeModalOpen] = useState(false)
-  const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(false)
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
-  const [isUploading, setIsUploading] = useState(false)
-  const [uploadStatus, setUploadStatus] = useState('')
-  const [isDragging, setIsDragging] = useState(false)
-  const [boundKnowledgeBaseId, setBoundKnowledgeBaseId] = useState('')
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<string[]>([])
+  const [roleToDelete, setRoleToDelete] = useState<string | null>(null)
 
-  const fetchTasks = async () => {
+  const fetchRoles = async () => {
     setLoading(true)
     try {
-      const data = await http.get<Task[]>('/api/user/tasks')
-      setTasks(data)
+      const data = await http.get<Role[]>('/api/user/roles')
+      setRoles(data)
     } catch (error) {
-      console.error('Failed to fetch tasks', error)
+      console.error('Failed to fetch roles', error)
     } finally {
       setLoading(false)
     }
@@ -72,46 +76,70 @@ export default function SettingsPage(props: Props): JSX.Element {
     }
   }
 
+  const fetchKnowledgeBases = async () => {
+    try {
+      const data = await http.get<KnowledgeBase[]>('/api/user/knowledge-bases')
+      setKnowledgeBases(data)
+    } catch (error) {
+      console.error('Failed to fetch knowledge bases', error)
+    }
+  }
+
+  const fetchRoleKnowledgeBases = async (roleId: string): Promise<string[]> => {
+    try {
+      const data = await http.get<KnowledgeBase[]>(`/api/user/roles/${roleId}/knowledge-bases`)
+      return data.map(item => item.id)
+    } catch (error) {
+      console.error('Failed to fetch role knowledge bases', error)
+      return []
+    }
+  }
 
   useEffect(() => {
     if (backendBaseUrl && userToken) {
-      fetchTasks()
+      fetchRoles()
     }
   }, [backendBaseUrl, userToken])
 
-  const handleEdit = (task: Task) => {
-    setEditingTask(task)
+  const handleEdit = (role: Role) => {
+    setEditingRole(role)
     setFormData({
-      name: task.name,
-      content: task.content,
-      type: task.type,
-      status: task.status,
-      knowledgeBaseId: task.knowledgeBaseId
+      name: role.name,
+      content: role.content,
+      status: role.status,
+      knowledgeBaseId: role.knowledgeBaseId
     })
-    setBoundKnowledgeBaseId(task.knowledgeBaseId || '')
+    fetchRoleKnowledgeBases(role.id).then(ids => setSelectedKnowledgeBaseIds(ids))
+    fetchKnowledgeBases()
     setView('form')
   }
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('确定要删除这个任务吗？')) return
+  const handleDelete = (id: string) => {
+    setRoleToDelete(id)
+  }
+
+  const confirmDelete = async () => {
+    if (!roleToDelete) return
     try {
-      await http.delete(`/api/user/tasks/${id}`)
-      fetchTasks()
+      await http.delete(`/api/user/roles/${roleToDelete}`)
+      fetchRoles()
     } catch (error) {
-      console.error('Failed to delete task', error)
+      console.error('Failed to delete role', error)
       alert('删除失败')
+    } finally {
+      setRoleToDelete(null)
     }
   }
 
-  const handleToggleStatus = async (task: Task) => {
-    const newStatus = task.status === 'RUNNING' ? 'PENDING' : 'RUNNING'
+  const handleToggleStatus = async (role: Role) => {
+    const newStatus = role.status === 'RUNNING' ? 'PENDING' : 'RUNNING'
     try {
       if (newStatus === 'RUNNING') {
-        const runningTasks = tasks.filter(item => item.status === 'RUNNING' && item.id !== task.id)
-        if (runningTasks.length > 0) {
+        const runningRoles = roles.filter(item => item.status === 'RUNNING' && item.id !== role.id)
+        if (runningRoles.length > 0) {
           await Promise.all(
-            runningTasks.map(item =>
-              http.put(`/api/user/tasks/${item.id}`, {
+            runningRoles.map(item =>
+              http.put(`/api/user/roles/${item.id}`, {
                 ...item,
                 status: 'PENDING'
               })
@@ -119,52 +147,53 @@ export default function SettingsPage(props: Props): JSX.Element {
           )
         }
       }
-      await http.put(`/api/user/tasks/${task.id}`, {
-        ...task,
+      await http.put(`/api/user/roles/${role.id}`, {
+        ...role,
         status: newStatus
       })
-      fetchTasks()
+      fetchRoles()
     } catch (error) {
       console.error('Failed to toggle status', error)
     }
   }
 
-  const saveTask = async (returnToList: boolean) => {
+  const saveRole = async (returnToList: boolean) => {
     if (!formData.name) {
-      alert('请输入任务名称')
+      alert('请输入角色名称')
       return null
     }
     if (formData.name.length > 15) {
-      alert('任务名称不能超过 15 个字符')
+      alert('角色名称不能超过 15 个字符')
       return null
     }
     try {
-      const savedTask = editingTask
-        ? await http.put<Task>(`/api/user/tasks/${editingTask.id}`, formData)
-        : await http.post<Task>('/api/user/tasks', formData)
-      setEditingTask(savedTask)
+      const savedRole = editingRole
+        ? await http.put<Role>(`/api/user/roles/${editingRole.id}`, formData)
+        : await http.post<Role>('/api/user/roles', formData)
+      setEditingRole(savedRole)
       setFormData({
-        name: savedTask.name,
-        content: savedTask.content,
-        type: savedTask.type,
-        status: savedTask.status,
-        knowledgeBaseId: savedTask.knowledgeBaseId
+        name: savedRole.name,
+        content: savedRole.content,
+        status: savedRole.status,
+        knowledgeBaseId: savedRole.knowledgeBaseId
       })
-      setBoundKnowledgeBaseId(savedTask.knowledgeBaseId || '')
+      await http.put(`/api/user/roles/${savedRole.id}/knowledge-bases`, {
+        knowledgeBaseIds: selectedKnowledgeBaseIds
+      })
       if (returnToList) {
         setView('list')
       }
-      fetchTasks()
-      return savedTask
+      fetchRoles()
+      return savedRole
     } catch (error) {
-      console.error('Failed to save task', error)
+      console.error('Failed to save role', error)
       alert('保存失败')
       return null
     }
   }
 
   const handleSave = async () => {
-    await saveTask(true)
+    await saveRole(true)
   }
 
   const handleApplyTemplate = (template: PromptTemplate) => {
@@ -181,204 +210,128 @@ export default function SettingsPage(props: Props): JSX.Element {
   }
 
   const openKnowledgeModal = async () => {
-    let task = editingTask
-    if (!task?.id) {
-      task = await saveTask(false)
-      if (!task) {
+    let role = editingRole
+    if (!role?.id) {
+      role = await saveRole(false)
+      if (!role) {
         return
       }
     }
-    setUploadStatus('')
-    setIsUploadPanelOpen(false)
+    fetchKnowledgeBases()
+    const roleKnowledgeIds = await fetchRoleKnowledgeBases(role.id)
+    setSelectedKnowledgeBaseIds(roleKnowledgeIds)
     setIsKnowledgeModalOpen(true)
   }
 
   const closeKnowledgeModal = () => {
     setIsKnowledgeModalOpen(false)
-    setIsUploadPanelOpen(false)
-    setIsDragging(false)
   }
 
-  const appendFiles = (fileList: FileList | null) => {
-    if (!fileList) return
-    const incoming = Array.from(fileList)
-    setSelectedFiles(prev => {
-      const seen = new Map(prev.map(file => [`${file.name}-${file.size}-${file.lastModified}`, file]))
-      incoming.forEach(file => {
-        const key = `${file.name}-${file.size}-${file.lastModified}`
-        if (!seen.has(key)) {
-          seen.set(key, file)
-        }
-      })
-      return Array.from(seen.values())
+  const toggleKnowledgeBaseSelection = (knowledgeBaseId: string) => {
+    setSelectedKnowledgeBaseIds(prev => {
+      if (prev.includes(knowledgeBaseId)) {
+        return prev.filter(item => item !== knowledgeBaseId)
+      }
+      return [...prev, knowledgeBaseId]
     })
   }
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    appendFiles(e.target.files)
-    setIsUploadPanelOpen(false)
-    e.target.value = ''
-  }
-
-  const handleRemoveFile = (target: File) => {
-    setSelectedFiles(prev => prev.filter(file => file !== target))
-  }
-
-  const handleDropFiles = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    setIsDragging(false)
-    appendFiles(e.dataTransfer.files)
-    setIsUploadPanelOpen(false)
-  }
-
-  const handleUploadKnowledgeFiles = async () => {
-    if (!userToken) {
-      alert('请先登录')
-      return
-    }
-    let task = editingTask
-    if (!task?.id) {
-      task = await saveTask(false)
-      if (!task) {
-        return
-      }
-    }
-    if (selectedFiles.length === 0) {
-      alert('请先添加文件')
-      return
-    }
-
-    setIsUploading(true)
-    const total = selectedFiles.length
-    for (let i = 0; i < total; i += 1) {
-      const file = selectedFiles[i]
-      setUploadStatus(`正在上传 ${i + 1}/${total}：${file.name}`)
-      const formDataPayload = new FormData()
-      const dataPayload = JSON.stringify({
-        indexing_technique: 'high_quality',
-        process_rule: {
-          mode: 'automatic'
-        }
-      })
-      formDataPayload.append('data', dataPayload)
-      formDataPayload.append('file', file)
-
-      try {
-        const res = await http.postForm<{ knowledgeBaseId: string }>(
-          `/api/user/dify/tasks/${task.id}/kb/document/create-by-file`,
-          formDataPayload
-        )
-        const newKnowledgeBaseId = res?.knowledgeBaseId
-        if (newKnowledgeBaseId && newKnowledgeBaseId !== boundKnowledgeBaseId) {
-          setBoundKnowledgeBaseId(newKnowledgeBaseId)
-          setFormData(prev => ({ ...prev, knowledgeBaseId: newKnowledgeBaseId }))
-          setEditingTask(prev => (prev ? { ...prev, knowledgeBaseId: newKnowledgeBaseId } : prev))
-        }
-      } catch (err: any) {
-        setUploadStatus('上传失败: ' + (err.response?.data?.message || err.message))
-        setIsUploading(false)
-        return
-      }
-    }
-    setUploadStatus('上传完成')
-    setIsUploading(false)
-  }
-
   const ToggleSwitch = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (
-    <div className={`switch-wrapper ${checked ? 'running' : ''}`}>
-      <div className={`switch-component ${checked ? 'active' : ''}`} onClick={onChange}>
-        <div className="switch-knob" />
+    <div className={`${styles.switchWrapper} ${checked ? styles.switchRunning : ''}`}>
+      <div className={`${styles.switch} ${checked ? styles.switchActive : ''}`} onClick={onChange}>
+        <div className={styles.switchKnob} />
       </div>
     </div>
   )
 
   if (view === 'form') {
     return (
-      <div className="page task-page">
-        <header className="page-header task-header">
-          <div className="task-header-left">
-            <button onClick={() => setView('list')} className="task-icon-button">
+      <div className={styles.page}>
+        <header className={styles.header}>
+          <div className={styles.headerLeft}>
+            <button onClick={() => setView('list')} className={styles.iconBtn}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
             </button>
-            <div className="task-header-text">
-              <h4 className="page-title">任务配置</h4>
-              <p className="task-subtitle">{editingTask ? '编辑任务信息与提示词模板' : '创建新的长期任务'}</p>
+            <div>
+              <h4 className={styles.title}>角色配置</h4>
+              <p className={styles.subtitle}>{editingRole ? '编辑角色信息与提示词模板' : '创建新的角色'}</p>
             </div>
           </div>
-          <div className="page-header-actions">
-            <button onClick={() => setView('list')} className="task-ghost-btn">返回列表</button>
-            <button onClick={handleSave} className="btn-core-gradient task-primary-btn">保存任务</button>
+          <div className={styles.headerActions}>
+            <button onClick={() => setView('list')} className={styles.ghostBtn}>返回列表</button>
+            <button onClick={handleSave} className={styles.primaryBtn}>保存角色</button>
           </div>
         </header>
 
-        <div className="page-body">
-          <div className="task-form-layout">
-            <div className="card task-card">
-              <div className="task-card-header">
+        <div className={styles.body}>
+          <div className={styles.cardBody}>
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
                 <div>
-                  <h5 className="task-card-title">任务名称</h5>
-                  <p className="task-card-subtitle">用于识别该任务，建议 2-15 个字符</p>
+                  <h5 className={styles.cardTitle}>角色名称</h5>
+                  <p className={styles.cardSubtitle}>用于识别该角色，建议 2-15 个字符</p>
                 </div>
-                <span className="task-chip">长期任务</span>
               </div>
-              <div className="task-card-body">
+              <div className={styles.cardBody}>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={e => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="请输入任务名称（最多15个字符）"
+                  placeholder="请输入角色名称（最多15个字符）"
                   maxLength={15}
-                  className="task-input"
+                  className={styles.input}
                 />
               </div>
             </div>
 
-            <div className="card task-card">
-              <div className="task-card-header">
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
                 <div>
-                  <h5 className="task-card-title">任务内容</h5>
-                  <p className="task-card-subtitle">描述任务目标、语气与输出格式</p>
+                  <h5 className={styles.cardTitle}>角色设定</h5>
+                  <p className={styles.cardSubtitle}>描述角色目标、语气与输出格式</p>
                 </div>
-                <button onClick={openTemplateModal} className="task-link-btn">
+                <button onClick={openTemplateModal} className={styles.linkBtn}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                  任务提示词模版
+                  角色设定模版
                 </button>
               </div>
-              <div className="task-card-body">
-                <div className="textarea-wrapper task-textarea">
+              <div className={styles.cardBody}>
+                <div className={styles.textareaWrapper}>
                   <textarea
                     value={formData.content}
                     onChange={e => setFormData({ ...formData, content: e.target.value })}
-                    placeholder="请输入长期任务的详细描述..."
-                    className="task-textarea-field"
+                    placeholder="请输入角色的详细设定..."
+                    className={styles.textarea}
                   />
                 </div>
-                <div className="task-inline-actions">
-                  <button className="task-pill-btn">
-                    <span className="task-pill-icon">⚡</span>
+                <div className={styles.inlineActions}>
+                  <button className={styles.pillBtn}>
+                    <span className={styles.pillIcon}>⚡</span>
                     AI优化
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="card task-card">
-              <div className="task-card-header">
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
                 <div>
-                  <h5 className="task-card-title">知识库</h5>
-                  <p className="task-card-subtitle">为任务提供知识增强与上下文信息</p>
+                  <h5 className={styles.cardTitle}>知识库</h5>
+                  <p className={styles.cardSubtitle}>为角色提供知识增强与上下文信息</p>
                 </div>
-                <div className="task-card-actions">
-                  <button className="task-secondary-btn" onClick={openKnowledgeModal}>
+                <div className={styles.headerActions}>
+                  <button className={styles.ghostBtn} onClick={openKnowledgeModal}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                     添加
                   </button>
-                  <button className="task-danger-link">关闭</button>
+                  <button className={styles.dangerLink} onClick={() => setSelectedKnowledgeBaseIds([])}>清空</button>
                 </div>
               </div>
-              <div className="task-card-body">
-                <div className="task-kb-status">
-                  {boundKnowledgeBaseId ? `已绑定知识库：${boundKnowledgeBaseId}` : '未绑定知识库'}
+              <div className={styles.cardBody}>
+                <div className={styles.kbStatus}>
+                    {selectedKnowledgeBaseIds.length > 0
+                      ? `已绑定知识库 ${selectedKnowledgeBaseIds.length} 个`
+                      : '未绑定知识库'}
                 </div>
               </div>
             </div>
@@ -386,45 +339,45 @@ export default function SettingsPage(props: Props): JSX.Element {
         </div>
 
         {isTemplateModalOpen && (
-          <div className="task-modal-overlay">
-            <div className="task-modal">
-              <div className="task-modal-header">
+          <div className={styles.modalOverlay}>
+            <div className={styles.modal}>
+              <div className={styles.modalHeader}>
                 <div>
-                  <h3 className="task-modal-title">任务提示词模板</h3>
-                  <p className="task-modal-subtitle">选择合适的模板快速生成任务描述</p>
+                  <h3 className={styles.modalTitle}>角色设定模板</h3>
+                  <p className={styles.modalSubtitle}>选择合适的模板快速生成角色设定</p>
                 </div>
-                <button onClick={() => setIsTemplateModalOpen(false)} className="task-icon-button">
+                <button onClick={() => setIsTemplateModalOpen(false)} className={styles.iconBtn}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
               </div>
-              <div className="task-modal-body">
-                <table className="task-table">
+              <div className={styles.modalBody}>
+                <table className={styles.table}>
                   <thead>
                     <tr>
                       <th>模版名称</th>
                       <th>模版内容</th>
-                      <th className="task-table-right">操作</th>
+                      <th className={styles.tableRight}>操作</th>
                     </tr>
                   </thead>
                   <tbody>
                     {templates.map(tpl => (
                       <tr key={tpl.id}>
-                        <td className="task-table-title">{tpl.name}</td>
-                        <td className="task-table-desc">
-                          <div className="task-ellipsis">{tpl.content}</div>
+                        <td className={styles.kbItemName}>{tpl.name}</td>
+                        <td className={styles.ellipsis}>
+                          <div className={styles.ellipsis}>{tpl.content}</div>
                         </td>
-                        <td className="task-table-right">
-                          <button onClick={() => handleApplyTemplate(tpl)} className="task-primary-btn">应用</button>
+                        <td className={styles.tableRight}>
+                          <button onClick={() => handleApplyTemplate(tpl)} className={styles.primaryBtn}>应用</button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                <div className="task-modal-footer">
+                <div className={styles.modalFooter}>
                   <span>共 {templates.length} 个模版</span>
-                  <div className="task-modal-actions">
-                    <button onClick={() => fetchTemplates()} className="task-ghost-btn">刷新</button>
-                    <button onClick={() => setIsTemplateModalOpen(false)} className="task-ghost-btn">关闭</button>
+                  <div className={styles.modalActions}>
+                    <button onClick={() => fetchTemplates()} className={styles.ghostBtn}>刷新</button>
+                    <button onClick={() => setIsTemplateModalOpen(false)} className={styles.ghostBtn}>关闭</button>
                   </div>
                 </div>
               </div>
@@ -433,101 +386,64 @@ export default function SettingsPage(props: Props): JSX.Element {
         )}
 
         {isKnowledgeModalOpen && (
-          <div className="task-modal-overlay">
-            <div className="task-modal kb-modal">
-              <div className="task-modal-header">
+          <div className={styles.modalOverlay}>
+            <div className={styles.modal}>
+              <div className={styles.modalHeader}>
                 <div>
-                  <h3 className="task-modal-title">添加知识库</h3>
-                  <p className="task-modal-subtitle">上传资料到当前绑定的知识库</p>
+                  <h3 className={styles.modalTitle}>添加知识库</h3>
+                  <p className={styles.modalSubtitle}>为当前角色选择一个或多个知识库</p>
                 </div>
-                <button onClick={closeKnowledgeModal} className="task-icon-button">
+                <button onClick={closeKnowledgeModal} className={styles.iconBtn}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
               </div>
-              <div className="task-modal-body">
-                {!isUploadPanelOpen ? (
-                  <div className="kb-modal-section">
-                    <div className="kb-bound-hint">
-                      当前知识库：{boundKnowledgeBaseId || '未绑定'}
-                    </div>
-                    <div className="kb-file-list-card">
-                      <div className="kb-file-list-header">
-                        <span>选择文件</span>
-                        <div className="kb-file-actions">
-                          <button type="button" className="task-secondary-btn" onClick={() => setIsUploadPanelOpen(true)}>
-                            + 添加
-                          </button>
-                        </div>
+              <div className={styles.modalBody}>
+                <div>
+                  <div className={styles.kbStatus}>
+                    已选择 {selectedKnowledgeBaseIds.length} 个知识库
+                  </div>
+                  <div className={styles.kbListCard}>
+                    <div className={styles.kbListHeader}>
+                      <span>知识库列表</span>
+                      <div>
+                        <button type="button" className={styles.ghostBtn} onClick={fetchKnowledgeBases}>
+                          刷新
+                        </button>
                       </div>
-                      <div className="kb-file-list">
-                        {selectedFiles.length === 0 ? (
-                          <div className="kb-file-empty">暂无文件</div>
-                        ) : (
-                          selectedFiles.map(file => (
-                            <div key={`${file.name}-${file.lastModified}`} className="kb-file-item">
-                              <div className="kb-file-info">
-                                <span className="kb-file-name">{file.name}</span>
-                                <span className="kb-file-meta">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
-                              </div>
-                              <button type="button" className="kb-file-remove" onClick={() => handleRemoveFile(file)}>
-                                删除
-                              </button>
+                    </div>
+                    <div className={styles.kbList}>
+                      {knowledgeBases.length === 0 ? (
+                        <div className={styles.kbEmpty}>暂无知识库，请先到“知识库管理”创建</div>
+                      ) : (
+                        knowledgeBases.map(item => (
+                          <label key={item.id} className={styles.kbItem}>
+                            <input
+                              type="checkbox"
+                              checked={selectedKnowledgeBaseIds.includes(item.id)}
+                              onChange={() => toggleKnowledgeBaseSelection(item.id)}
+                            />
+                            <div className={styles.kbItemMain}>
+                              <div className={styles.kbItemName}>{item.name}</div>
+                              <div className={styles.kbItemDesc}>{item.description || '暂无描述'}</div>
                             </div>
-                          ))
-                        )}
-                      </div>
-                      {selectedFiles.length > 0 && <div className="kb-file-tip">已加载全部文件</div>}
-                    </div>
-                    {uploadStatus && (
-                      <div className={`kb-upload-status ${uploadStatus.includes('失败') ? 'error' : 'success'}`}>
-                        {uploadStatus}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="kb-upload-panel">
-                    <div
-                      className={`kb-dropzone ${isDragging ? 'dragging' : ''}`}
-                      onDragOver={(e) => {
-                        e.preventDefault()
-                        setIsDragging(true)
-                      }}
-                      onDragLeave={() => setIsDragging(false)}
-                      onDrop={handleDropFiles}
-                    >
-                      <input
-                        id="kb-file-input"
-                        type="file"
-                        multiple
-                        className="kb-file-input"
-                        onChange={handleFileInput}
-                        disabled={isUploading}
-                      />
-                      <label htmlFor="kb-file-input" className="kb-dropzone-content">
-                        <div className="kb-dropzone-title">点击或拖拽文件到此区域上传</div>
-                        <div className="kb-dropzone-subtitle">支持 PDF、Word、文本文件，单个不超过 10MB</div>
-                      </label>
+                          </label>
+                        ))
+                      )}
                     </div>
                   </div>
-                )}
-                <div className="task-modal-footer">
-                  <span>已选择 {selectedFiles.length} 个文件</span>
-                  <div className="task-modal-actions">
-                    {isUploadPanelOpen && (
-                      <button type="button" className="task-ghost-btn" onClick={() => setIsUploadPanelOpen(false)}>
-                        返回
-                      </button>
-                    )}
-                    <button type="button" className="task-ghost-btn" onClick={closeKnowledgeModal}>
+                </div>
+                <div className={styles.modalFooter}>
+                  <span>选择后点击保存生效</span>
+                  <div className={styles.modalActions}>
+                    <button type="button" className={styles.ghostBtn} onClick={closeKnowledgeModal}>
                       取消
                     </button>
                     <button
                       type="button"
-                      className="btn-core-gradient task-primary-btn"
-                      onClick={handleUploadKnowledgeFiles}
-                      disabled={isUploading}
+                      className={styles.primaryBtn}
+                      onClick={closeKnowledgeModal}
                     >
-                      {isUploading ? '上传中...' : '保存'}
+                      完成
                     </button>
                   </div>
                 </div>
@@ -535,93 +451,100 @@ export default function SettingsPage(props: Props): JSX.Element {
             </div>
           </div>
         )}
+
+        <ConfirmDialog
+          isOpen={!!roleToDelete}
+          title="确定删除?"
+          content="删除角色后将无法恢复，确定删除么?"
+          onConfirm={confirmDelete}
+          onCancel={() => setRoleToDelete(null)}
+        />
       </div>
     )
   }
 
   return (
-    <div className="page task-page">
-      <header className="page-header task-header">
+    <div className={styles.page}>
+      <header className={styles.header}>
         <div>
-          <h4 className="page-title">任务设置</h4>
-          <p className="task-subtitle">集中管理任务、模板与运行状态</p>
+          <h4 className={styles.title}>角色配置</h4>
+          <p className={styles.subtitle}>集中管理角色、模板与运行状态</p>
         </div>
-        <div className="page-header-actions">
+        <div className={styles.headerActions}>
           <button
             onClick={() => {
               setFormData({
                 name: '',
                 content: '',
-                type: '长期任务',
                 status: 'PENDING',
                 knowledgeBaseId: ''
               })
-              setBoundKnowledgeBaseId('')
-              setEditingTask(null)
+              setSelectedKnowledgeBaseIds([])
+              fetchKnowledgeBases()
+              setEditingRole(null)
               setView('form')
             }}
-            className="btn-core-gradient task-primary-btn"
+            className={styles.primaryBtn}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            添加任务
+            添加角色
           </button>
         </div>
       </header>
 
-      <div className="page-body">
-        <div className="card task-card task-table-card">
-          <div className="task-table-header">
+      <div className={styles.body}>
+        <div className={`${styles.card} ${styles.tableCard}`}>
+          <div className={styles.tableCardHeader}>
             <div>
-              <h5 className="task-card-title">任务列表</h5>
-              <p className="task-card-subtitle">当前共 {tasks.length} 个任务</p>
+              <h5 className={styles.cardTitle}>角色列表</h5>
+              <p className={styles.cardSubtitle}>当前共 {roles.length} 个角色</p>
             </div>
-            <button onClick={() => fetchTasks()} className="task-ghost-btn">刷新列表</button>
+            <button onClick={() => fetchRoles()} className={styles.ghostBtn}>刷新</button>
           </div>
-          <div className="task-table-wrapper">
-            <table className="task-table">
+          <div className={styles.tableWrapper}>
+            <table className={styles.table}>
               <thead>
                 <tr>
-                  <th className="col-name">任务名称</th>
-                  <th className="col-desc">任务描述</th>
-                  <th className="col-user">用户</th>
-                  <th className="col-type">任务类型</th>
-                  <th className="col-status">开启状态</th>
-                  <th className="col-action task-table-right">操作</th>
+                  <th className={styles.colName}>角色名称</th>
+                  <th className={styles.colDesc}>角色设定</th>
+                  <th className={styles.colUser}>用户</th>
+                  <th className={styles.colStatus}>开启状态</th>
+                  <th className={styles.colAction}>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {tasks.map(task => (
-                  <tr key={task.id}>
-                    <td className="task-table-title">{task.name}</td>
-                    <td className="task-table-desc">
-                      <div className="task-ellipsis">{task.content}</div>
+                {roles.map(role => (
+                  <tr key={role.id}>
+                    <td className={styles.colName}>{role.name}</td>
+                    <td className={styles.colDesc}>
+                      <div className={styles.cellContent}>{role.content}</div>
                     </td>
-                    <td className="task-table-meta">默认用户</td>
-                    <td>
-                      <span className="task-type-badge">{task.type || '长期任务'}</span>
+                    <td className={styles.colUser}>默认用户</td>
+                    <td className={styles.colStatus}>
+                      <ToggleSwitch
+                        checked={role.status === 'RUNNING'}
+                        onChange={() => handleToggleStatus(role)}
+                      />
                     </td>
-                    <td>
-                      <ToggleSwitch checked={task.status === 'RUNNING'} onChange={() => handleToggleStatus(task)} />
-                    </td>
-                    <td className="task-table-right">
-                      <div className="task-table-actions">
-                        <button onClick={() => handleEdit(task)} className="task-icon-btn-only" data-tooltip="编辑">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    <td className={styles.colAction}>
+                      <div className={styles.actions}>
+                        <button onClick={() => handleEdit(role)} className={styles.iconBtn} title="编辑">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
                         </button>
-                        <button onClick={() => handleDelete(task.id)} className="task-icon-btn-only danger" data-tooltip="删除">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        <button onClick={() => handleDelete(role.id)} className={`${styles.iconBtn} ${styles.deleteBtn}`} title="删除">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                         </button>
                       </div>
                     </td>
                   </tr>
                 ))}
-                {tasks.length === 0 && !loading && (
+                {roles.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6}>
-                      <div className="task-empty">
-                        <div className="task-empty-icon">✨</div>
-                        <div className="task-empty-title">暂无任务</div>
-                        <div className="task-empty-subtitle">点击右上角按钮创建你的第一个任务</div>
+                    <td colSpan={5}>
+                      <div className={styles.emptyState}>
+                        <div className={styles.emptyIcon}>✨</div>
+                        <div className={styles.emptyTitle}>暂无角色</div>
+                        <div className={styles.emptySubtitle}>点击右上角按钮创建你的第一个角色</div>
                       </div>
                     </td>
                   </tr>
@@ -630,6 +553,13 @@ export default function SettingsPage(props: Props): JSX.Element {
             </table>
           </div>
         </div>
+        <ConfirmDialog
+          isOpen={!!roleToDelete}
+          title="确定删除?"
+          content="删除角色后将无法恢复，确定删除么?"
+          onConfirm={confirmDelete}
+          onCancel={() => setRoleToDelete(null)}
+        />
       </div>
     </div>
   )

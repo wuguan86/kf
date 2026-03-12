@@ -468,6 +468,20 @@ ipcMain.handle('wechat-bridge-send', async (_, payload: { target: string; conten
   }
 })
 
+ipcMain.handle('wechat-bridge-command', async (_, payload: Record<string, any>) => {
+  const res = await fetch(`${getWeChatBridgeBaseUrl()}/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {})
+  })
+  const text = await res.text()
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    return { ok: false, error: 'invalid_json', raw: text }
+  }
+})
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.electron')
 

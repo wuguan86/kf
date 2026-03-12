@@ -1,0 +1,119 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  /* Palette - Tech Blue Light Theme */
+  --color-primary: #1677FF;
+  --color-primary-hover: #4096ff;
+  --color-accent: #07C160; /* WeChat Green for accents */
+  
+  /* Backgrounds */
+  --bg-app: #F5F7FA; /* Light Grey-Blue */
+  --bg-surface: #FFFFFF; /* Pure White */
+  --bg-sidebar: #FFFFFF; /* Pure White */
+  
+  /* Text */
+  --text-main: #1F2937; /* Gray 900 */
+  --text-secondary: #4B5563; /* Gray 600 */
+  --text-muted: #9CA3AF; /* Gray 400 */
+  
+  /* Borders */
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.12);
+  --border-highlight: rgba(22, 119, 255, 0.4);
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+  --shadow-glow: 0 0 20px rgba(22, 119, 255, 0.15);
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.05);
+  
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+  
+  /* Fonts */
+  --font-sans: 'Inter', 'PingFang SC', system-ui, -apple-system, sans-serif;
+  --font-display: 'Plus Jakarta Sans', 'PingFang SC', var(--font-sans);
+  
+  --transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-smooth: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  
+  /* Clean Light Background */
+  background-image: none;
+}
+
+#root {
+  height: 100vh;
+}
+
+/* Global Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.4);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Global Input Styles */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+textarea {
+  background: #F9FAFB; /* Gray 50 */
+  border: 1px solid #E5E7EB; /* Gray 200 */
+  color: var(--text-main);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  box-sizing: border-box;
+  transition: var(--transition-base);
+  width: 100%;
+  display: block;
+}
+
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background: #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.1);
+}

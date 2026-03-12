@@ -12,6 +12,7 @@ const api = {
   stopWeChatBridge: () => electron.ipcRenderer.invoke("wechat-bridge-stop"),
   pollWeChatMessages: () => electron.ipcRenderer.invoke("wechat-bridge-poll"),
   sendWeChatMessage: (data) => electron.ipcRenderer.invoke("wechat-bridge-send", data),
+  executeWeChatCommand: (data) => electron.ipcRenderer.invoke("wechat-bridge-command", data),
   minimizeWindow: () => electron.ipcRenderer.send("window-minimize"),
   maximizeWindow: () => electron.ipcRenderer.send("window-maximize"),
   closeWindow: () => electron.ipcRenderer.send("window-close")
