@@ -15,6 +15,7 @@ export interface ProcessVisualizerProps {
   items: ProcessItem[]
   managedMode?: 'full' | 'semi'
   onUpdateItem?: (id: string, newContent: string) => void
+  onStoreItem?: (id: string, content: string) => void
 }
 
 const StepIcons: Record<ProcessStep, React.ReactNode> = {
@@ -54,7 +55,7 @@ const LoadingIcon = (
   <svg className={styles.animateSpin} xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
 )
 
-export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, managedMode = 'full', onUpdateItem }) => {
+export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, managedMode = 'full', onUpdateItem, onStoreItem }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editContent, setEditContent] = React.useState('')
@@ -89,9 +90,10 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
     setEditContent('')
   }
 
-  const handleStore = () => {
-    // Currently just a placeholder action
-    console.log('Store action triggered')
+  const handleStore = (item: ProcessItem) => {
+    if (onStoreItem) {
+      onStoreItem(item.id, item.content)
+    }
   }
 
   if (items.length === 0) {
@@ -158,7 +160,7 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
                     <button className={styles.actionBtn} onClick={() => handleStartEdit(item)}>
                       {ActionIcons.EDIT} 编辑
                     </button>
-                    <button className={styles.actionBtn} onClick={handleStore}>
+                    <button className={styles.actionBtn} onClick={() => handleStore(item)}>
                       {ActionIcons.STORE} 入库
                     </button>
                   </div>

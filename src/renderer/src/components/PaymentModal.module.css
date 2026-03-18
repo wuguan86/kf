@@ -1,0 +1,254 @@
+.modalOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.2s ease-out;
+}
+
+.modalContent {
+  background: white;
+  border-radius: 16px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+  animation: slideUp 0.3s ease-out;
+  display: flex;
+  flex-direction: column;
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.modalTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+}
+
+.closeButton {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.closeButton:hover {
+  background-color: #f3f4f6;
+  color: #4b5563;
+}
+
+.modalBody {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.orderInfo {
+  background-color: #f9fafb;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.planInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.planLabel {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.planName {
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.priceInfo {
+  text-align: right;
+}
+
+.priceAmount {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0ea5e9;
+}
+
+.counterRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.counterLabel {
+  font-size: 14px;
+  color: #374151;
+  font-weight: 500;
+}
+
+.counterControl {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.counterBtn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #f9fafb;
+  font-size: 18px;
+  color: #374151;
+  cursor: pointer;
+}
+
+.counterBtn:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.counterValue {
+  min-width: 44px;
+  text-align: center;
+  font-size: 14px;
+  color: #111827;
+  font-weight: 600;
+}
+
+.paymentSelector {
+  display: flex;
+  gap: 12px;
+}
+
+.paymentMethodBtn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 500;
+  color: #4b5563;
+}
+
+.paymentMethodBtn:hover {
+  border-color: #d1d5db;
+  background-color: #f9fafb;
+}
+
+.paymentMethodBtn.active {
+  background-color: #f0f9ff;
+  border-color: #0ea5e9;
+  color: #0ea5e9;
+}
+
+.paymentMethodBtn.wechat.active {
+  background-color: #f0fdf4;
+  border-color: #22c55e;
+  color: #16a34a;
+}
+
+.paymentMethodBtn.alipay.active {
+  background-color: #eff6ff;
+  border-color: #3b82f6;
+  color: #2563eb;
+}
+
+.qrCodeSection {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: white;
+  border-radius: 12px;
+  border: 1px dashed #e5e7eb;
+}
+
+.qrCodeWrapper {
+  width: 180px;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: white;
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.qrCodeImage {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.qrLoading {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.qrInstruction {
+  font-size: 14px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.qrInstruction strong {
+  color: #111827;
+  font-weight: 600;
+}
+
+.errorText {
+  font-size: 13px;
+  color: #ef4444;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}

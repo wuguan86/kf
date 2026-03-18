@@ -9,6 +9,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let wechatBridgeProcess: ReturnType<typeof spawn> | null = null
+const WECHAT_BRIDGE_REQUEST_TIMEOUT_MS = 5000
+const WECHAT_BRIDGE_STARTUP_TIMEOUT_MS = 20000
 
 const killProcessTree = (pid: number): void => {
   try {
@@ -59,6 +61,40 @@ const waitForWeChatBridgeReady = async (timeoutMs: number): Promise<void> => {
     await new Promise((r) => setTimeout(r, 200))
   }
   throw new Error('WeChat bridge not ready')
+}
+
+const requestWeChatBridge = async (
+  endpoint: string,
+  init: RequestInit
+): Promise<Record<string, any>> => {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), WECHAT_BRIDGE_REQUEST_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${getWeChatBridgeBaseUrl()}${endpoint}`, {
+      ...init,
+      signal: controller.signal
+    })
+    const text = await res.text()
+    let payload: Record<string, any> = {}
+    try {
+      payload = JSON.parse(text)
+    } catch (e) {
+      return { ok: false, error: 'invalid_json', raw: text, status: res.status }
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: payload.error || 'bridge_http_error',
+        status: res.status,
+        ...payload
+      }
+    }
+    return payload
+  } catch (e: any) {
+    return { ok: false, error: 'bridge_unreachable', message: e?.message || String(e) }
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 function createWindow(): void {
@@ -394,10 +430,11 @@ ipcMain.handle('simulate-reply', async (_, { text, focusCoords, sendCoords }) =>
 ipcMain.handle('wechat-bridge-start', async () => {
   if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
     try {
-      await waitForWeChatBridgeReady(2000)
-    } catch (e) {
+      await waitForWeChatBridgeReady(3000)
+      return { ok: true }
+    } catch (e: any) {
+      return { ok: true, warmingUp: true, message: 'bridge_starting' }
     }
-    return { ok: true }
   }
   const execPath = getWeChatBridgeExecutable()
   const configPath = getWeChatBridgeConfig()
@@ -424,11 +461,18 @@ ipcMain.handle('wechat-bridge-start', async () => {
   wechatBridgeProcess.on('exit', () => {
     wechatBridgeProcess = null
   })
+  wechatBridgeProcess.on('error', () => {
+    wechatBridgeProcess = null
+  })
   try {
-    await waitForWeChatBridgeReady(8000)
-  } catch (e) {
+    await waitForWeChatBridgeReady(WECHAT_BRIDGE_STARTUP_TIMEOUT_MS)
+    return { ok: true }
+  } catch (e: any) {
+    if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
+      return { ok: true, warmingUp: true, message: 'bridge_starting' }
+    }
+    return { ok: false, error: 'bridge_not_ready', message: e?.message || String(e) }
   }
-  return { ok: true }
 })
 
 ipcMain.handle('wechat-bridge-stop', async () => {
@@ -445,41 +489,32 @@ ipcMain.handle('wechat-bridge-stop', async () => {
 })
 
 ipcMain.handle('wechat-bridge-poll', async () => {
-  const res = await fetch(`${getWeChatBridgeBaseUrl()}/poll`, { method: 'GET' })
-  const text = await res.text()
-  try {
-    return JSON.parse(text)
-  } catch (e) {
-    return { ok: false, error: 'invalid_json', raw: text }
+  let result = await requestWeChatBridge('/poll', { method: 'GET' })
+  if (!result.ok && result.error === 'bridge_unreachable' && wechatBridgeProcess && !wechatBridgeProcess.killed) {
+    try {
+      await waitForWeChatBridgeReady(1500)
+      result = await requestWeChatBridge('/poll', { method: 'GET' })
+    } catch (e: any) {
+      return { ok: false, error: 'bridge_unreachable', message: e?.message || String(e) }
+    }
   }
+  return result
 })
 
 ipcMain.handle('wechat-bridge-send', async (_, payload: { target: string; content: string }) => {
-  const res = await fetch(`${getWeChatBridgeBaseUrl()}/command`, {
+  return requestWeChatBridge('/command', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   })
-  const text = await res.text()
-  try {
-    return JSON.parse(text)
-  } catch (e) {
-    return { ok: false, error: 'invalid_json', raw: text }
-  }
 })
 
 ipcMain.handle('wechat-bridge-command', async (_, payload: Record<string, any>) => {
-  const res = await fetch(`${getWeChatBridgeBaseUrl()}/command`, {
+  return requestWeChatBridge('/command', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload || {})
   })
-  const text = await res.text()
-  try {
-    return JSON.parse(text)
-  } catch (e) {
-    return { ok: false, error: 'invalid_json', raw: text }
-  }
 })
 
 app.whenReady().then(() => {

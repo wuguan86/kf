@@ -7,8 +7,10 @@ import LoginPage from "./pages/LoginPage";
 import MePage from "./pages/MePage";
 import KnowledgeBasePage from "./pages/KnowledgeBasePage";
 import SettingsPage from "./pages/SettingsPage";
+import SystemSettingsPage from "./pages/SystemSettingsPage";
 import SessionManagementPage from "./pages/SessionManagementPage";
 import MarketingManagementPage from "./pages/MarketingManagementPage";
+import DataStatisticsPage from "./pages/DataStatisticsPage";
 
 type HashRoute = AppRoute | "capture";
 
@@ -19,6 +21,8 @@ const parseHashRoute = (hash: string): HashRoute => {
   if (value.startsWith("#/knowledge")) return "knowledge";
   if (value.startsWith("#/session-management")) return "session-management";
   if (value.startsWith("#/marketing")) return "marketing";
+  if (value.startsWith("#/data-statistics")) return "data-statistics";
+  if (value.startsWith("#/system-settings")) return "system-settings";
   if (value.startsWith("#/me")) return "me";
   return "assistant";
 };
@@ -121,6 +125,15 @@ function App(): JSX.Element {
         />
       )}
       {activeRoute === "marketing" && <MarketingManagementPage />}
+      {activeRoute === "data-statistics" && <DataStatisticsPage />}
+      {activeRoute === "system-settings" && (
+        <SystemSettingsPage
+          onLogout={() => {
+            setUserToken("");
+            navigate("assistant");
+          }}
+        />
+      )}
       {activeRoute === "me" && (
         <MePage
           backendBaseUrl={backendBaseUrl}

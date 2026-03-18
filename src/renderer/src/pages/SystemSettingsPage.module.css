@@ -1,0 +1,215 @@
+.container {
+  padding: 24px;
+  height: 100%;
+  overflow-y: auto;
+  background-color: #f5f7fa;
+}
+
+.header {
+  margin-bottom: 24px;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.section {
+  margin-bottom: 24px;
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: #666;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Version Card */
+.versionCard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.versionInfo {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.versionIcon {
+  width: 48px;
+  height: 48px;
+  background: #eff6ff;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #3b82f6;
+}
+
+.versionText h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.versionText p {
+  margin: 0;
+  font-size: 12px;
+  color: #999;
+}
+
+.checkUpdateBtn {
+  padding: 8px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.checkUpdateBtn:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+/* Contact Card */
+.contactGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.contactItem {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+  position: relative;
+}
+
+.contactIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wechatIcon {
+  background: #e6fffa;
+  color: #059669;
+}
+
+.emailIcon {
+  background: #eff6ff;
+  color: #3b82f6;
+}
+
+.contactInfo h4 {
+  margin: 0 0 2px 0;
+  font-size: 12px;
+  color: #9ca3af;
+  font-weight: 500;
+}
+
+.contactInfo p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+/* Tooltip Styles */
+.qrcodeTooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  margin-bottom: 12px;
+  background: white;
+  padding: 12px;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+  z-index: 10;
+  border: 1px solid #e5e7eb;
+}
+
+.qrcodeTooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: #fff transparent transparent transparent;
+}
+
+.contactItem:hover .qrcodeTooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.qrcodeImage {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+  display: block;
+}
+
+/* Logout Button */
+.logoutSection {
+  margin-top: 40px;
+  display: flex;
+  justify-content: center;
+}
+
+.logoutBtn {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb; /* Gray-50 */
+  color: #ef4444;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.logoutBtn:hover {
+  background: #f3f4f6; /* Gray-100 */
+}

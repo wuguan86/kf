@@ -1,4 +1,17 @@
-# Logs
+# --- Dependencies ---
+node_modules/
+.pnpm-debug.log*
+
+# --- Build Outputs ---
+# Electron-vite 默认输出目录
+dist/
+dist-ssr/
+# Electron-builder/Forge 默认打包输出目录 (你截图中出现了红色状态的 out 文件夹)
+out/
+release/
+*.asar
+
+# --- Logs ---
 logs
 *.log
 npm-debug.log*
@@ -7,18 +20,32 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# --- Environment Variables ---
+# 建议忽略本地环境配置文件，防止泄露密钥
+.env.local
+.env.development.local
+.env.testing.local
+.env.production.local
+# 如果 .env.development 包含敏感信息（如 API Key），也建议忽略
+# .env.development
+# .env.production
 
-# Editor directories and files
+# --- IDE & Editors ---
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+# 针对 Trae 编辑器的配置文件夹 (你截图中有的)
+.trae/
+
+# --- OS Files ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- TypeScript ---
+*.tsbuildinfo

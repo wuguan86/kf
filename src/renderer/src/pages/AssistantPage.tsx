@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import http from '../utils/http'
 import { readAuthSnapshot } from '../auth/authStore'
 import { ProcessVisualizer, ProcessItem, ProcessStep } from '../components/ProcessVisualizer'
+import StoreToKnowledgeBaseDialog, { SelectableKnowledgeBase } from '../components/StoreToKnowledgeBaseDialog'
+import { Toast, useToast } from '../components/Toast'
 import styles from './AssistantPage.module.css'
 import { AppConfig } from '../config'
 
@@ -35,6 +37,12 @@ type ChatMessage = {
   content: string
   isSelf: boolean
   timestamp: number
+}
+type StoreContext = {
+  itemId: string
+  contactKey: string
+  customerMessage: string
+  aiReplyMessage: string
 }
 
 const MONITOR_INTERVAL_MIN = 500
@@ -444,6 +452,7 @@ const LoaderIcon = () => (
 
 function AssistantPage(props: Props): JSX.Element {
   const { backendBaseUrl, tenantId, userToken, onLogout } = props
+  const { toast, showToast } = useToast()
 
   const [isRunning, setIsRunning] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
@@ -454,6 +463,11 @@ function AssistantPage(props: Props): JSX.Element {
   const [activeRole, setActiveRole] = useState<Role | null>(null)
   const [lastReplied, setLastReplied] = useState<{ contact: string; text: string; at: number } | null>(null)
   const [managedMode, setManagedMode] = useState<'full' | 'semi'>('full')
+  const [knowledgeBaseOptions, setKnowledgeBaseOptions] = useState<SelectableKnowledgeBase[]>([])
+  const [storeDialogOpen, setStoreDialogOpen] = useState(false)
+  const [storeSubmitting, setStoreSubmitting] = useState(false)
+  const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState('')
+  const [storeContext, setStoreContext] = useState<StoreContext | null>(null)
   const managedModeRef = useRef<'full' | 'semi'>('full')
 
   useEffect(() => {
@@ -469,7 +483,9 @@ function AssistantPage(props: Props): JSX.Element {
   const sessionConfigRef = useRef<SessionConfig | null>(null)
   const contactQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const lastProcessedByContactRef = useRef<Map<string, { text: string; at: number }>>(new Map())
+  const outputStoreContextRef = useRef<Map<string, { contactKey: string; customerMessage: string }>>(new Map())
   const abortControllerRef = useRef<AbortController | null>(null)
+  const pollFailureCountRef = useRef(0)
 
   const fetchRunningRole = async (): Promise<Role | null> => {
     try {
@@ -510,6 +526,13 @@ function AssistantPage(props: Props): JSX.Element {
     } catch (e) {
       return null
     }
+  }
+
+  const fetchKnowledgeBaseOptions = async (): Promise<SelectableKnowledgeBase[]> => {
+    const res = await http.get<SelectableKnowledgeBase[]>('/api/user/knowledge-bases')
+    const list = Array.isArray(res) ? res : []
+    setKnowledgeBaseOptions(list)
+    return list
   }
 
   useEffect(() => {
@@ -713,6 +736,10 @@ function AssistantPage(props: Props): JSX.Element {
                 if (item) {
                   item.status = 'completed'
                   item.content = content
+                  outputStoreContextRef.current.set(item.id, {
+                    contactKey: contact,
+                    customerMessage: normalizedText
+                  })
                 }
                 
                 // Send WeChat Message
@@ -777,14 +804,30 @@ function AssistantPage(props: Props): JSX.Element {
         const api = (window as any).api
         const res = await api.pollWeChatMessages()
         if (res?.ok && Array.isArray(res.messages)) {
+          pollFailureCountRef.current = 0
+          setDifyResponse((prev) => {
+            if (prev.startsWith('轮询失败: ') || prev.startsWith('启动失败: ')) {
+              return ''
+            }
+            return prev
+          })
           for (const msg of res.messages) {
             if (msg?.type === 'text' && msg?.content) {
               enqueueIncoming(msg)
             }
           }
+        } else if (res?.error) {
+          pollFailureCountRef.current += 1
+          const errText = String(res.message || res.error || '')
+          if (errText !== 'bridge_starting' && pollFailureCountRef.current >= 3) {
+            setDifyResponse('轮询失败: ' + errText)
+          }
         }
       } catch (e: any) {
-        setDifyResponse('轮询失败: ' + (e?.message || String(e)))
+        pollFailureCountRef.current += 1
+        if (pollFailureCountRef.current >= 3) {
+          setDifyResponse('轮询失败: ' + (e?.message || String(e)))
+        }
       } finally {
         if (isRunningRef.current) {
           const delay = 600 + Math.floor(Math.random() * 600)
@@ -907,6 +950,63 @@ function AssistantPage(props: Props): JSX.Element {
     )
   }
 
+  const closeStoreDialog = () => {
+    setStoreDialogOpen(false)
+    setStoreSubmitting(false)
+    setSelectedKnowledgeBaseId('')
+    setStoreContext(null)
+  }
+
+  const handleStoreProcessItem = async (id: string, aiReplyText: string) => {
+    if (managedModeRef.current !== 'semi') {
+      return
+    }
+    const source = outputStoreContextRef.current.get(id)
+    if (!source || !source.contactKey || !source.customerMessage || !aiReplyText.trim()) {
+      showToast('无法入库：缺少上下文消息', 'error')
+      return
+    }
+    try {
+      const options = await fetchKnowledgeBaseOptions()
+      const enabled = options.filter((item) => item.status === 'ENABLED')
+      if (enabled.length === 0) {
+        showToast('暂无可用知识库，请先创建并启用知识库', 'error')
+        return
+      }
+      setStoreContext({
+        itemId: id,
+        contactKey: source.contactKey,
+        customerMessage: source.customerMessage,
+        aiReplyMessage: aiReplyText.trim()
+      })
+      setSelectedKnowledgeBaseId(enabled[0].id)
+      setStoreDialogOpen(true)
+    } catch (error: any) {
+      showToast(`获取知识库失败: ${error?.message || '未知错误'}`, 'error')
+    }
+  }
+
+  const submitManualStore = async () => {
+    if (!storeContext || !selectedKnowledgeBaseId) {
+      showToast('请选择知识库后再提交', 'error')
+      return
+    }
+    setStoreSubmitting(true)
+    try {
+      await http.post('/api/user/knowledge-bases/manual-store', {
+        knowledgeBaseId: selectedKnowledgeBaseId,
+        contactKey: storeContext.contactKey,
+        customerMessage: storeContext.customerMessage,
+        aiReplyMessage: storeContext.aiReplyMessage
+      })
+      showToast('已入库，等待同步到知识库文档', 'success')
+      closeStoreDialog()
+    } catch (error: any) {
+      showToast(`入库失败: ${error?.message || '未知错误'}`, 'error')
+      setStoreSubmitting(false)
+    }
+  }
+
   const toggleRunning = async () => {
     const api = (window as any).api
     if (!api?.startWeChatBridge) {
@@ -915,6 +1015,7 @@ function AssistantPage(props: Props): JSX.Element {
     }
     if (isRunningRef.current) {
       setIsRunning(false)
+      pollFailureCountRef.current = 0
       try {
         await api.stopWeChatBridge()
       } catch (e) {
@@ -931,10 +1032,16 @@ function AssistantPage(props: Props): JSX.Element {
         setDifyResponse('请先在角色配置中开启一个角色')
         return
       }
-      await api.startWeChatBridge()
+      const startRes = await api.startWeChatBridge()
+      if (!startRes?.ok) {
+        throw new Error(startRes?.message || startRes?.error || '启动失败')
+      }
+      pollFailureCountRef.current = 0
       setIsRunning(true)
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
+      setDifyResponse('启动失败: ' + (e?.message || String(e)))
+      setIsRunning(false)
     } finally {
       setIsConnecting(false)
     }
@@ -1016,7 +1123,12 @@ function AssistantPage(props: Props): JSX.Element {
               <div className={styles.sectionContent}>
                 {(processItems.length > 0 || difyResponse) ? (
                   processItems.length > 0 ? (
-                    <ProcessVisualizer items={processItems} managedMode={managedMode} onUpdateItem={handleUpdateProcessItem} />
+                    <ProcessVisualizer
+                      items={processItems}
+                      managedMode={managedMode}
+                      onUpdateItem={handleUpdateProcessItem}
+                      onStoreItem={handleStoreProcessItem}
+                    />
                   ) : (
                     <div className={styles.aiResponseBox}>
                       {difyResponse}
@@ -1084,6 +1196,18 @@ function AssistantPage(props: Props): JSX.Element {
           </div>
         </div>
       </div>
+      <StoreToKnowledgeBaseDialog
+        isOpen={storeDialogOpen}
+        loading={storeSubmitting}
+        options={knowledgeBaseOptions}
+        selectedId={selectedKnowledgeBaseId}
+        customerMessage={storeContext?.customerMessage || ''}
+        aiReplyMessage={storeContext?.aiReplyMessage || ''}
+        onSelect={setSelectedKnowledgeBaseId}
+        onConfirm={submitManualStore}
+        onClose={closeStoreDialog}
+      />
+      {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   )
 }
