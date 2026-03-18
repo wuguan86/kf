@@ -23,7 +23,7 @@ public class MembershipPlanService {
     if (enabled != null) {
       wrapper.eq(MembershipPlanEntity::getEnabled, enabled);
     }
-    wrapper.orderByAsc(MembershipPlanEntity::getId);
+    wrapper.orderByDesc(MembershipPlanEntity::getType).orderByAsc(MembershipPlanEntity::getSortWeight).orderByAsc(MembershipPlanEntity::getId);
     return membershipPlanMapper.selectList(wrapper);
   }
 
@@ -38,6 +38,15 @@ public class MembershipPlanService {
     }
     if (entity.getEnabled() == null) {
       entity.setEnabled(true);
+    }
+    if (entity.getSortWeight() == null) {
+      entity.setSortWeight(0);
+    }
+    if (entity.getIsRecommended() == null) {
+      entity.setIsRecommended(false);
+    }
+    if (entity.getPeriodType() == null) {
+      entity.setPeriodType("MONTHLY");
     }
     if (StringUtils.hasText(entity.getPlanCode())) {
       entity.setPlanCode(entity.getPlanCode().trim());
@@ -76,11 +85,14 @@ public class MembershipPlanService {
     if (changes.getPriceCents() != null) {
       existing.setPriceCents(changes.getPriceCents());
     }
-    if (changes.getDurationDays() != null) {
-      existing.setDurationDays(changes.getDurationDays());
+    if (changes.getSortWeight() != null) {
+      existing.setSortWeight(changes.getSortWeight());
     }
-    if (changes.getSeats() != null) {
-      existing.setSeats(changes.getSeats());
+    if (changes.getIsRecommended() != null) {
+      existing.setIsRecommended(changes.getIsRecommended());
+    }
+    if (changes.getPeriodType() != null) {
+      existing.setPeriodType(changes.getPeriodType());
     }
     if (changes.getPointsIncluded() != null) {
       existing.setPointsIncluded(changes.getPointsIncluded());

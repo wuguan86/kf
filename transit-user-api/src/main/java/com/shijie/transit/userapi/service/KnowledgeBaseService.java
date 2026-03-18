@@ -82,7 +82,7 @@ public class KnowledgeBaseService {
     entity.setDifyDatasetId(datasetResult.datasetId());
     entity.setPermission(permission);
     entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus().trim() : "ENABLED");
-    entity.setIsDefault(false);
+    entity.setIsDefault(Boolean.TRUE.equals(request.getIsDefault()));
     knowledgeBaseMapper.insert(entity);
     return entity;
   }
@@ -104,6 +104,7 @@ public class KnowledgeBaseService {
     entity.setDifyDatasetId(request.getDifyDatasetId().trim());
     entity.setPermission(StringUtils.hasText(request.getPermission()) ? request.getPermission().trim() : "only_me");
     entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus().trim() : "ENABLED");
+    entity.setIsDefault(Boolean.TRUE.equals(request.getIsDefault()));
     knowledgeBaseMapper.insert(entity);
     return entity;
   }

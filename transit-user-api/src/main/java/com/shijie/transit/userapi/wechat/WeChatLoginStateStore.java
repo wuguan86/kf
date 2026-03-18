@@ -127,7 +127,7 @@ public class WeChatLoginStateStore {
   public record StateValue(long tenantId, String redirect, Instant expiresAt) {
   }
 
-  public record CallbackValue(String token, long userId, long tenantId) {
+  public record CallbackValue(String token, long userId, long tenantId, boolean initializing) {
   }
 
   public record PollResult(Status status, CallbackValue callbackValue) {

@@ -38,7 +38,7 @@ public class UserAccountService {
    * @return 更新或创建后的用户实体
    */
   @Transactional
-  public UserAccountEntity upsertByWeChat(String openId, String unionId, String nickname, String avatarUrl) {
+  public UpsertResult upsertByWeChat(String openId, String unionId, String nickname, String avatarUrl) {
     String safeOpenId = StringUtils.hasText(openId) ? openId.trim() : "";
     String safeUnionId = StringUtils.hasText(unionId) ? unionId.trim() : "";
     String safeNickname = StringUtils.hasText(nickname) ? nickname.trim() : "";
@@ -59,19 +59,69 @@ public class UserAccountService {
       entity.setWechatUnionId(safeUnionId);
       entity.setNickname(safeNickname);
       entity.setAvatarUrl(safeAvatarUrl);
+      entity.setIsInitialized(false);
       userAccountMapper.insert(entity);
-      return entity;
+      return new UpsertResult(entity, true, true);
     }
 
     existing.setWechatOpenId(safeOpenId);
-    existing.setWechatUnionId(safeUnionId);
-    existing.setNickname(safeNickname);
-    existing.setAvatarUrl(safeAvatarUrl);
+    if (StringUtils.hasText(safeUnionId)) {
+      existing.setWechatUnionId(safeUnionId);
+    }
+    if (StringUtils.hasText(safeNickname)) {
+      existing.setNickname(safeNickname);
+    }
+    if (StringUtils.hasText(safeAvatarUrl)) {
+      existing.setAvatarUrl(safeAvatarUrl);
+    }
     userAccountMapper.updateById(existing);
-    return existing;
+    boolean needInitialize = !Boolean.TRUE.equals(existing.getIsInitialized());
+    return new UpsertResult(existing, false, needInitialize);
   }
 
   public UserAccountEntity findById(long id) {
     return userAccountMapper.selectById(id);
+  }
+
+  @Transactional
+  public void updateProfile(long userId, String nickname, String phone, String email) {
+    UserAccountEntity user = userAccountMapper.selectById(userId);
+    if (user != null) {
+      if (StringUtils.hasText(nickname)) {
+        user.setNickname(nickname);
+      }
+      // Allow clearing phone/email if empty string is passed? Or just update if present?
+      // User requirement says "fill or change", implies updating.
+      // If the user clears the input, we might want to clear it in DB.
+      // But for now let's assume valid input.
+      user.setPhone(phone);
+      user.setEmail(email);
+      userAccountMapper.updateById(user);
+    }
+  }
+
+  @Transactional
+  public void updateAvatar(long userId, String avatarUrl) {
+    UserAccountEntity user = userAccountMapper.selectById(userId);
+    if (user != null) {
+      user.setAvatarUrl(avatarUrl);
+      userAccountMapper.updateById(user);
+    }
+  }
+
+  @Transactional
+  public void markInitialized(long userId) {
+    UserAccountEntity user = userAccountMapper.selectById(userId);
+    if (user == null) {
+      return;
+    }
+    if (Boolean.TRUE.equals(user.getIsInitialized())) {
+      return;
+    }
+    user.setIsInitialized(true);
+    userAccountMapper.updateById(user);
+  }
+
+  public record UpsertResult(UserAccountEntity user, boolean created, boolean needInitialize) {
   }
 }

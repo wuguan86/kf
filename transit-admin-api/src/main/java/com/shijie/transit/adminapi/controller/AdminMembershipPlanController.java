@@ -54,8 +54,9 @@ public class AdminMembershipPlanController {
     entity.setType(request.type());
     entity.setName(request.name());
     entity.setPriceCents(request.priceCents());
-    entity.setDurationDays(request.durationDays());
-    entity.setSeats(request.seats());
+    entity.setSortWeight(request.sortWeight());
+    entity.setIsRecommended(request.isRecommended());
+    entity.setPeriodType(request.periodType());
     entity.setPointsIncluded(request.pointsIncluded());
     entity.setBonusPoints(request.bonusPoints());
     entity.setDescription(request.description());
@@ -72,9 +73,11 @@ public class AdminMembershipPlanController {
 
     Integer priceCents();
 
-    Integer durationDays();
+    Integer sortWeight();
 
-    Integer seats();
+    Boolean isRecommended();
+
+    String periodType();
 
     Integer pointsIncluded();
 
@@ -90,8 +93,9 @@ public class AdminMembershipPlanController {
       @NotBlank String type,
       @NotBlank String name,
       @NotNull Integer priceCents,
-      @NotNull Integer durationDays,
-      @NotNull Integer seats,
+      @NotNull Integer sortWeight,
+      @NotNull Boolean isRecommended,
+      @NotBlank String periodType,
       @NotNull Integer pointsIncluded,
       @NotNull Integer bonusPoints,
       String description,
@@ -103,8 +107,9 @@ public class AdminMembershipPlanController {
       String type,
       String name,
       Integer priceCents,
-      Integer durationDays,
-      Integer seats,
+      Integer sortWeight,
+      Boolean isRecommended,
+      String periodType,
       Integer pointsIncluded,
       Integer bonusPoints,
       String description,

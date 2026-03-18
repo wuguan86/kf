@@ -2,9 +2,11 @@ package com.shijie.transit.userapi.controller;
 
 import com.shijie.transit.common.db.entity.KnowledgeBaseEntity;
 import com.shijie.transit.common.db.entity.KnowledgeBaseFileEntity;
+import com.shijie.transit.common.db.entity.ManualKbSyncRecordEntity;
 import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.web.Result;
 import com.shijie.transit.userapi.service.KnowledgeBaseService;
+import com.shijie.transit.userapi.service.ManualKbSyncService;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -18,9 +20,11 @@ import java.util.List;
 @RequestMapping("/api/user/knowledge-bases")
 public class UserKnowledgeBaseController {
   private final KnowledgeBaseService knowledgeBaseService;
+  private final ManualKbSyncService manualKbSyncService;
 
-  public UserKnowledgeBaseController(KnowledgeBaseService knowledgeBaseService) {
+  public UserKnowledgeBaseController(KnowledgeBaseService knowledgeBaseService, ManualKbSyncService manualKbSyncService) {
     this.knowledgeBaseService = knowledgeBaseService;
+    this.manualKbSyncService = manualKbSyncService;
   }
 
   private Long currentUserId() {
@@ -67,5 +71,23 @@ public class UserKnowledgeBaseController {
   public Result<Void> deleteFile(@PathVariable("id") Long id, @PathVariable("fileId") Long fileId) {
     knowledgeBaseService.deleteFile(currentUserId(), id, fileId);
     return Result.success(null);
+  }
+
+  @PostMapping("/manual-store")
+  public Result<ManualKbSyncService.ManualStoreResult> manualStore(@RequestBody ManualStoreRequest request) {
+    ManualKbSyncRecordEntity record = manualKbSyncService.createPendingRecord(
+        currentUserId(),
+        request.knowledgeBaseId(),
+        request.contactKey(),
+        request.customerMessage(),
+        request.aiReplyMessage());
+    return Result.success(manualKbSyncService.toResult(record));
+  }
+
+  public record ManualStoreRequest(
+      Long knowledgeBaseId,
+      String contactKey,
+      String customerMessage,
+      String aiReplyMessage) {
   }
 }

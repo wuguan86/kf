@@ -3,7 +3,6 @@ package com.shijie.transit.userapi.controller;
 import com.shijie.transit.common.db.entity.MembershipPlanEntity;
 import com.shijie.transit.common.db.entity.PointsLedgerEntity;
 import com.shijie.transit.common.db.entity.UserMembershipEntity;
-import com.shijie.transit.common.mapper.MembershipPlanMapper;
 import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.web.Result;
 import com.shijie.transit.userapi.service.MembershipQueryService;
@@ -21,11 +20,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/user")
 public class UserMembershipController {
   private final MembershipQueryService membershipQueryService;
-  private final MembershipPlanMapper membershipPlanMapper;
 
-  public UserMembershipController(MembershipQueryService membershipQueryService, MembershipPlanMapper membershipPlanMapper) {
+  public UserMembershipController(MembershipQueryService membershipQueryService) {
     this.membershipQueryService = membershipQueryService;
-    this.membershipPlanMapper = membershipPlanMapper;
   }
 
   @GetMapping("/membership/plans")
@@ -36,13 +33,28 @@ public class UserMembershipController {
   @GetMapping("/membership/me")
   public Result<MyMembershipResponse> myMembership() {
     TransitPrincipal principal = currentPrincipal();
-    UserMembershipEntity membership = membershipQueryService.findActiveMembership(principal.subjectId());
-    if (membership == null) {
+    MembershipQueryService.MyMembershipSnapshot snapshot = membershipQueryService.queryMyMembership(principal.subjectId());
+    UserMembershipEntity membership = snapshot.membership();
+    
+    int totalPoints = Math.max(0, safeInt(snapshot.subscriptionPoints())) + Math.max(0, safeInt(snapshot.packagePoints()));
+    
+    if (membership == null && totalPoints == 0) {
       return Result.success(new MyMembershipResponse(null, null));
     }
-    MembershipPlanEntity plan = membership.getPlanId() == null ? null : membershipPlanMapper.selectById(membership.getPlanId());
+    
+    String status = membership != null ? membership.getStatus() : "active";
+    LocalDateTime startAt = membership != null ? membership.getStartAt() : null;
+    LocalDateTime endAt = membership != null ? membership.getEndAt() : null;
+    MembershipPlanEntity plan = snapshot.plan();
+    
     return Result.success(new MyMembershipResponse(
-        new MembershipInfo(membership.getStatus(), membership.getStartAt(), membership.getEndAt(), membership.getPointsBalance()),
+        new MembershipInfo(
+            status,
+            startAt,
+            endAt,
+            totalPoints,
+            Math.max(0, safeInt(snapshot.subscriptionPoints())),
+            Math.max(0, safeInt(snapshot.packagePoints()))),
         plan));
   }
 
@@ -57,9 +69,19 @@ public class UserMembershipController {
     return (TransitPrincipal) authentication.getPrincipal();
   }
 
+  private int safeInt(Integer value) {
+    return value == null ? 0 : value;
+  }
+
   public record MyMembershipResponse(MembershipInfo membership, MembershipPlanEntity plan) {
   }
 
-  public record MembershipInfo(String status, LocalDateTime startAt, LocalDateTime endAt, Integer pointsBalance) {
+  public record MembershipInfo(
+      String status,
+      LocalDateTime startAt,
+      LocalDateTime endAt,
+      Integer pointsBalance,
+      Integer subscriptionPoints,
+      Integer packagePoints) {
   }
 }

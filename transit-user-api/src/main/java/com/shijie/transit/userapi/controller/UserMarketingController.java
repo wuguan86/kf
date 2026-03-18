@@ -58,6 +58,18 @@ public class UserMarketingController {
         return Result.success(true);
     }
 
+    @GetMapping("/statistics/overview")
+    public Result<MarketingService.IntentOverviewStats> getIntentOverviewStats() {
+        return Result.success(marketingService.getIntentOverviewStats(currentUserId()));
+    }
+
+    @GetMapping("/statistics/customers")
+    public Result<MarketingService.CustomerListResponse> getIntentCustomers(
+            @RequestParam(value = "pageNo", defaultValue = "1") Long pageNo,
+            @RequestParam(value = "pageSize", defaultValue = "20") Long pageSize) {
+        return Result.success(marketingService.getIntentCustomers(currentUserId(), pageNo, pageSize));
+    }
+
     private Long currentUserId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof TransitPrincipal)) {

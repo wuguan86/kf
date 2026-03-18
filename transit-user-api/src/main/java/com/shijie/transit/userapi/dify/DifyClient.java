@@ -114,6 +114,78 @@ public class DifyClient {
     }
   }
 
+  public String listDocumentSegments(String datasetId, String documentId, int page, int limit) {
+    try {
+      log.info("Dify listDocumentSegments datasetId={} documentId={} page={} limit={}", datasetId, documentId, page, limit);
+      return restClientForDataset().get()
+          .uri(uriBuilder -> uriBuilder.path("/v1/datasets/{datasetId}/documents/{documentId}/segments")
+              .queryParam("page", page)
+              .queryParam("limit", limit)
+              .build(datasetId, documentId))
+          .retrieve()
+          .body(String.class);
+    } catch (RestClientResponseException ex) {
+      throw toTransitException(ex);
+    }
+  }
+
+  public DifyDocumentResult createDocumentByText(
+      String datasetId,
+      String name,
+      String text,
+      String indexingTechnique,
+      String processRuleMode) {
+    try {
+      log.info("Dify createDocumentByText datasetId={} name={}", datasetId, name);
+      ObjectNode request = objectMapper.createObjectNode();
+      request.put("name", name);
+      request.put("text", text);
+      request.put("indexing_technique", StringUtils.hasText(indexingTechnique) ? indexingTechnique : "high_quality");
+      ObjectNode processRule = request.putObject("process_rule");
+      processRule.put("mode", StringUtils.hasText(processRuleMode) ? processRuleMode : "automatic");
+
+      String responseJson = restClientForDataset().post()
+          .uri("/v1/datasets/{datasetId}/document/create-by-text", datasetId)
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(request.toString())
+          .retrieve()
+          .body(String.class);
+      return parseDocumentResult(responseJson);
+    } catch (RestClientResponseException ex) {
+      throw toTransitException(ex);
+    }
+  }
+
+  public DifyDocumentResult updateDocumentByText(
+      String datasetId,
+      String documentId,
+      String name,
+      String text,
+      String indexingTechnique,
+      String processRuleMode) {
+    try {
+      log.info("Dify updateDocumentByText datasetId={} documentId={} name={}", datasetId, documentId, name);
+      ObjectNode request = objectMapper.createObjectNode();
+      if (StringUtils.hasText(name)) {
+        request.put("name", name);
+      }
+      request.put("text", text);
+      request.put("indexing_technique", StringUtils.hasText(indexingTechnique) ? indexingTechnique : "high_quality");
+      ObjectNode processRule = request.putObject("process_rule");
+      processRule.put("mode", StringUtils.hasText(processRuleMode) ? processRuleMode : "automatic");
+
+      String responseJson = restClientForDataset().post()
+          .uri("/v1/datasets/{datasetId}/documents/{documentId}/update-by-text", datasetId, documentId)
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(request.toString())
+          .retrieve()
+          .body(String.class);
+      return parseDocumentResult(responseJson);
+    } catch (RestClientResponseException ex) {
+      throw toTransitException(ex);
+    }
+  }
+
   public String uploadDocumentByFile(String datasetId, String dataJson, MultipartFile file) throws IOException {
     MultiValueMap<String, Object> multipartBody = new LinkedMultiValueMap<>();
     multipartBody.add("data", dataJson);
@@ -227,7 +299,11 @@ public class DifyClient {
         if (outputs.hasNonNull("text")) {
             return outputs.get("text").asText();
         } else if (outputs.hasNonNull("result")) {
-            return outputs.get("result").asText();
+            JsonNode resultNode = outputs.get("result");
+            if (resultNode.isContainerNode()) {
+                return resultNode.toString();
+            }
+            return resultNode.asText();
         } else {
              // Fallback: return the whole outputs as string if we can't find specific field
              return outputs.toString();
@@ -319,6 +395,14 @@ public class DifyClient {
   public record DifyDatasetResult(String rawJson, String datasetId) {
   }
 
+  public record DifyDocumentResult(
+      String rawJson,
+      String documentId,
+      String indexingStatus,
+      String error,
+      Integer wordCount) {
+  }
+
   private DifyDatasetListResult parseDatasetListResult(String responseJson) {
     if (responseJson == null) {
       return new DifyDatasetListResult(List.of(), false);
@@ -345,6 +429,60 @@ public class DifyClient {
 
   public record DifyDatasetItem(String id, String name) {}
   public record DifyDatasetListResult(List<DifyDatasetItem> data, boolean hasMore) {}
+
+  private DifyDocumentResult parseDocumentResult(String responseJson) {
+    if (responseJson == null) {
+      return new DifyDocumentResult(null, null, null, null, 0);
+    }
+    try {
+      JsonNode root = objectMapper.readTree(responseJson);
+      JsonNode document = root.path("document");
+      if (document == null || document.isMissingNode() || document.isNull()) {
+        document = root;
+      }
+      String documentId = extractText(document, "id");
+      if (!StringUtils.hasText(documentId)) {
+        documentId = extractText(root, "id");
+      }
+      String indexingStatus = extractText(document, "indexing_status");
+      if (!StringUtils.hasText(indexingStatus)) {
+        indexingStatus = extractText(root, "indexing_status");
+      }
+      String error = extractText(document, "error");
+      if (!StringUtils.hasText(error)) {
+        error = extractText(root, "error");
+      }
+      Integer wordCount = parseInt(document.path("word_count"), parseInt(root.path("word_count"), 0));
+      return new DifyDocumentResult(responseJson, documentId, indexingStatus, error, wordCount);
+    } catch (Exception ex) {
+      log.error("Failed to parse document result", ex);
+      return new DifyDocumentResult(responseJson, null, null, null, 0);
+    }
+  }
+
+  private Integer parseInt(JsonNode node, Integer fallback) {
+    if (node != null && node.canConvertToInt()) {
+      return node.asInt();
+    }
+    return fallback == null ? 0 : fallback;
+  }
+
+  private String extractText(JsonNode current, String... path) {
+    JsonNode node = current;
+    for (String item : path) {
+      if (node == null) {
+        return null;
+      }
+      node = node.path(item);
+    }
+    if (node == null || node.isMissingNode() || node.isNull()) {
+      return null;
+    }
+    if (node.isTextual() || node.isNumber() || node.isBoolean()) {
+      return node.asText();
+    }
+    return null;
+  }
 
   private TransitException toTransitException(RestClientResponseException ex) {
     ErrorCode errorCode = switch (ex.getRawStatusCode()) {

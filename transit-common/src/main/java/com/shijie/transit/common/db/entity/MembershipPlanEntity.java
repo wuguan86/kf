@@ -23,11 +23,14 @@ public class MembershipPlanEntity extends BaseTenantEntity {
   /** 价格 (单位: 分) */
   private Integer priceCents;
 
-  /** 有效期 (单位: 天) */
-  private Integer durationDays;
+  /** 排序权重 (数值越小越靠前) */
+  private Integer sortWeight;
 
-  /** 包含席位数 (默认1) */
-  private Integer seats;
+  /** 是否推荐 (true: 推荐, false: 普通) */
+  private Boolean isRecommended;
+
+  /** 套餐周期类型 (MONTHLY: 月付, YEARLY: 年付, PERMANENT: 永久) */
+  private String periodType;
 
   /** 套餐包含的基础积分 */
   private Integer pointsIncluded;
@@ -82,20 +85,28 @@ public class MembershipPlanEntity extends BaseTenantEntity {
     this.priceCents = priceCents;
   }
 
-  public Integer getDurationDays() {
-    return durationDays;
+  public Integer getSortWeight() {
+    return sortWeight;
   }
 
-  public void setDurationDays(Integer durationDays) {
-    this.durationDays = durationDays;
+  public void setSortWeight(Integer sortWeight) {
+    this.sortWeight = sortWeight;
   }
 
-  public Integer getSeats() {
-    return seats;
+  public Boolean getIsRecommended() {
+    return isRecommended;
   }
 
-  public void setSeats(Integer seats) {
-    this.seats = seats;
+  public void setIsRecommended(Boolean isRecommended) {
+    this.isRecommended = isRecommended;
+  }
+
+  public String getPeriodType() {
+    return periodType;
+  }
+
+  public void setPeriodType(String periodType) {
+    this.periodType = periodType;
   }
 
   public Integer getPointsIncluded() {

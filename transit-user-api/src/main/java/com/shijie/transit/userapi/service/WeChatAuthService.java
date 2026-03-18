@@ -20,6 +20,7 @@ public class WeChatAuthService {
   private final WeChatClient weChatClient;
   private final WeChatLoginStateStore stateStore;
   private final UserAccountService userAccountService;
+  private final DefaultKnowledgeBaseInitService defaultKnowledgeBaseInitService;
   private final JwtService jwtService;
   private final Clock clock;
   private volatile MpAccessTokenCache mpAccessTokenCache;
@@ -29,12 +30,14 @@ public class WeChatAuthService {
       WeChatClient weChatClient,
       WeChatLoginStateStore stateStore,
       UserAccountService userAccountService,
+      DefaultKnowledgeBaseInitService defaultKnowledgeBaseInitService,
       JwtService jwtService,
       Clock clock) {
     this.properties = properties;
     this.weChatClient = weChatClient;
     this.stateStore = stateStore;
     this.userAccountService = userAccountService;
+    this.defaultKnowledgeBaseInitService = defaultKnowledgeBaseInitService;
     this.jwtService = jwtService;
     this.clock = clock;
   }
@@ -99,9 +102,15 @@ public class WeChatAuthService {
         avatarUrl = "https://" + avatarUrl.substring("http://".length());
       }
 
-      UserAccountEntity user = userAccountService.upsertByWeChat(safeOpenId, unionId, nickname, avatarUrl);
+      UserAccountService.UpsertResult upsertResult = userAccountService.upsertByWeChat(safeOpenId, unionId, nickname, avatarUrl);
+      UserAccountEntity user = upsertResult.user();
+      if (upsertResult.needInitialize()) {
+        defaultKnowledgeBaseInitService.initOnFirstLoginAsync(stateValue.tenantId(), user.getId());
+      }
       String jwt = jwtService.issueToken(new TransitJwtClaims(user.getId(), stateValue.tenantId(), "USER"));
-      stateStore.complete(safeState, new WeChatLoginStateStore.CallbackValue(jwt, user.getId(), stateValue.tenantId()));
+      stateStore.complete(
+          safeState,
+          new WeChatLoginStateStore.CallbackValue(jwt, user.getId(), stateValue.tenantId(), upsertResult.needInitialize()));
     } catch (RuntimeException e) {
       stateStore.fail(safeState);
       throw e;
@@ -113,19 +122,20 @@ public class WeChatAuthService {
   public LoginPollResult pollLogin(String state) {
     WeChatLoginStateStore.PollResult poll = stateStore.poll(state);
     if (poll.callbackValue() == null) {
-      return new LoginPollResult(poll.status().name(), null, null, null);
+      return new LoginPollResult(poll.status().name(), null, null, null, false);
     }
     return new LoginPollResult(
         poll.status().name(),
         poll.callbackValue().token(),
         poll.callbackValue().userId(),
-        poll.callbackValue().tenantId());
+        poll.callbackValue().tenantId(),
+        poll.callbackValue().initializing());
   }
 
   public record QrCodeResult(String url, String state) {
   }
 
-  public record LoginPollResult(String status, String token, Long userId, Long tenantId) {
+  public record LoginPollResult(String status, String token, Long userId, Long tenantId, boolean initializing) {
   }
 
   private String getMpAccessToken() {

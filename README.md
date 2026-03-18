@@ -11,6 +11,18 @@
 
 ## 启动前准备
 
+### 0) JDK 与 Maven 要求
+
+- JDK：`21`（必须）
+- Maven：`3.9+`（建议）
+
+可通过以下命令确认：
+
+```bash
+java -version
+mvn -v
+```
+
 ### 1) 启动 MySQL（推荐）
 
 在本目录执行：
@@ -53,6 +65,7 @@ mvn -DskipTests package
 mvn -pl transit-api spring-boot:run
 ```
 
+> 所有构建与运行命令需在 JDK21 环境下执行。
 > Flyway 会在启动时自动建表（`db/migration/V1__init.sql`）。
 
 ## 接口概览
