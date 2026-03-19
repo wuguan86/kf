@@ -171,6 +171,38 @@ public class MembershipEntitlementService {
     grantPointsByAmount(userId, null, delta, referenceId);
   }
 
+  @Transactional
+  public boolean deductPoints(long userId, int amount, String reason, String refId) {
+    if (amount <= 0) return true;
+    refreshMembershipStatus(userId);
+    LocalDateTime now = LocalDateTime.now(clock);
+    List<UserMembershipEntity> activeMemberships = userMembershipMapper.selectList(
+        new LambdaQueryWrapper<UserMembershipEntity>()
+            .eq(UserMembershipEntity::getUserId, userId)
+            .eq(UserMembershipEntity::getStatus, "active")
+            .gt(UserMembershipEntity::getPointsBalance, 0)
+            .orderByAsc(UserMembershipEntity::getEndAt)
+            .orderByAsc(UserMembershipEntity::getId));
+            
+    int totalAvailable = activeMemberships.stream().mapToInt(m -> safeInt(m.getPointsBalance())).sum();
+    if (totalAvailable < amount) {
+      return false;
+    }
+    
+    int remainingToDeduct = amount;
+    for (UserMembershipEntity m : activeMemberships) {
+      if (remainingToDeduct <= 0) break;
+      int balance = safeInt(m.getPointsBalance());
+      int deductHere = Math.min(balance, remainingToDeduct);
+      m.setPointsBalance(balance - deductHere);
+      userMembershipMapper.updateById(m);
+      remainingToDeduct -= deductHere;
+    }
+    
+    insertLedger(userId, -amount, totalAvailable - amount, reason, refId);
+    return true;
+  }
+
   private void grantSubscriptionByPlan(long userId, MembershipPlanEntity plan, int purchaseCount, String referenceId) {
     int periodCount = calculateSubscriptionMonthCount(plan, purchaseCount);
     grantSubscriptionMonths(userId, plan, periodCount, referenceId);

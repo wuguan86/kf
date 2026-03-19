@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.shijie.transit.common.web.ErrorCode;
 import com.shijie.transit.common.web.TransitException;
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -34,14 +35,20 @@ public class DifyClient {
   public DifyChatResult chatMessages(String requestBodyJson) {
     try {
       log.info("Dify chatMessages requestSize={}", requestBodyJson == null ? 0 : requestBodyJson.length());
-      String responseJson = restClientForChat().post()
+      String responseRaw = restClientForChat().post()
           .uri("/v1/chat-messages")
           .contentType(MediaType.APPLICATION_JSON)
           .body(requestBodyJson)
           .retrieve()
           .body(String.class);
-      log.info("Dify chatMessages responseSize={}", responseJson == null ? 0 : responseJson.length());
-      return parseChatResult(responseJson);
+      log.info("Dify chatMessages responseSize={}", responseRaw == null ? 0 : responseRaw.length());
+      if (isSsePayload(responseRaw)) {
+        DifyChatResult sseResult = parseChatResultFromSse(responseRaw);
+        log.info("Dify chatMessages parsed from SSE conversationId={} answerSize={}",
+            sseResult.conversationId(), sseResult.answer() == null ? 0 : sseResult.answer().length());
+        return sseResult;
+      }
+      return parseChatResult(responseRaw);
     } catch (RestClientResponseException ex) {
       throw toTransitException(ex);
     }
@@ -374,6 +381,110 @@ public class DifyClient {
     } catch (Exception ex) {
       return new DifyChatResult(responseJson, null, null);
     }
+  }
+
+  private boolean isSsePayload(String payload) {
+    if (!StringUtils.hasText(payload)) {
+      return false;
+    }
+    String trimmed = payload.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      return false;
+    }
+    return payload.contains("data:") || payload.contains("event:");
+  }
+
+  private DifyChatResult parseChatResultFromSse(String ssePayload) {
+    if (!StringUtils.hasText(ssePayload)) {
+      return new DifyChatResult(null, null, null);
+    }
+    String conversationId = null;
+    StringBuilder answerBuilder = new StringBuilder();
+    String[] lines = ssePayload.split("\\r?\\n");
+    for (String line : lines) {
+      if (!StringUtils.hasText(line)) {
+        continue;
+      }
+      String trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) {
+        continue;
+      }
+      String dataPart = trimmed.substring(5).trim();
+      if (!StringUtils.hasText(dataPart) || "[DONE]".equals(dataPart)) {
+        continue;
+      }
+      try {
+        JsonNode node = objectMapper.readTree(dataPart);
+        String currentConversationId = extractConversationIdFromEvent(node);
+        if (StringUtils.hasText(currentConversationId)) {
+          conversationId = currentConversationId;
+        }
+        String answer = extractAnswerFromEvent(node);
+        if (StringUtils.hasText(answer)) {
+          answerBuilder.append(answer);
+        }
+      } catch (Exception ignored) {
+      }
+    }
+    String answer = answerBuilder.toString();
+    ObjectNode normalized = objectMapper.createObjectNode();
+    if (StringUtils.hasText(conversationId)) {
+      normalized.put("conversation_id", conversationId);
+    } else {
+      normalized.putNull("conversation_id");
+    }
+    normalized.put("answer", answer);
+    normalized.put("mode", "streaming");
+    return new DifyChatResult(normalized.toString(), conversationId, StringUtils.hasText(answer) ? answer : null);
+  }
+
+  private String extractConversationIdFromEvent(JsonNode node) {
+    if (node == null || node.isMissingNode() || node.isNull()) {
+      return null;
+    }
+    if (node.hasNonNull("conversation_id")) {
+      return node.get("conversation_id").asText();
+    }
+    JsonNode dataNode = node.path("data");
+    if (dataNode.hasNonNull("conversation_id")) {
+      return dataNode.get("conversation_id").asText();
+    }
+    return null;
+  }
+
+  private String extractAnswerFromEvent(JsonNode node) {
+    if (node == null || node.isMissingNode() || node.isNull()) {
+      return null;
+    }
+    if (node.hasNonNull("answer")) {
+      return node.get("answer").asText();
+    }
+    JsonNode dataNode = node.path("data");
+    if (dataNode.hasNonNull("answer")) {
+      return dataNode.get("answer").asText();
+    }
+    JsonNode outputs = dataNode.path("outputs");
+    if (outputs.hasNonNull("text")) {
+      return outputs.get("text").asText();
+    }
+    if (outputs.hasNonNull("result")) {
+      JsonNode resultNode = outputs.get("result");
+      if (resultNode.isTextual() || resultNode.isNumber() || resultNode.isBoolean()) {
+        return resultNode.asText();
+      }
+      if (resultNode.isContainerNode()) {
+        Iterator<String> fieldNames = resultNode.fieldNames();
+        while (fieldNames.hasNext()) {
+          String fieldName = fieldNames.next();
+          JsonNode value = resultNode.get(fieldName);
+          if (value != null && (value.isTextual() || value.isNumber() || value.isBoolean())) {
+            return value.asText();
+          }
+        }
+        return resultNode.toString();
+      }
+    }
+    return null;
   }
 
   private DifyDatasetResult parseDatasetResult(String responseJson) {

@@ -19,8 +19,6 @@ import com.shijie.transit.userapi.service.RoleKnowledgeBaseService;
 import com.shijie.transit.userapi.service.RoleService;
 import com.shijie.transit.userapi.service.SessionConfigService;
 import com.shijie.transit.userapi.service.SessionHistoryService;
-import com.shijie.transit.userapi.service.MembershipEntitlementService;
-import com.shijie.transit.userapi.service.MembershipQueryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -58,8 +56,6 @@ public class UserDifyController {
     private final KnowledgeBaseService knowledgeBaseService;
     private final SessionConfigService sessionConfigService;
     private final SessionHistoryService sessionHistoryService;
-    private final MembershipEntitlementService membershipEntitlementService;
-    private final MembershipQueryService membershipQueryService;
     private final DifyProperties difyProperties;
     private final ObjectMapper objectMapper;
 
@@ -72,8 +68,6 @@ public class UserDifyController {
             KnowledgeBaseService knowledgeBaseService,
             SessionConfigService sessionConfigService,
             SessionHistoryService sessionHistoryService,
-            MembershipEntitlementService membershipEntitlementService,
-            MembershipQueryService membershipQueryService,
             DifyProperties difyProperties,
             ObjectMapper objectMapper) {
         this.difyClient = difyClient;
@@ -84,8 +78,6 @@ public class UserDifyController {
         this.knowledgeBaseService = knowledgeBaseService;
         this.sessionConfigService = sessionConfigService;
         this.sessionHistoryService = sessionHistoryService;
-        this.membershipEntitlementService = membershipEntitlementService;
-        this.membershipQueryService = membershipQueryService;
         this.difyProperties = difyProperties;
         this.objectMapper = objectMapper;
     }
@@ -172,16 +164,11 @@ public class UserDifyController {
                         principal.subjectId(), request.roleId(), request.wechatContact(), result.conversationId());
             }
         }
-        String normalizedAnswer = normalizeStreamingAnswer(result.answer());
-        if (StringUtils.hasText(normalizedAnswer)) {
+        if (StringUtils.hasText(result.answer())) {
             sessionHistoryService.appendMessage(
-                    principal.subjectId(), request.roleId(), sceneType, sessionKey, "AI", normalizedAnswer);
+                    principal.subjectId(), request.roleId(), sceneType, sessionKey, "AI", result.answer());
         }
-        JsonNode monitorResultNode = objectMapper.readTree(result.rawJson());
-        if (monitorResultNode instanceof ObjectNode monitorObjectNode && StringUtils.hasText(normalizedAnswer)) {
-            monitorObjectNode.put("answer", normalizedAnswer);
-        }
-        return Result.success(monitorResultNode);
+        return Result.success(objectMapper.readTree(result.rawJson()));
     }
 
     @PostMapping(value = "/monitor-chat/stream")
@@ -197,17 +184,6 @@ public class UserDifyController {
                     emitter.completeWithError(new IllegalArgumentException("Invalid request"));
                     return;
                 }
-                
-                // 检查积分是否充足
-                MembershipQueryService.MyMembershipSnapshot snapshot = membershipQueryService.queryMyMembership(principal.subjectId());
-                int totalPoints = Math.max(0, snapshot.subscriptionPoints() != null ? snapshot.subscriptionPoints() : 0) 
-                                + Math.max(0, snapshot.packagePoints() != null ? snapshot.packagePoints() : 0);
-                if (totalPoints <= 0) {
-                    emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "积分不足，无法发起对话。请前往“我的”页面充值或升级会员。")));
-                    emitter.complete();
-                    return;
-                }
-
                 RoleEntity role = roleService.getById(principal.subjectId(), request.roleId());
                 String question = request.message().length() > 20 ? request.message().substring(0, 20) + "..." : request.message();
                 String contactName = StringUtils.hasText(request.wechatContact()) ? request.wechatContact() : "未知客户";
@@ -347,7 +323,6 @@ public class UserDifyController {
                 }
 
                 DifyClient.DifyChatResult result = difyClient.chatMessages(payload.toString());
-                String answer = normalizeStreamingAnswer(result.answer());
                 if (StringUtils.hasText(result.conversationId())) {
                     mappingService.recordConversation(principal.subjectId(), result.conversationId());
                     if (StringUtils.hasText(request.wechatContact())) {
@@ -355,17 +330,11 @@ public class UserDifyController {
                                 principal.subjectId(), request.roleId(), request.wechatContact(), result.conversationId());
                     }
                 }
-                if (StringUtils.hasText(answer)) {
+                if (StringUtils.hasText(result.answer())) {
                     sessionHistoryService.appendMessage(
-                            principal.subjectId(), request.roleId(), sceneType, resolveSessionKey(request.roleId(), request.wechatContact()), "AI", answer);
-                    boolean deductSuccess = membershipEntitlementService.deductPoints(principal.subjectId(), 1, "chat_reply", result.conversationId());
-                    if (!deductSuccess) {
-                        emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "积分不足，无法完成本次回复。请前往“我的”页面充值或升级会员。")));
-                        emitter.complete();
-                        return;
-                    }
+                            principal.subjectId(), request.roleId(), sceneType, resolveSessionKey(request.roleId(), request.wechatContact()), "AI", result.answer());
                 }
-                emitter.send(SseEmitter.event().data(new StepMsg("OUTPUT", answer)));
+                emitter.send(SseEmitter.event().data(new StepMsg("OUTPUT", result.answer())));
                 emitter.complete();
             } catch (Exception e) {
                 log.error("Monitor chat stream error", e);
@@ -686,22 +655,6 @@ public class UserDifyController {
             return wechatContact.trim();
         }
         return "role-" + roleId;
-    }
-
-    private String normalizeStreamingAnswer(String raw) {
-        if (!StringUtils.hasText(raw)) {
-            return raw;
-        }
-        String text = raw.replace("\u200B", "").trim();
-        int len = text.length();
-        if (len > 1 && len % 2 == 0) {
-            String firstHalf = text.substring(0, len / 2).trim();
-            String secondHalf = text.substring(len / 2).trim();
-            if (StringUtils.hasText(firstHalf) && firstHalf.equals(secondHalf)) {
-                return firstHalf;
-            }
-        }
-        return text;
     }
 
     public record UploadKnowledgeBaseDocumentResponse(String knowledgeBaseId, String difyDatasetId, String difyDocumentId) {
