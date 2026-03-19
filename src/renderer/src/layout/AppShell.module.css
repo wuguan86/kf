@@ -9,7 +9,7 @@
 }
 
 .appSidebar {
-  width: 200px;
+  width: 176px;
   display: flex;
   flex-direction: column;
   background-color: var(--bg-sidebar);
@@ -26,18 +26,19 @@
 }
 
 .appBrandAvatar {
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   background: linear-gradient(135deg, var(--color-primary), #69b1ff);
   border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
   box-shadow: 0 4px 12px rgba(22, 119, 255, 0.3);
   font-family: var(--font-display);
+  flex-shrink: 0;
 }
 
 .appBrandTitle {
@@ -165,4 +166,61 @@
   overflow: auto;
   padding: 32px 0 0 0;
   scroll-behavior: smooth;
+}
+
+/* Sidebar Dashboard */
+.sidebarDashboard {
+  padding: 24px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 8px;
+}
+
+.dashboardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.dashboardStats {
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.03);
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.statPointsWrapper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.statValueHighlight {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1;
+}
+
+.statValueVersion {
+  font-size: 12px;
+  font-weight: 600;
+  color: #d48806;
+  background: rgba(250, 173, 20, 0.15);
+  padding: 3px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
+  cursor: help;
+  display: inline-block;
+  line-height: 1.2;
+  text-align: left;
 }

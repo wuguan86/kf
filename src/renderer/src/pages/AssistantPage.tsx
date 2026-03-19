@@ -3,7 +3,9 @@ import http from '../utils/http'
 import { readAuthSnapshot } from '../auth/authStore'
 import { ProcessVisualizer, ProcessItem, ProcessStep } from '../components/ProcessVisualizer'
 import StoreToKnowledgeBaseDialog, { SelectableKnowledgeBase } from '../components/StoreToKnowledgeBaseDialog'
+import { RechargeDialog } from '../components/RechargeDialog'
 import { Toast, useToast } from '../components/Toast'
+import { eventBus } from '../utils/eventBus'
 import styles from './AssistantPage.module.css'
 import { AppConfig } from '../config'
 
@@ -153,6 +155,7 @@ type Props = {
   tenantId: string
   userToken: string
   onNavigateSettings: () => void
+  onNavigateMe?: () => void
   onLogout?: () => void
 }
 
@@ -198,6 +201,24 @@ const getCleanText = (items: any[], bounds: any, realImageSize?: { w: number; h:
 
 const normalizeMessage = (text: string): string => {
   return text.replace(/\s+/g, ' ').replace(/\u200B/g, '').trim()
+}
+
+const dedupeRepeatedOutput = (text: string): string => {
+  const normalized = String(text || '').replace(/\u200B/g, '').trim()
+  if (!normalized) return ''
+  const repeatedWhole = normalized.match(/^([\s\S]+?)\1+$/)
+  if (repeatedWhole && repeatedWhole[1]) {
+    return repeatedWhole[1].trim()
+  }
+  const midpoint = Math.floor(normalized.length / 2)
+  if (normalized.length % 2 === 0) {
+    const firstHalf = normalized.slice(0, midpoint).trim()
+    const secondHalf = normalized.slice(midpoint).trim()
+    if (firstHalf && firstHalf === secondHalf) {
+      return firstHalf
+    }
+  }
+  return normalized
 }
 
 const normalizeLikeConfig = (raw: any): MarketingLikeConfig => {
@@ -468,6 +489,7 @@ function AssistantPage(props: Props): JSX.Element {
   const [storeSubmitting, setStoreSubmitting] = useState(false)
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState('')
   const [storeContext, setStoreContext] = useState<StoreContext | null>(null)
+  const [showRechargeDialog, setShowRechargeDialog] = useState(false)
   const managedModeRef = useRef<'full' | 'semi'>('full')
 
   useEffect(() => {
@@ -722,20 +744,33 @@ function AssistantPage(props: Props): JSX.Element {
                   item.status = 'completed'
                   item.content = content
                 }
-                if (!localItems.find(i => i.step === 'OUTPUT')) {
-                  localItems.push({
-                    id: `step-output-${Date.now()}`,
-                    step: 'OUTPUT',
-                    status: 'running',
-                    content: '正在生成最终回复...',
-                    timestamp: new Date().toLocaleTimeString()
-                  })
+                
+                if (content.includes('积分不足')) {
+                  setShowRechargeDialog(true)
+                  setIsRunning(false)
+                  try {
+                    const api = (window as any).api
+                    api.stopPythonSidecar()
+                  } catch (e) {
+                    console.error('Failed to stop after points exhausted', e)
+                  }
+                } else {
+                  if (!localItems.find(i => i.step === 'OUTPUT')) {
+                    localItems.push({
+                      id: `step-output-${Date.now()}`,
+                      step: 'OUTPUT',
+                      status: 'running',
+                      content: '正在生成最终回复...',
+                      timestamp: new Date().toLocaleTimeString()
+                    })
+                  }
                 }
               } else if (step === 'OUTPUT') {
+                const cleanOutput = dedupeRepeatedOutput(content)
                 const item = localItems.find(i => i.step === 'OUTPUT')
                 if (item) {
                   item.status = 'completed'
-                  item.content = content
+                  item.content = cleanOutput
                   outputStoreContextRef.current.set(item.id, {
                     contactKey: contact,
                     customerMessage: normalizedText
@@ -743,7 +778,7 @@ function AssistantPage(props: Props): JSX.Element {
                 }
                 
                 // Send WeChat Message
-                const reply = content
+                const reply = cleanOutput
                 if (reply && managedModeRef.current === 'full') {
                    // Calculate delay based on session config
                    const config = sessionConfigRef.current?.sceneConfig
@@ -786,6 +821,7 @@ function AssistantPage(props: Props): JSX.Element {
     } finally {
       setIsSending(false)
       abortControllerRef.current = null
+      eventBus.emit('points-updated')
     }
   }
 
@@ -925,6 +961,7 @@ function AssistantPage(props: Props): JSX.Element {
                   tenantId: tenantId
                 }
               })
+              eventBus.emit('points-updated')
             }
           }
         }
@@ -1027,6 +1064,22 @@ function AssistantPage(props: Props): JSX.Element {
     setDifyResponse('')
 
     try {
+      // 检查是否有套餐或积分
+      try {
+        const safeTenantId = tenantId?.trim() || '1'
+        const headers: Record<string, string> = { 'X-Tenant-Id': safeTenantId, 'Authorization': `Bearer ${userToken}` }
+        const membershipRes = await http.get<any>('/api/user/membership/me', { headers })
+        const totalPoints = Math.max(0, membershipRes?.membership?.pointsBalance || 0)
+        
+        if (totalPoints <= 0) {
+          setShowRechargeDialog(true)
+          setIsConnecting(false)
+          return
+        }
+      } catch (e) {
+        console.error('Failed to check membership before running', e)
+      }
+
       const runningRole = await fetchRunningRole()
       if (!runningRole?.id) {
         setDifyResponse('请先在角色配置中开启一个角色')
@@ -1112,39 +1165,8 @@ function AssistantPage(props: Props): JSX.Element {
         <div className={styles.assistantContainer}>
           <div className={styles.mainCard}>
             
-            {/* Top Section: AI Thinking Process */}
-            <div className={styles.topSection}>
-              <div className={styles.sectionHeader}>
-                <h5 className={styles.sectionTitle}>
-                  <span className={styles.aiThinkingDot}></span>
-                  视界正在查看你的屏幕，正在阅读你的聊天内容
-                </h5>
-              </div>
-              <div className={styles.sectionContent}>
-                {(processItems.length > 0 || difyResponse) ? (
-                  processItems.length > 0 ? (
-                    <ProcessVisualizer
-                      items={processItems}
-                      managedMode={managedMode}
-                      onUpdateItem={handleUpdateProcessItem}
-                      onStoreItem={handleStoreProcessItem}
-                    />
-                  ) : (
-                    <div className={styles.aiResponseBox}>
-                      {difyResponse}
-                    </div>
-                  )
-                ) : (
-                   <div className={styles.emptyState}>
-                     <div className={styles.emptyIcon}>🧠</div>
-                     <div>等待触发任务...</div>
-                   </div>
-                )}
-              </div>
-            </div>
-
-            {/* Bottom Section: WeChat Messages */}
-            <div className={styles.bottomSection}>
+            {/* Top Section: WeChat Messages (Now on top) */}
+            <div className={styles.chatHistorySection}>
                <div className={styles.sectionHeader}>
                  <h5 className={styles.sectionTitle}>
                    实时对话读取
@@ -1158,7 +1180,7 @@ function AssistantPage(props: Props): JSX.Element {
                
                <div className={styles.chatHistoryContainer}>
                   {messages.length === 0 && (
-                    <div className={styles.emptyState} style={{ marginTop: '60px' }}>
+                    <div className={styles.emptyState}>
                       启动后，收到的微信消息会出现在这里...
                     </div>
                   )}
@@ -1192,6 +1214,43 @@ function AssistantPage(props: Props): JSX.Element {
                   <div ref={messagesEndRef} />
                </div>
             </div>
+
+            {/* Bottom Section: AI Thinking Process (Now at bottom) */}
+            <div className={styles.aiThinkingSection}>
+              <div className={styles.sectionHeader}>
+                <h5 className={styles.sectionTitle}>
+                  {isRunning ? (
+                    <>
+                      <span className={styles.aiThinkingDot}></span>
+                      视界正在查看你的屏幕，正在阅读你的聊天内容
+                    </>
+                  ) : (
+                    <span>AI 思考过程</span>
+                  )}
+                </h5>
+              </div>
+              <div className={styles.sectionContent}>
+                {(processItems.length > 0 || difyResponse) ? (
+                  processItems.length > 0 ? (
+                    <ProcessVisualizer
+                      items={processItems}
+                      managedMode={managedMode}
+                      onUpdateItem={handleUpdateProcessItem}
+                      onStoreItem={handleStoreProcessItem}
+                    />
+                  ) : (
+                    <div className={styles.aiResponseBox}>
+                      {difyResponse}
+                    </div>
+                  )
+                ) : (
+                   <div className={styles.emptyState}>
+                     <div className={styles.emptyIcon}>🧠</div>
+                     <div>等待触发任务...</div>
+                   </div>
+                )}
+              </div>
+            </div>
             
           </div>
         </div>
@@ -1206,6 +1265,16 @@ function AssistantPage(props: Props): JSX.Element {
         onSelect={setSelectedKnowledgeBaseId}
         onConfirm={submitManualStore}
         onClose={closeStoreDialog}
+      />
+      <RechargeDialog
+        isOpen={showRechargeDialog}
+        onRecharge={() => {
+          setShowRechargeDialog(false)
+          if (props.onNavigateMe) {
+            props.onNavigateMe()
+          }
+        }}
+        onCancel={() => setShowRechargeDialog(false)}
       />
       {toast && <Toast message={toast.message} type={toast.type} />}
     </div>

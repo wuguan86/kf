@@ -1,6 +1,8 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import TitleBar from '../components/TitleBar'
 import styles from './AppShell.module.css'
+import http from '../utils/http'
+import { eventBus } from '../utils/eventBus'
 
 export type AppRoute = 'assistant' | 'settings' | 'knowledge' | 'session-management' | 'marketing' | 'data-statistics' | 'me' | 'system-settings'
 
@@ -8,18 +10,102 @@ type Props = {
   activeRoute: AppRoute
   onNavigate: (route: AppRoute) => void
   children: React.ReactNode
+  backendBaseUrl?: string
+  tenantId?: string
+  userToken?: string
+}
+
+type MembershipMeResponse = {
+  membership: {
+    status: string
+    startAt: string
+    endAt: string
+    pointsBalance: number
+    subscriptionPoints: number
+    packagePoints: number
+  } | null
+  plan: {
+    name: string
+  } | null
 }
 
 function AppShell(props: Props): JSX.Element {
-  const { activeRoute, onNavigate, children } = props
+  const { activeRoute, onNavigate, children, tenantId, userToken } = props
+
+  const [membership, setMembership] = useState<MembershipMeResponse | null>(null)
+
+  const [isConnecting, setIsConnecting] = useState(false)
+
+  useEffect(() => {
+    const fetchMembership = async () => {
+      if (!userToken) return
+      try {
+        const safeTenantId = tenantId?.trim() || '1'
+        const headers: Record<string, string> = { 'X-Tenant-Id': safeTenantId, 'Authorization': `Bearer ${userToken}` }
+        const data = await http.get<MembershipMeResponse>('/api/user/membership/me', { headers })
+        setMembership(data)
+      } catch (error) {
+        console.error('Failed to fetch membership info in AppShell', error)
+      }
+    }
+    fetchMembership()
+    // Optional: Refresh periodically or listen to events
+    const interval = setInterval(fetchMembership, 60000)
+    
+    const unsubscribePoints = eventBus.on('points-updated', () => {
+      fetchMembership()
+    })
+
+    return () => {
+      clearInterval(interval)
+      unsubscribePoints()
+    }
+  }, [userToken, tenantId])
+
+  useEffect(() => {
+    const unsubscribeState = eventBus.on('assistant-state-change', ({ isConnecting }) => {
+      setIsConnecting(isConnecting)
+    })
+    return () => {
+      unsubscribeState()
+    }
+  }, [])
+
+  const handleToggle = () => {
+    if (isConnecting) return
+    eventBus.emit('assistant-toggle')
+  }
+
+  const totalPoints = Math.max(0, membership?.membership?.pointsBalance || 0)
+  const currentPlanName = membership?.plan?.name || '免费版'
+  
+  const formatDateTime = (isoString: string) => {
+    const d = new Date(isoString)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  const expireAtText = membership?.membership?.endAt ? `到期时间: ${formatDateTime(membership.membership.endAt)}` : '未开通或长期有效'
 
   return (
     <div className={styles.appShell}>
       <TitleBar />
       <div className={styles.appSidebar}>
-        <div className={styles.appBrand}>
-          <div className={styles.appBrandAvatar}>视</div>
-          <h3 className={styles.appBrandTitle}>视界AI助手</h3>
+        <div className={styles.sidebarDashboard}>
+          <div className={styles.dashboardHeader}>
+            <div className={styles.appBrandAvatar}>视</div>
+            <div className={styles.dashboardStats}>
+              <div className={styles.statValueVersion} title={expireAtText}>
+                {currentPlanName}
+              </div>
+              <div className={styles.statPointsWrapper} title="当前积分">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#faad14" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/>
+                  <path d="M12 18V6"/>
+                </svg>
+                <span className={styles.statValueHighlight}>{totalPoints}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <nav className={styles.appNav}>
@@ -30,7 +116,7 @@ function AppShell(props: Props): JSX.Element {
             <span className={styles.navIcon}>
               <svg className={styles.navIconSvg} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
             </span>
-            <span className={styles.navLabel}>视界AI运营助手</span>
+            <span className={styles.navLabel}>运营助手</span>
           </div>
           <div
             className={`${styles.navItem} ${activeRoute === 'settings' ? styles.active : ''}`}

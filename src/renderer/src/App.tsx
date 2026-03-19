@@ -11,6 +11,7 @@ import SystemSettingsPage from "./pages/SystemSettingsPage";
 import SessionManagementPage from "./pages/SessionManagementPage";
 import MarketingManagementPage from "./pages/MarketingManagementPage";
 import DataStatisticsPage from "./pages/DataStatisticsPage";
+import { AlertDialog } from "./components/AlertDialog";
 
 type HashRoute = AppRoute | "capture";
 
@@ -42,6 +43,7 @@ function App(): JSX.Element {
   const [userToken, setUserToken] = useState<string>(
     localStorage.getItem("userToken") || "",
   );
+  const [showLoginAlert, setShowLoginAlert] = useState(false);
 
   useEffect(() => {
     const handleHashChange = () => setHash(window.location.hash || "#/");
@@ -81,6 +83,7 @@ function App(): JSX.Element {
           setUserToken(auth.token);
           setTenantId(normalizeTenantId(auth.tenantId));
           navigate("assistant");
+          setShowLoginAlert(true);
         }}
       />
     );
@@ -89,63 +92,80 @@ function App(): JSX.Element {
   const activeRoute: AppRoute = route;
 
   return (
-    <AppShell activeRoute={activeRoute} onNavigate={navigate}>
-      {activeRoute === "assistant" && (
-        <AssistantPage
-          backendBaseUrl={backendBaseUrl}
-          tenantId={tenantId}
-          userToken={userToken}
-          onNavigateSettings={() => navigate("settings")}
-          onLogout={() => {
-            setUserToken("");
-            navigate("assistant");
-          }}
-        />
-      )}
-      {activeRoute === "settings" && (
-        <SettingsPage
-          backendBaseUrl={backendBaseUrl}
-          tenantId={tenantId}
-          userToken={userToken}
-          setUserToken={setUserToken}
-        />
-      )}
-      {activeRoute === "knowledge" && (
-        <KnowledgeBasePage
-          backendBaseUrl={backendBaseUrl}
-          tenantId={tenantId}
-          userToken={userToken}
-        />
-      )}
-      {activeRoute === "session-management" && (
-        <SessionManagementPage
-          backendBaseUrl={backendBaseUrl}
-          tenantId={tenantId}
-          userToken={userToken}
-        />
-      )}
-      {activeRoute === "marketing" && <MarketingManagementPage />}
-      {activeRoute === "data-statistics" && <DataStatisticsPage />}
-      {activeRoute === "system-settings" && (
-        <SystemSettingsPage
-          onLogout={() => {
-            setUserToken("");
-            navigate("assistant");
-          }}
-        />
-      )}
-      {activeRoute === "me" && (
-        <MePage
-          backendBaseUrl={backendBaseUrl}
-          tenantId={tenantId}
-          userToken={userToken}
-          onLogout={() => {
-            setUserToken("");
-            navigate("assistant");
-          }}
-        />
-      )}
-    </AppShell>
+    <>
+      <AppShell 
+        activeRoute={activeRoute} 
+        onNavigate={navigate}
+        backendBaseUrl={backendBaseUrl}
+        tenantId={tenantId}
+        userToken={userToken}
+      >
+        {activeRoute === "assistant" && (
+          <AssistantPage
+            backendBaseUrl={backendBaseUrl}
+            tenantId={tenantId}
+            userToken={userToken}
+            onNavigateSettings={() => navigate("settings")}
+            onNavigateMe={() => navigate("me")}
+            onLogout={() => {
+              setUserToken("");
+              navigate("assistant");
+            }}
+          />
+        )}
+        {activeRoute === "settings" && (
+          <SettingsPage
+            backendBaseUrl={backendBaseUrl}
+            tenantId={tenantId}
+            userToken={userToken}
+            setUserToken={setUserToken}
+          />
+        )}
+        {activeRoute === "knowledge" && (
+          <KnowledgeBasePage
+            backendBaseUrl={backendBaseUrl}
+            tenantId={tenantId}
+            userToken={userToken}
+          />
+        )}
+        {activeRoute === "session-management" && (
+          <SessionManagementPage
+            backendBaseUrl={backendBaseUrl}
+            tenantId={tenantId}
+            userToken={userToken}
+          />
+        )}
+        {activeRoute === "marketing" && <MarketingManagementPage />}
+        {activeRoute === "data-statistics" && <DataStatisticsPage />}
+        {activeRoute === "system-settings" && (
+          <SystemSettingsPage
+            onLogout={() => {
+              setUserToken("");
+              navigate("assistant");
+            }}
+          />
+        )}
+        {activeRoute === "me" && (
+          <MePage
+            backendBaseUrl={backendBaseUrl}
+            tenantId={tenantId}
+            userToken={userToken}
+            onLogout={() => {
+              setUserToken("");
+              navigate("assistant");
+            }}
+          />
+        )}
+      </AppShell>
+
+      <AlertDialog
+        isOpen={showLoginAlert}
+        title="提示"
+        content="为了能够更好的分析对话，请保持微信客户端的显示。"
+        onConfirm={() => setShowLoginAlert(false)}
+        confirmText="我知道了"
+      />
+    </>
   );
 }
 
