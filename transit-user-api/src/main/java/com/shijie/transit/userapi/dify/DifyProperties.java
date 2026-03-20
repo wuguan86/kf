@@ -9,6 +9,7 @@ public class DifyProperties {
   private String datasetApiKey;
   private String commentWorkflowApiKey;
   private String intentWorkflowApiKey;
+  private String promptOptimizeWorkflowApiKey;
   private Double retrieveScoreThreshold = 0.6d;
 
   public String getBaseUrl() {
@@ -49,6 +50,14 @@ public class DifyProperties {
 
   public void setIntentWorkflowApiKey(String intentWorkflowApiKey) {
     this.intentWorkflowApiKey = intentWorkflowApiKey;
+  }
+
+  public String getPromptOptimizeWorkflowApiKey() {
+    return promptOptimizeWorkflowApiKey;
+  }
+
+  public void setPromptOptimizeWorkflowApiKey(String promptOptimizeWorkflowApiKey) {
+    this.promptOptimizeWorkflowApiKey = promptOptimizeWorkflowApiKey;
   }
 
   public Double getRetrieveScoreThreshold() {

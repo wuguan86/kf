@@ -8,8 +8,10 @@ import com.shijie.transit.common.web.Result;
 import com.shijie.transit.userapi.service.MarketingService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @RestController
@@ -66,8 +68,11 @@ public class UserMarketingController {
     @GetMapping("/statistics/customers")
     public Result<MarketingService.CustomerListResponse> getIntentCustomers(
             @RequestParam(value = "pageNo", defaultValue = "1") Long pageNo,
-            @RequestParam(value = "pageSize", defaultValue = "20") Long pageSize) {
-        return Result.success(marketingService.getIntentCustomers(currentUserId(), pageNo, pageSize));
+            @RequestParam(value = "pageSize", defaultValue = "20") Long pageSize,
+            @RequestParam(value = "queryDate", required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate queryDate,
+            @RequestParam(value = "customerName", required = false) String customerName,
+            @RequestParam(value = "intentLevel", required = false) Integer intentLevel) {
+        return Result.success(marketingService.getIntentCustomers(currentUserId(), pageNo, pageSize, queryDate, customerName, intentLevel));
     }
 
     private Long currentUserId() {

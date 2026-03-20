@@ -62,7 +62,7 @@ public class SessionConfigService {
       group.setGroupReplyStartTime(StringUtils.hasText(command.groupReplyStartTime()) ? command.groupReplyStartTime() : "09:00");
       group.setGroupReplyEndTime(StringUtils.hasText(command.groupReplyEndTime()) ? command.groupReplyEndTime() : "18:00");
       group.setGroupCooldownSec(command.groupCooldownSec() == null ? 60 : Math.max(command.groupCooldownSec(), 0));
-      group.setGroupKeywordTriggerEnabled(command.groupKeywordTriggerEnabled() ? 1 : 0);
+      group.setGroupKeywordTriggerEnabled(1);
       group.setGroupTriggerKeywords(toJsonArray(command.groupTriggerKeywords()));
       group.setStatus(command.enabled() ? "ENABLED" : "DISABLED");
       upsertGroup(group);
@@ -146,7 +146,7 @@ public class SessionConfigService {
     entity.setGroupReplyStartTime("09:00");
     entity.setGroupReplyEndTime("18:00");
     entity.setGroupCooldownSec(60);
-    entity.setGroupKeywordTriggerEnabled(0);
+    entity.setGroupKeywordTriggerEnabled(1);
     entity.setGroupTriggerKeywords("[]");
     entity.setGroupInteractionStrategy("");
     entity.setStatus("ENABLED");

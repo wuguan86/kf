@@ -17,6 +17,7 @@ public class ManualSchemaUpdater implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) throws Exception {
         ensureUserAccountInitColumn();
+        ensureUserIntentDailySummaryColumn();
         jdbcTemplate.execute("""
             CREATE TABLE IF NOT EXISTS system_config (
               id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
@@ -85,6 +86,22 @@ public class ManualSchemaUpdater implements ApplicationRunner {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='意向每日统计表';
         """);
         jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS user_intent_daily_snapshot (
+              id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
+              tenant_id BIGINT NOT NULL COMMENT '租户ID',
+              owner_user_id BIGINT NOT NULL COMMENT '系统用户ID',
+              contact_key VARCHAR(128) NOT NULL COMMENT '微信联系人标识',
+              stats_date DATE NOT NULL COMMENT '统计日期',
+              intent_level TINYINT NOT NULL COMMENT '意向等级 1低 2中 3高',
+              daily_summary TEXT COMMENT '当日对话总结',
+              last_chat_time DATETIME(3) COMMENT '当日最后聊天时间',
+              created_at DATETIME(3) NOT NULL COMMENT '创建时间',
+              updated_at DATETIME(3) NOT NULL COMMENT '更新时间',
+              UNIQUE KEY uk_snapshot_owner_contact_date (tenant_id, owner_user_id, contact_key, stats_date) COMMENT '唯一索引:租户+用户+联系人+日期',
+              KEY idx_snapshot_query (tenant_id, owner_user_id, stats_date, intent_level, last_chat_time) COMMENT '索引:筛选与排序'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='客户意向每日快照表';
+        """);
+        jdbcTemplate.execute("""
             CREATE TABLE IF NOT EXISTS manual_kb_sync_record (
               id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
               tenant_id BIGINT NOT NULL COMMENT '租户ID',
@@ -116,6 +133,16 @@ public class ManualSchemaUpdater implements ApplicationRunner {
         jdbcTemplate.execute("""
             ALTER TABLE user_account
             ADD COLUMN is_initialized TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否完成默认知识库初始化';
+        """);
+    }
+
+    private void ensureUserIntentDailySummaryColumn() {
+        if (hasColumn("user_intent", "daily_summary")) {
+            return;
+        }
+        jdbcTemplate.execute("""
+            ALTER TABLE user_intent
+            ADD COLUMN daily_summary TEXT COMMENT '当日对话总结';
         """);
     }
 

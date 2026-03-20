@@ -38,6 +38,8 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -221,6 +223,7 @@ public class UserDifyController {
                 } else if (StringUtils.hasText(request.wechatContact()) && request.wechatContact().matches(".*\\(\\d+\\)$")) {
                     sceneType = "GROUP";
                 }
+                String sessionKey = resolveSessionKey(request.roleId(), request.wechatContact());
 
                 SessionConfigService.SessionConfigView configView = sessionConfigService.getConfig(principal.subjectId(), sceneType);
                 if (configView != null && configView.sceneConfig() != null && configView.sceneConfig().enabled() != null && configView.sceneConfig().enabled() == 0) {
@@ -251,23 +254,35 @@ public class UserDifyController {
                          }
 
                          // 1. Keyword Trigger
-                         Integer keywordTriggerEnabled = configView.replyStrategy().groupKeywordTriggerEnabled();
                          List<String> triggerKeywords = configView.groupTriggerKeywords();
                          String content = request.message();
-                         if (keywordTriggerEnabled != null && keywordTriggerEnabled == 1) {
-                             boolean matched = false;
-                             if (triggerKeywords != null && StringUtils.hasText(content)) {
-                                 for (String keyword : triggerKeywords) {
-                                     if (StringUtils.hasText(keyword) && content.contains(keyword)) {
-                                         matched = true;
-                                         break;
-                                     }
+                         boolean matched = false;
+                         if (triggerKeywords != null && StringUtils.hasText(content)) {
+                             for (String keyword : triggerKeywords) {
+                                 if (StringUtils.hasText(keyword) && content.contains(keyword)) {
+                                     matched = true;
+                                     break;
                                  }
                              }
-                             if (!matched) {
-                                 emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "未触发群消息关键词，停止回复。")));
-                                 emitter.complete();
-                                 return;
+                         }
+                         if (!matched) {
+                             emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "未触发群消息关键词，停止回复。")));
+                             emitter.complete();
+                             return;
+                         }
+
+                         Integer cooldownConfig = configView.sceneConfig().groupCooldownSec();
+                         int cooldownSec = cooldownConfig == null ? 0 : Math.max(cooldownConfig, 0);
+                         if (cooldownSec > 0) {
+                             LocalDateTime lastAiReplyTime = sessionHistoryService.getLastAiReplyTime(
+                                     principal.subjectId(), request.roleId(), sceneType, sessionKey);
+                             if (lastAiReplyTime != null) {
+                                 long elapsedSeconds = Duration.between(lastAiReplyTime, LocalDateTime.now()).getSeconds();
+                                 if (elapsedSeconds >= 0 && elapsedSeconds < cooldownSec) {
+                                     emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "群聊回复频率控制生效，冷却中，停止回复。")));
+                                     emitter.complete();
+                                     return;
+                                 }
                              }
                          }
                      }
@@ -330,9 +345,9 @@ public class UserDifyController {
                     inputs.put("user_custom_role", roleContent);
                 }
                 int memoryRounds = resolveMemoryRounds(principal.subjectId(), sceneType);
-                addHistoryToInputs(inputs, principal.subjectId(), request.roleId(), sceneType, resolveSessionKey(request.roleId(), request.wechatContact()), memoryRounds);
+                addHistoryToInputs(inputs, principal.subjectId(), request.roleId(), sceneType, sessionKey, memoryRounds);
                 sessionHistoryService.appendMessage(
-                        principal.subjectId(), request.roleId(), sceneType, resolveSessionKey(request.roleId(), request.wechatContact()), "USER", request.message());
+                        principal.subjectId(), request.roleId(), sceneType, sessionKey, "USER", request.message());
                 payload.put("user", "user-" + principal.subjectId());
                 String conversationId = request.conversationId();
                 if (StringUtils.hasText(request.wechatContact())) {
@@ -357,7 +372,7 @@ public class UserDifyController {
                 }
                 if (StringUtils.hasText(answer)) {
                     sessionHistoryService.appendMessage(
-                            principal.subjectId(), request.roleId(), sceneType, resolveSessionKey(request.roleId(), request.wechatContact()), "AI", answer);
+                            principal.subjectId(), request.roleId(), sceneType, sessionKey, "AI", answer);
                     boolean deductSuccess = membershipEntitlementService.deductPoints(principal.subjectId(), 1, "chat_reply", result.conversationId());
                     if (!deductSuccess) {
                         emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "积分不足，无法完成本次回复。请前往“我的”页面充值或升级会员。")));

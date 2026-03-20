@@ -19,6 +19,9 @@ import java.util.List;
 
 @Service
 public class KnowledgeBaseService {
+  private static final String DEFAULT_SEARCH_METHOD = "hybrid_search";
+  private static final int DEFAULT_TOP_K = 5;
+  private static final double DEFAULT_SCORE_THRESHOLD = 0.5d;
   private final KnowledgeBaseMapper knowledgeBaseMapper;
   private final KnowledgeBaseFileMapper knowledgeBaseFileMapper;
   private final RoleKnowledgeBaseService roleKnowledgeBaseService;
@@ -74,6 +77,13 @@ public class KnowledgeBaseService {
     if (!StringUtils.hasText(datasetResult.datasetId())) {
       throw new IllegalStateException("failed to create dify dataset");
     }
+    difyClient.updateDatasetRetrievalModel(
+        datasetResult.datasetId(),
+        DEFAULT_SEARCH_METHOD,
+        true,
+        DEFAULT_TOP_K,
+        true,
+        DEFAULT_SCORE_THRESHOLD);
     KnowledgeBaseEntity entity = new KnowledgeBaseEntity();
     entity.setTenantId(TenantContext.getTenantId());
     entity.setUserId(userId);

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.shijie.transit.common.db.entity.IntentAnalysisLogEntity;
 import com.shijie.transit.common.db.entity.IntentDailyStatsEntity;
 import com.shijie.transit.common.db.entity.SystemConfigEntity;
+import com.shijie.transit.common.db.entity.UserIntentDailySnapshotEntity;
 import com.shijie.transit.common.db.entity.UserIntentEntity;
 import com.shijie.transit.common.mapper.SystemConfigMapper;
 import com.shijie.transit.common.tenant.TenantContext;
@@ -15,6 +16,7 @@ import com.shijie.transit.userapi.dify.DifyProperties;
 import com.shijie.transit.userapi.mapper.IntentAnalysisLogMapper;
 import com.shijie.transit.userapi.mapper.IntentDailyStatsMapper;
 import com.shijie.transit.userapi.mapper.SessionMessageHistoryMapper;
+import com.shijie.transit.userapi.mapper.UserIntentDailySnapshotMapper;
 import com.shijie.transit.userapi.mapper.UserIntentMapper;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -43,6 +45,7 @@ public class IntentAnalysisService {
   private final UserIntentMapper userIntentMapper;
   private final IntentAnalysisLogMapper intentAnalysisLogMapper;
   private final IntentDailyStatsMapper intentDailyStatsMapper;
+  private final UserIntentDailySnapshotMapper userIntentDailySnapshotMapper;
   private final SystemConfigMapper systemConfigMapper;
   private final DifyClient difyClient;
   private final DifyProperties difyProperties;
@@ -54,6 +57,7 @@ public class IntentAnalysisService {
       UserIntentMapper userIntentMapper,
       IntentAnalysisLogMapper intentAnalysisLogMapper,
       IntentDailyStatsMapper intentDailyStatsMapper,
+      UserIntentDailySnapshotMapper userIntentDailySnapshotMapper,
       SystemConfigMapper systemConfigMapper,
       DifyClient difyClient,
       DifyProperties difyProperties,
@@ -63,6 +67,7 @@ public class IntentAnalysisService {
     this.userIntentMapper = userIntentMapper;
     this.intentAnalysisLogMapper = intentAnalysisLogMapper;
     this.intentDailyStatsMapper = intentDailyStatsMapper;
+    this.userIntentDailySnapshotMapper = userIntentDailySnapshotMapper;
     this.systemConfigMapper = systemConfigMapper;
     this.difyClient = difyClient;
     this.difyProperties = difyProperties;
@@ -167,7 +172,47 @@ public class IntentAnalysisService {
     logEntity.setDecisionReason(result.reason());
     intentAnalysisLogMapper.insert(logEntity);
 
+    persistDailySnapshot(tenantId, ownerUserId, contactKey, result.intentLevel(), result.dailySummary());
     refreshDailyStats(ownerUserId, isNewUser, becameHigh);
+  }
+
+  private void persistDailySnapshot(Long tenantId,
+                                    Long ownerUserId,
+                                    String contactKey,
+                                    Integer intentLevel,
+                                    String dailySummary) {
+    // 日期口径统一按最后聊天时间所属日期，确保查询口径与落库口径一致。
+    LocalDateTime lastChatTime = userIntentDailySnapshotMapper.findLatestChatTime(tenantId, ownerUserId, contactKey);
+    if (lastChatTime == null) {
+      log.info("跳过快照写入：未找到聊天时间 tenantId={} ownerUserId={} contactKey={}", tenantId, ownerUserId, contactKey);
+      return;
+    }
+    LocalDate statsDate = lastChatTime.toLocalDate();
+    UserIntentDailySnapshotEntity snapshot = userIntentDailySnapshotMapper.selectOne(
+        new LambdaQueryWrapper<UserIntentDailySnapshotEntity>()
+            .eq(UserIntentDailySnapshotEntity::getTenantId, tenantId)
+            .eq(UserIntentDailySnapshotEntity::getOwnerUserId, ownerUserId)
+            .eq(UserIntentDailySnapshotEntity::getContactKey, contactKey)
+            .eq(UserIntentDailySnapshotEntity::getStatsDate, statsDate)
+            .last("limit 1"));
+    if (snapshot == null) {
+      snapshot = new UserIntentDailySnapshotEntity();
+      snapshot.setTenantId(tenantId);
+      snapshot.setOwnerUserId(ownerUserId);
+      snapshot.setContactKey(contactKey);
+      snapshot.setStatsDate(statsDate);
+      snapshot.setIntentLevel(intentLevel);
+      snapshot.setDailySummary(dailySummary);
+      snapshot.setLastChatTime(lastChatTime);
+      userIntentDailySnapshotMapper.insert(snapshot);
+      log.info("新增客户每日快照成功 tenantId={} ownerUserId={} contactKey={} statsDate={}", tenantId, ownerUserId, contactKey, statsDate);
+      return;
+    }
+    snapshot.setIntentLevel(intentLevel);
+    snapshot.setDailySummary(dailySummary);
+    snapshot.setLastChatTime(lastChatTime);
+    userIntentDailySnapshotMapper.updateById(snapshot);
+    log.info("更新客户每日快照成功 tenantId={} ownerUserId={} contactKey={} statsDate={}", tenantId, ownerUserId, contactKey, statsDate);
   }
 
   private UserIntentEntity getIntent(Long ownerUserId, String contactKey) {

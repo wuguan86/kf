@@ -13,6 +13,7 @@ import com.shijie.transit.userapi.mapper.PointsLedgerMapper;
 import com.shijie.transit.userapi.mapper.UserMembershipMapper;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -175,7 +176,6 @@ public class MembershipEntitlementService {
   public boolean deductPoints(long userId, int amount, String reason, String refId) {
     if (amount <= 0) return true;
     refreshMembershipStatus(userId);
-    LocalDateTime now = LocalDateTime.now(clock);
     List<UserMembershipEntity> activeMemberships = userMembershipMapper.selectList(
         new LambdaQueryWrapper<UserMembershipEntity>()
             .eq(UserMembershipEntity::getUserId, userId)
@@ -183,6 +183,14 @@ public class MembershipEntitlementService {
             .gt(UserMembershipEntity::getPointsBalance, 0)
             .orderByAsc(UserMembershipEntity::getEndAt)
             .orderByAsc(UserMembershipEntity::getId));
+    Map<Long, MembershipPlanEntity> planCache = new HashMap<>();
+    activeMemberships.sort(
+        Comparator
+            .comparing(
+                UserMembershipEntity::getEndAt,
+                Comparator.nullsLast(LocalDateTime::compareTo))
+            .thenComparing(membership -> membershipTypePriority(resolveMembershipType(membership, planCache)))
+            .thenComparing(UserMembershipEntity::getId, Comparator.nullsLast(Long::compareTo)));
             
     int totalAvailable = activeMemberships.stream().mapToInt(m -> safeInt(m.getPointsBalance())).sum();
     if (totalAvailable < amount) {
@@ -201,6 +209,27 @@ public class MembershipEntitlementService {
     
     insertLedger(userId, -amount, totalAvailable - amount, reason, refId);
     return true;
+  }
+
+  private String resolveMembershipType(UserMembershipEntity membership, Map<Long, MembershipPlanEntity> planCache) {
+    if (membership == null || membership.getPlanId() == null) {
+      return "POINTS";
+    }
+    MembershipPlanEntity plan = resolvePlan(planCache, membership.getPlanId());
+    if (plan == null || !StringUtils.hasText(plan.getType())) {
+      return "POINTS";
+    }
+    return plan.getType().toUpperCase(Locale.ROOT);
+  }
+
+  private int membershipTypePriority(String membershipType) {
+    if ("SUBSCRIPTION".equalsIgnoreCase(membershipType)) {
+      return 0;
+    }
+    if ("POINTS".equalsIgnoreCase(membershipType)) {
+      return 1;
+    }
+    return 2;
   }
 
   private void grantSubscriptionByPlan(long userId, MembershipPlanEntity plan, int purchaseCount, String referenceId) {

@@ -279,6 +279,42 @@ public class DifyClient {
     }
   }
 
+  public void updateDatasetRetrievalModel(
+      String datasetId,
+      String searchMethod,
+      boolean rerankingEnable,
+      Integer topK,
+      boolean scoreThresholdEnabled,
+      Double scoreThreshold) {
+    try {
+      log.info("Dify updateDatasetRetrievalModel datasetId={} searchMethod={} rerankingEnable={} topK={} scoreThresholdEnabled={} scoreThreshold={}",
+          datasetId, searchMethod, rerankingEnable, topK, scoreThresholdEnabled, scoreThreshold);
+      ObjectNode request = objectMapper.createObjectNode();
+      ObjectNode retrievalModel = request.putObject("retrieval_model");
+      retrievalModel.put("search_method", StringUtils.hasText(searchMethod) ? searchMethod : "hybrid_search");
+      retrievalModel.put("reranking_enable", rerankingEnable);
+      if (rerankingEnable) {
+        retrievalModel.put("reranking_mode", "reranking_model");
+      }
+      if (topK != null && topK > 0) {
+        retrievalModel.put("top_k", topK);
+      }
+      retrievalModel.put("score_threshold_enabled", scoreThresholdEnabled);
+      if (scoreThresholdEnabled && scoreThreshold != null) {
+        retrievalModel.put("score_threshold", Math.max(0d, scoreThreshold));
+      }
+
+      restClientForDataset().patch()
+          .uri("/v1/datasets/{datasetId}", datasetId)
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(request.toString())
+          .retrieve()
+          .toBodilessEntity();
+    } catch (RestClientResponseException ex) {
+      throw toTransitException(ex);
+    }
+  }
+
   public String runWorkflow(String apiKey, ObjectNode inputs, String user) {
     try {
       log.info("Dify runWorkflow user={}", user);
