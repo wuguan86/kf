@@ -517,6 +517,18 @@ ipcMain.handle('wechat-bridge-command', async (_, payload: Record<string, any>) 
   })
 })
 
+ipcMain.handle('wechat-bridge-set-managed-mode', async (_, mode: 'full' | 'semi') => {
+  const normalizedMode = mode === 'semi' ? 'semi' : 'full'
+  return requestWeChatBridge('/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'set_managed_mode',
+      mode: normalizedMode
+    })
+  })
+})
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.electron')
 

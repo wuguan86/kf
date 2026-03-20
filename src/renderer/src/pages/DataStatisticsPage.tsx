@@ -28,10 +28,37 @@ type CustomerListResponse = {
   list: CustomerItem[]
 }
 
+type CustomerQuery = {
+  queryDate: string
+  customerName: string
+  intentLevel: string
+}
+
+const getTodayDateText = () => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = `${now.getMonth() + 1}`.padStart(2, '0')
+  const day = `${now.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const api = {
   getOverview: () => http.get<any, OverviewStats>('/api/user/marketing/statistics/overview'),
-  getCustomers: (pageNo: number, pageSize: number) =>
-    http.get<any, CustomerListResponse>(`/api/user/marketing/statistics/customers?pageNo=${pageNo}&pageSize=${pageSize}`)
+  getCustomers: (pageNo: number, pageSize: number, query: CustomerQuery) => {
+    const params = new URLSearchParams()
+    params.set('pageNo', String(pageNo))
+    params.set('pageSize', String(pageSize))
+    if (query.queryDate) {
+      params.set('queryDate', query.queryDate)
+    }
+    if (query.customerName.trim()) {
+      params.set('customerName', query.customerName.trim())
+    }
+    if (query.intentLevel) {
+      params.set('intentLevel', query.intentLevel)
+    }
+    return http.get<any, CustomerListResponse>(`/api/user/marketing/statistics/customers?${params.toString()}`)
+  }
 }
 
 const PERIODS: Array<{ key: keyof OverviewStats; label: string }> = [
@@ -57,11 +84,20 @@ const formatTime = (value: string | null) => {
 }
 
 export default function DataStatisticsPage() {
+  const defaultDate = useMemo(() => getTodayDateText(), [])
   const [overview, setOverview] = useState<OverviewStats | null>(null)
   const [customers, setCustomers] = useState<CustomerItem[]>([])
   const [total, setTotal] = useState(0)
   const [pageNo, setPageNo] = useState(1)
   const [pageSize] = useState(20)
+  const [queryDate, setQueryDate] = useState(defaultDate)
+  const [customerName, setCustomerName] = useState('')
+  const [intentLevel, setIntentLevel] = useState('')
+  const [appliedQuery, setAppliedQuery] = useState<CustomerQuery>({
+    queryDate: defaultDate,
+    customerName: '',
+    intentLevel: ''
+  })
   const [loadingOverview, setLoadingOverview] = useState(false)
   const [loadingCustomers, setLoadingCustomers] = useState(false)
 
@@ -82,7 +118,7 @@ export default function DataStatisticsPage() {
     const loadCustomers = async () => {
       setLoadingCustomers(true)
       try {
-        const result = await api.getCustomers(pageNo, pageSize)
+        const result = await api.getCustomers(pageNo, pageSize, appliedQuery)
         setCustomers(result?.list || [])
         setTotal(result?.total || 0)
       } finally {
@@ -90,9 +126,31 @@ export default function DataStatisticsPage() {
       }
     }
     loadCustomers()
-  }, [pageNo, pageSize])
+  }, [pageNo, pageSize, appliedQuery])
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize])
+  const handleSearch = () => {
+    const nextQuery: CustomerQuery = {
+      queryDate: queryDate || defaultDate,
+      customerName,
+      intentLevel
+    }
+    setPageNo(1)
+    setAppliedQuery(nextQuery)
+  }
+
+  const handleReset = () => {
+    const nextQuery: CustomerQuery = {
+      queryDate: defaultDate,
+      customerName: '',
+      intentLevel: ''
+    }
+    setQueryDate(defaultDate)
+    setCustomerName('')
+    setIntentLevel('')
+    setPageNo(1)
+    setAppliedQuery(nextQuery)
+  }
 
   return (
     <div className={styles.page}>
@@ -132,9 +190,53 @@ export default function DataStatisticsPage() {
       </div>
 
       <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>客户列表</h2>
-          <span className={styles.total}>共 {total} 人</span>
+        <div className={styles.listHeader}>
+          <div className={styles.listTitleRow}>
+            <h2 className={styles.cardTitle}>客户列表</h2>
+            <span className={styles.total}>共 {total} 人</span>
+          </div>
+          <div className={styles.filterBar}>
+            <div className={styles.filterItem}>
+              <span className={styles.filterLabel}>日期</span>
+              <input
+                type="date"
+                className={styles.filterInput}
+                value={queryDate}
+                onChange={(event) => setQueryDate(event.target.value)}
+              />
+            </div>
+            <div className={styles.filterItem}>
+              <span className={styles.filterLabel}>客户名字</span>
+              <input
+                type="text"
+                className={styles.filterInput}
+                placeholder="请输入客户名字"
+                value={customerName}
+                onChange={(event) => setCustomerName(event.target.value)}
+              />
+            </div>
+            <div className={styles.filterItem}>
+              <span className={styles.filterLabel}>意向度</span>
+              <select
+                className={styles.filterSelect}
+                value={intentLevel}
+                onChange={(event) => setIntentLevel(event.target.value)}
+              >
+                <option value="">全部</option>
+                <option value="3">高意向</option>
+                <option value="2">中意向</option>
+                <option value="1">低意向</option>
+              </select>
+            </div>
+            <div className={styles.filterActions}>
+              <button className={styles.resetBtn} onClick={handleReset}>
+                重置
+              </button>
+              <button className={styles.queryBtn} onClick={handleSearch}>
+                查询
+              </button>
+            </div>
+          </div>
         </div>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -142,7 +244,7 @@ export default function DataStatisticsPage() {
               <tr>
                 <th>名字</th>
                 <th>意向度</th>
-                <th>今日对话总结</th>
+                <th>当日对话总结</th>
                 <th>最后聊天时间</th>
               </tr>
             </thead>

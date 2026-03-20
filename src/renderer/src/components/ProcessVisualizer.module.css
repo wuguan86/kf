@@ -92,6 +92,19 @@
   color: #059669;
 }
 
+.errorState .processIconWrapper {
+  background-color: #fef2f2;
+  color: #ef4444;
+}
+
+.errorState .stepName {
+  color: #ef4444;
+}
+
+.errorState .processBody {
+  color: #ef4444;
+}
+
 .animateSpin {
   animation: spin 1s linear infinite;
 }

@@ -7,7 +7,7 @@ export interface ProcessItem {
   id: string
   step: ProcessStep
   content: string
-  status: 'pending' | 'running' | 'completed'
+  status: 'pending' | 'running' | 'completed' | 'error'
   timestamp: string
 }
 
@@ -53,6 +53,10 @@ const ActionIcons = {
 
 const LoadingIcon = (
   <svg className={styles.animateSpin} xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+)
+
+const ErrorIcon = (
+  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
 )
 
 export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, managedMode = 'full', onUpdateItem, onStoreItem }) => {
@@ -117,9 +121,9 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
           const showActions = managedMode === 'semi' && item.step === 'OUTPUT' && item.status === 'completed' && !isEditing
 
           return (
-            <div key={item.id} className={`${styles.processStep} ${styles[item.step.toLowerCase()]}`}>
+            <div key={item.id} className={`${styles.processStep} ${styles[item.step.toLowerCase()]} ${item.status === 'error' ? styles.errorState : ''}`}>
               <div className={styles.processIconWrapper}>
-                {item.status === 'running' ? LoadingIcon : StepIcons[item.step]}
+                {item.status === 'running' ? LoadingIcon : (item.status === 'error' ? ErrorIcon : StepIcons[item.step])}
               </div>
               <div className={styles.processContent}>
                 <div className={styles.processHeader}>

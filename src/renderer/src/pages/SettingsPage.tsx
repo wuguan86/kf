@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import http from '../utils/http'
 import styles from './SettingsPage.module.css'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { Toast, useToast } from '../components/Toast'
 
 type Props = {
   backendBaseUrl: string
@@ -35,6 +36,7 @@ interface KnowledgeBase {
 
 export default function SettingsPage(props: Props): JSX.Element {
   const { backendBaseUrl, tenantId, userToken } = props
+  const { toast, showToast } = useToast()
 
   const [view, setView] = useState<'list' | 'form'>('list')
   const [roles, setRoles] = useState<Role[]>([])
@@ -54,6 +56,7 @@ export default function SettingsPage(props: Props): JSX.Element {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<string[]>([])
   const [roleToDelete, setRoleToDelete] = useState<string | null>(null)
+  const [isOptimizing, setIsOptimizing] = useState(false)
 
   const fetchRoles = async () => {
     setLoading(true)
@@ -122,10 +125,11 @@ export default function SettingsPage(props: Props): JSX.Element {
     if (!roleToDelete) return
     try {
       await http.delete(`/api/user/roles/${roleToDelete}`)
+      showToast('删除成功', 'success')
       fetchRoles()
     } catch (error) {
       console.error('Failed to delete role', error)
-      alert('删除失败')
+      showToast('删除失败', 'error')
     } finally {
       setRoleToDelete(null)
     }
@@ -151,19 +155,21 @@ export default function SettingsPage(props: Props): JSX.Element {
         ...role,
         status: newStatus
       })
+      showToast(newStatus === 'RUNNING' ? '角色已开启' : '角色已关闭', 'success')
       fetchRoles()
     } catch (error) {
       console.error('Failed to toggle status', error)
+      showToast('状态切换失败', 'error')
     }
   }
 
   const saveRole = async (returnToList: boolean) => {
     if (!formData.name) {
-      alert('请输入角色名称')
+      showToast('请输入角色名称', 'error')
       return null
     }
     if (formData.name.length > 15) {
-      alert('角色名称不能超过 15 个字符')
+      showToast('角色名称不能超过 15 个字符', 'error')
       return null
     }
     try {
@@ -180,6 +186,7 @@ export default function SettingsPage(props: Props): JSX.Element {
       await http.put(`/api/user/roles/${savedRole.id}/knowledge-bases`, {
         knowledgeBaseIds: selectedKnowledgeBaseIds
       })
+      showToast(editingRole ? '角色更新成功' : '角色创建成功', 'success')
       if (returnToList) {
         setView('list')
       }
@@ -187,8 +194,93 @@ export default function SettingsPage(props: Props): JSX.Element {
       return savedRole
     } catch (error) {
       console.error('Failed to save role', error)
-      alert('保存失败')
+      showToast('保存失败', 'error')
       return null
+    }
+  }
+
+  const handleOptimizePrompt = async () => {
+    if (!formData.content?.trim()) {
+      showToast('请先输入角色设定内容', 'error')
+      return
+    }
+    
+    setIsOptimizing(true)
+    try {
+      // 增加超时时间到 60 秒，因为大模型优化提示词可能需要较长时间
+      const response = await http.post<any>('/api/user/dify/prompt-optimize', {
+        originalPrompt: formData.content
+      }, { timeout: 60000 })
+      console.log('【DEBUG】Dify response from http.post:', response)
+      
+      let optimizedText = ''
+      if (response && typeof response === 'string') {
+        optimizedText = response
+      } else if (response && typeof response === 'object') {
+        if (response.text) {
+          optimizedText = response.text
+        } else if (response.result) {
+          optimizedText = response.result
+        } else if (response.data) {
+          if (typeof response.data === 'string') {
+            optimizedText = response.data
+          } else if (response.data.text) {
+            optimizedText = response.data.text
+          } else if (response.data.data && response.data.data.text) {
+            optimizedText = response.data.data.text
+          }
+        }
+      }
+
+      console.log('【DEBUG】Extracted optimizedText:', optimizedText)
+
+      if (optimizedText) {
+        // 尝试解析可能嵌套的 JSON 或带引号的字符串
+        try {
+          if (typeof optimizedText === 'string' && (optimizedText.trim().startsWith('{') || optimizedText.trim().startsWith('"'))) {
+            const parsed = JSON.parse(optimizedText)
+            if (typeof parsed === 'string') {
+              optimizedText = parsed
+            } else if (typeof parsed === 'object' && parsed !== null) {
+              if (parsed.text) optimizedText = parsed.text
+              else if (parsed.result) optimizedText = parsed.result
+              else if (parsed.output) optimizedText = parsed.output
+              else if (parsed.output_text) optimizedText = parsed.output_text
+              else if (parsed.data) optimizedText = typeof parsed.data === 'string' ? parsed.data : JSON.stringify(parsed.data)
+              else {
+                const firstKey = Object.keys(parsed)[0]
+                if (firstKey && typeof parsed[firstKey] === 'string') {
+                  optimizedText = parsed[firstKey]
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('【DEBUG】JSON parse failed, keeping original string:', e)
+        }
+        
+        // 处理可能遗留的转义换行符
+        if (typeof optimizedText === 'string') {
+          optimizedText = optimizedText.replace(/\\n/g, '\n')
+        }
+        
+        console.log('【DEBUG】Final optimizedText to set:', optimizedText)
+        
+        // 直接更新表单数据
+        setFormData(prev => ({
+          ...prev,
+          content: optimizedText
+        }))
+        showToast('提示词优化成功', 'success')
+      } else {
+        console.error('【DEBUG】No valid text extracted. Response structure:', response)
+        showToast('优化失败，未返回内容或解析失败', 'error')
+      }
+    } catch (error) {
+      console.error('【DEBUG】Failed to optimize prompt', error)
+      showToast('提示词优化请求失败', 'error')
+    } finally {
+      setIsOptimizing(false)
     }
   }
 
@@ -227,12 +319,25 @@ export default function SettingsPage(props: Props): JSX.Element {
     setIsKnowledgeModalOpen(false)
   }
 
+  const updateKnowledgeBasesToDb = async (ids: string[]) => {
+    if (editingRole?.id) {
+      try {
+        await http.put(`/api/user/roles/${editingRole.id}/knowledge-bases`, {
+          knowledgeBaseIds: ids
+        })
+      } catch (error) {
+        console.error('Failed to update knowledge bases', error)
+      }
+    }
+  }
+
   const toggleKnowledgeBaseSelection = (knowledgeBaseId: string) => {
     setSelectedKnowledgeBaseIds(prev => {
-      if (prev.includes(knowledgeBaseId)) {
-        return prev.filter(item => item !== knowledgeBaseId)
-      }
-      return [...prev, knowledgeBaseId]
+      const newIds = prev.includes(knowledgeBaseId)
+        ? prev.filter(item => item !== knowledgeBaseId)
+        : [...prev, knowledgeBaseId]
+      updateKnowledgeBasesToDb(newIds)
+      return newIds
     })
   }
 
@@ -305,9 +410,13 @@ export default function SettingsPage(props: Props): JSX.Element {
                   />
                 </div>
                 <div className={styles.inlineActions}>
-                  <button className={styles.pillBtn}>
-                    <span className={styles.pillIcon}>⚡</span>
-                    AI优化
+                  <button 
+                    className={styles.aiOptimizeBtn} 
+                    onClick={handleOptimizePrompt}
+                    disabled={isOptimizing}
+                  >
+                    <span className={styles.pillIcon}>{isOptimizing ? '⏳' : '⚡'}</span>
+                    {isOptimizing ? '优化中...' : 'AI优化'}
                   </button>
                 </div>
               </div>
@@ -324,15 +433,37 @@ export default function SettingsPage(props: Props): JSX.Element {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                     添加
                   </button>
-                  <button className={styles.dangerLink} onClick={() => setSelectedKnowledgeBaseIds([])}>清空</button>
+                  <button className={styles.dangerLink} onClick={() => {
+                    setSelectedKnowledgeBaseIds([])
+                    updateKnowledgeBasesToDb([])
+                  }}>清空</button>
                 </div>
               </div>
               <div className={styles.cardBody}>
-                <div className={styles.kbStatus}>
-                    {selectedKnowledgeBaseIds.length > 0
-                      ? `已绑定知识库 ${selectedKnowledgeBaseIds.length} 个`
-                      : '未绑定知识库'}
-                </div>
+                {selectedKnowledgeBaseIds.length > 0 ? (
+                  <div className={styles.kbTags}>
+                    {selectedKnowledgeBaseIds.map(id => {
+                      const kb = knowledgeBases.find(k => k.id === id)
+                      return (
+                        <span key={id} className={styles.kbTag}>
+                          已绑定 {kb?.name || '未知知识库'}
+                          <button 
+                            className={styles.kbTagRemove}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleKnowledgeBaseSelection(id);
+                            }}
+                            title="解除绑定"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                          </button>
+                        </span>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className={styles.kbStatus}>未绑定知识库</div>
+                )}
               </div>
             </div>
           </div>
@@ -433,11 +564,8 @@ export default function SettingsPage(props: Props): JSX.Element {
                   </div>
                 </div>
                 <div className={styles.modalFooter}>
-                  <span>选择后点击保存生效</span>
+                  <span>修改会立即保存</span>
                   <div className={styles.modalActions}>
-                    <button type="button" className={styles.ghostBtn} onClick={closeKnowledgeModal}>
-                      取消
-                    </button>
                     <button
                       type="button"
                       className={styles.primaryBtn}
@@ -493,6 +621,8 @@ export default function SettingsPage(props: Props): JSX.Element {
       </header>
 
       <div className={styles.body}>
+        {toast && <Toast message={toast.message} type={toast.type} />}
+        {loading && <div className={styles.loading}>正在加载...</div>}
         <div className={`${styles.card} ${styles.tableCard}`}>
           <div className={styles.tableCardHeader}>
             <div>

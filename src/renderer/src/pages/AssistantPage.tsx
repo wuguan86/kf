@@ -4,6 +4,7 @@ import { readAuthSnapshot } from '../auth/authStore'
 import { ProcessVisualizer, ProcessItem, ProcessStep } from '../components/ProcessVisualizer'
 import StoreToKnowledgeBaseDialog, { SelectableKnowledgeBase } from '../components/StoreToKnowledgeBaseDialog'
 import { RechargeDialog } from '../components/RechargeDialog'
+import { NoRoleDialog } from '../components/NoRoleDialog'
 import { Toast, useToast } from '../components/Toast'
 import { eventBus } from '../utils/eventBus'
 import styles from './AssistantPage.module.css'
@@ -490,13 +491,33 @@ function AssistantPage(props: Props): JSX.Element {
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState('')
   const [storeContext, setStoreContext] = useState<StoreContext | null>(null)
   const [showRechargeDialog, setShowRechargeDialog] = useState(false)
+  const [showNoRoleDialog, setShowNoRoleDialog] = useState(false)
   const managedModeRef = useRef<'full' | 'semi'>('full')
+
+  const syncManagedModeToBridge = async (mode: 'full' | 'semi') => {
+    try {
+      const api = (window as any).api
+      if (!api?.setWeChatManagedMode) {
+        return
+      }
+      const result = await api.setWeChatManagedMode(mode)
+      if (!result?.ok) {
+        console.warn('Failed to sync managed mode to bridge', result)
+      }
+    } catch (e) {
+      console.warn('Failed to sync managed mode to bridge', e)
+    }
+  }
 
   useEffect(() => {
     managedModeRef.current = managedMode
+    if (isRunningRef.current) {
+      syncManagedModeToBridge(managedMode)
+    }
   }, [managedMode])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const chatHistoryRef = useRef<HTMLDivElement>(null)
   const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const marketingLikeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const marketingCommentTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -559,7 +580,8 @@ function AssistantPage(props: Props): JSX.Element {
 
   useEffect(() => {
     isRunningRef.current = isRunning
-  }, [isRunning])
+    eventBus.emit('assistant-state-change', { isRunning, isConnecting })
+  }, [isRunning, isConnecting])
 
   useEffect(() => {
     activeRoleRef.current = activeRole
@@ -608,11 +630,6 @@ function AssistantPage(props: Props): JSX.Element {
       timestamp: now
     }
     setMessages((prev) => [...prev, newMessage])
-    setTimeout(() => {
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
-      }
-    }, 100)
 
     // 如果是自己发的消息，则停止处理
     if (isSelf) return
@@ -741,7 +758,7 @@ function AssistantPage(props: Props): JSX.Element {
               } else if (step === 'LOGIC') {
                 const item = localItems.find(i => i.step === 'LOGIC')
                 if (item) {
-                  item.status = 'completed'
+                  item.status = content.includes('积分不足') ? 'error' : 'completed'
                   item.content = content
                 }
                 
@@ -750,7 +767,9 @@ function AssistantPage(props: Props): JSX.Element {
                   setIsRunning(false)
                   try {
                     const api = (window as any).api
-                    api.stopPythonSidecar()
+                    if (api?.stopWeChatBridge) {
+                      api.stopWeChatBridge()
+                    }
                   } catch (e) {
                     console.error('Failed to stop after points exhausted', e)
                   }
@@ -824,6 +843,18 @@ function AssistantPage(props: Props): JSX.Element {
       eventBus.emit('points-updated')
     }
   }
+
+  useEffect(() => {
+    const container = chatHistoryRef.current
+    if (!container) return
+    const raf = window.requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ block: 'end' })
+      }
+    })
+    return () => window.cancelAnimationFrame(raf)
+  }, [messages.length])
 
   useEffect(() => {
     if (pollTimeoutRef.current) {
@@ -1064,6 +1095,13 @@ function AssistantPage(props: Props): JSX.Element {
     setDifyResponse('')
 
     try {
+      const runningRole = await fetchRunningRole()
+      if (!runningRole?.id) {
+        setShowNoRoleDialog(true)
+        setIsConnecting(false)
+        return
+      }
+
       // 检查是否有套餐或积分
       try {
         const safeTenantId = tenantId?.trim() || '1'
@@ -1080,15 +1118,11 @@ function AssistantPage(props: Props): JSX.Element {
         console.error('Failed to check membership before running', e)
       }
 
-      const runningRole = await fetchRunningRole()
-      if (!runningRole?.id) {
-        setDifyResponse('请先在角色配置中开启一个角色')
-        return
-      }
       const startRes = await api.startWeChatBridge()
       if (!startRes?.ok) {
         throw new Error(startRes?.message || startRes?.error || '启动失败')
       }
+      await syncManagedModeToBridge(managedModeRef.current)
       pollFailureCountRef.current = 0
       setIsRunning(true)
     } catch (e: any) {
@@ -1178,7 +1212,7 @@ function AssistantPage(props: Props): JSX.Element {
                  )}
                </div>
                
-               <div className={styles.chatHistoryContainer}>
+               <div className={styles.chatHistoryContainer} ref={chatHistoryRef}>
                   {messages.length === 0 && (
                     <div className={styles.emptyState}>
                       启动后，收到的微信消息会出现在这里...
@@ -1275,6 +1309,16 @@ function AssistantPage(props: Props): JSX.Element {
           }
         }}
         onCancel={() => setShowRechargeDialog(false)}
+      />
+      <NoRoleDialog
+        isOpen={showNoRoleDialog}
+        onNavigateSettings={() => {
+          setShowNoRoleDialog(false)
+          if (props.onNavigateSettings) {
+            props.onNavigateSettings()
+          }
+        }}
+        onCancel={() => setShowNoRoleDialog(false)}
       />
       {toast && <Toast message={toast.message} type={toast.type} />}
     </div>

@@ -147,7 +147,7 @@ export default function SessionManagementPage(props: Props): JSX.Element {
               groupReplyStartTime: groupForm.groupReplyStartTime,
               groupReplyEndTime: groupForm.groupReplyEndTime,
               groupCooldownSec: groupForm.groupCooldownSec,
-              groupKeywordTriggerEnabled: groupForm.groupKeywordTriggerEnabled,
+              groupKeywordTriggerEnabled: true,
               groupTriggerKeywords: groupForm.groupTriggerKeywords
             }
       await http.post('/api/user/session-management/config', apiPayload)
@@ -385,12 +385,6 @@ export default function SessionManagementPage(props: Props): JSX.Element {
                   <div className={styles.labelMain}>群消息关键词触发</div>
                   <div className={styles.helper}>仅回复包含特定关键词的消息</div>
                 </div>
-                <button
-                  className={`${styles.switch} ${groupForm.groupKeywordTriggerEnabled ? styles.switchChecked : ''}`}
-                  onClick={() => patchGroup((prev) => ({ ...prev, groupKeywordTriggerEnabled: !prev.groupKeywordTriggerEnabled }))}
-                >
-                  <span className={styles.switchHandle} />
-                </button>
               </div>
               
               <div style={{ marginTop: '12px' }}>
@@ -398,7 +392,6 @@ export default function SessionManagementPage(props: Props): JSX.Element {
                   value={groupForm.groupTriggerKeywords}
                   onChange={(val) => patchGroup((prev) => ({ ...prev, groupTriggerKeywords: val }))}
                   placeholder="输入关键词，按回车生成标签"
-                  disabled={!groupForm.groupKeywordTriggerEnabled}
                 />
               </div>
             </section>
