@@ -6,7 +6,7 @@ import styles from './LoginPage.module.css'
 type Props = {
   backendBaseUrl: string
   tenantId: string
-  onLoginSuccess: (auth: { token: string; tenantId: string; userId: number }) => void
+  onLoginSuccess: (auth: { token: string; tenantId: string; userId: number; sessionId: string }) => void
 }
 
 function LoginPage(props: Props): JSX.Element {
@@ -47,11 +47,18 @@ function LoginPage(props: Props): JSX.Element {
         if (status === 'COMPLETED' && res.token) {
           const resolvedTenantId =
             String(res.tenantId ?? '').trim() || tenantId.trim() || '1'
+          const resolvedSessionId = String(res.sessionId ?? '').trim()
+          if (!resolvedSessionId) {
+            setStatusText('登录失败：会话信息缺失，请刷新二维码重试')
+            stopPolling()
+            return
+          }
           stopPolling()
           onLoginSuccess({
             token: res.token,
             tenantId: resolvedTenantId,
-            userId: Number(res.userId ?? 0)
+            userId: Number(res.userId ?? 0),
+            sessionId: resolvedSessionId
           })
           setStatusText('登录成功，正在进入...')
           setTimeout(() => closeModal(), 200)

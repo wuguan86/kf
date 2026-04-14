@@ -537,8 +537,8 @@ export default function SettingsPage(props: Props): JSX.Element {
                     <div className={styles.kbListHeader}>
                       <span>知识库列表</span>
                       <div>
-                        <button type="button" className={styles.ghostBtn} onClick={fetchKnowledgeBases}>
-                          刷新
+                        <button type="button" className={styles.iconBtn} onClick={fetchKnowledgeBases} title="刷新">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
                         </button>
                       </div>
                     </div>
@@ -622,14 +622,15 @@ export default function SettingsPage(props: Props): JSX.Element {
 
       <div className={styles.body}>
         {toast && <Toast message={toast.message} type={toast.type} />}
-        {loading && <div className={styles.loading}>正在加载...</div>}
         <div className={`${styles.card} ${styles.tableCard}`}>
           <div className={styles.tableCardHeader}>
             <div>
-              <h5 className={styles.cardTitle}>角色列表</h5>
+              <h2 className={styles.cardTitle}>角色列表</h2>
               <p className={styles.cardSubtitle}>当前共 {roles.length} 个角色</p>
             </div>
-            <button onClick={() => fetchRoles()} className={styles.ghostBtn}>刷新</button>
+            <button onClick={() => fetchRoles()} className={styles.iconBtn} title="刷新">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
+            </button>
           </div>
           <div className={styles.tableWrapper}>
             <table className={styles.table}>
@@ -668,19 +669,42 @@ export default function SettingsPage(props: Props): JSX.Element {
                     </td>
                   </tr>
                 ))}
-                {roles.length === 0 && !loading && (
-                  <tr>
-                    <td colSpan={5}>
-                      <div className={styles.emptyState}>
-                        <div className={styles.emptyIcon}>✨</div>
-                        <div className={styles.emptyTitle}>暂无角色</div>
-                        <div className={styles.emptySubtitle}>点击右上角按钮创建你的第一个角色</div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
+            {roles.length === 0 && !loading && (
+              <div className={styles.emptyStateContainer}>
+                <div className={styles.emptyState}>
+                  <div className={styles.emptyIconWrapper}>
+                    <svg className={styles.emptyIconSvg} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                      <circle cx="9" cy="7" r="4"></circle>
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                  </div>
+                  <div className={styles.emptyTitle}>暂无角色</div>
+                  <div className={styles.emptySubtitle}>点击下方按钮创建你的第一个角色</div>
+                  <button
+                    onClick={() => {
+                      setFormData({
+                        name: '',
+                        content: '',
+                        status: 'PENDING',
+                        knowledgeBaseId: ''
+                      })
+                      setSelectedKnowledgeBaseIds([])
+                      fetchKnowledgeBases()
+                      setEditingRole(null)
+                      setView('form')
+                    }}
+                    className={styles.primaryBtn}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    立即创建角色
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         <ConfirmDialog

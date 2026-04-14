@@ -200,11 +200,12 @@
 
 .table th {
   text-align: left;
-  background: #f7f9fc;
-  color: var(--text-secondary);
-  padding: 10px 12px;
+  background: #f8f9fc;
+  color: #475569;
+  padding: 12px 16px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .table td {

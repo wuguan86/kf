@@ -40,6 +40,8 @@ type ChatMessage = {
   content: string
   isSelf: boolean
   timestamp: number
+  imageDataUrl?: string
+  imageNotice?: string
 }
 type StoreContext = {
   itemId: string
@@ -53,6 +55,10 @@ const MONITOR_INTERVAL_MAX = 1000
 const PIXEL_DIFF_THRESHOLD = 30
 const CHANGE_RATIO_THRESHOLD = 0.015
 const SAMPLE_STEP = 4
+const STREAM_CHUNK_TIMEOUT_MS = 45000
+const STREAM_TOTAL_TIMEOUT_MS = 180000
+const IMAGE_STREAM_CHUNK_TIMEOUT_MS = 90000
+const IMAGE_STREAM_TOTAL_TIMEOUT_MS = 240000
 
 const getNextMonitorDelay = (): number => {
   return Math.floor(MONITOR_INTERVAL_MIN + Math.random() * (MONITOR_INTERVAL_MAX - MONITOR_INTERVAL_MIN))
@@ -202,6 +208,24 @@ const getCleanText = (items: any[], bounds: any, realImageSize?: { w: number; h:
 
 const normalizeMessage = (text: string): string => {
   return text.replace(/\s+/g, ' ').replace(/\u200B/g, '').trim()
+}
+
+const isImagePlaceholderMessage = (text: string): boolean => {
+  const normalized = normalizeMessage(String(text || ''))
+  return normalized === '[图片]' || normalized === '图片' || normalized === '[Image]'
+}
+
+const resolveMessageTimestamp = (raw: unknown): number => {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return raw
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    const parsed = Date.parse(raw)
+    if (!Number.isNaN(parsed)) {
+      return parsed
+    }
+  }
+  return Date.now()
 }
 
 const dedupeRepeatedOutput = (text: string): string => {
@@ -584,6 +608,20 @@ function AssistantPage(props: Props): JSX.Element {
   }, [isRunning, isConnecting])
 
   useEffect(() => {
+    const handleForceLogout = () => {
+      console.warn('收到强制下线事件，立即停止自动化任务')
+      setIsRunning(false)
+      setIsConnecting(false)
+      pollFailureCountRef.current = 0
+      showToast('您的账号已在其他地方登录，当前自动回复已停止', 'error')
+    }
+    window.addEventListener('force-logout', handleForceLogout)
+    return () => {
+      window.removeEventListener('force-logout', handleForceLogout)
+    }
+  }, [showToast])
+
+  useEffect(() => {
     activeRoleRef.current = activeRole
   }, [activeRole])
 
@@ -601,10 +639,49 @@ function AssistantPage(props: Props): JSX.Element {
     const text = String(msg?.content || '').trim()
     const isSelf = !!msg?.is_self
     const triggerReply = !!msg?.trigger_reply
+    const messageTimestamp = resolveMessageTimestamp(msg?.timestamp)
     if (!contact || !text) return
+    const shouldWaitForImage = !isSelf && isImagePlaceholderMessage(text)
+    const imageTask: Promise<{ imageDataUrl: string; imageNotice: string }> = shouldWaitForImage
+      ? (async () => {
+          console.log('[图片链路-DEBUG] 识别到图片占位消息，立即开始等待图片文件', { contact, messageTimestamp })
+          showToast('识别到图片，正在提取中...', 'info')
+          try {
+            const api = (window as any).api
+            const imageResult = await api.waitForWeChatImage({
+              senderId: contact,
+              timestamp: messageTimestamp,
+              timeout: 5000
+            })
+            if (imageResult?.ok && imageResult?.dataUrl) {
+              const imageDataUrl = String(imageResult.dataUrl)
+              console.log('[图片链路-DEBUG] 图片匹配成功', { contact, dataUrlLength: imageDataUrl.length })
+              showToast('图片提取成功', 'success')
+              return { imageDataUrl, imageNotice: '' }
+            }
+
+            console.warn('[图片链路-DEBUG] 图片匹配失败，降级文本处理', imageResult)
+            const imageErrorCode = String(imageResult?.error || '')
+            if (imageErrorCode === 'image_listener_not_started' || imageErrorCode === 'image_message_before_listener_start') {
+              showToast('这张图片发生在监听启动前，已按普通文本处理', 'info')
+              return { imageDataUrl: '', imageNotice: '历史图片，未做识别' }
+            }
+
+            showToast(`图片获取失败: ${imageResult?.error || '未知错误'}，已降级为文本`, 'error')
+            return { imageDataUrl: '', imageNotice: '' }
+          } catch (error: any) {
+            console.error('[图片链路-DEBUG] 图片等待异常', { contact, messageTimestamp, error: error?.message || String(error) })
+            showToast(`图片提取异常: ${error?.message || '未知错误'}`, 'error')
+            return { imageDataUrl: '', imageNotice: '' }
+          }
+        })()
+      : Promise.resolve({ imageDataUrl: '', imageNotice: '' })
     const prev = contactQueueRef.current.get(contact) || Promise.resolve()
     const next = prev
-      .then(() => handleIncoming(contact, text, isSelf, triggerReply))
+      .then(async () => {
+        const { imageDataUrl, imageNotice } = await imageTask
+        await handleIncoming(contact, text, isSelf, triggerReply, imageDataUrl, imageNotice)
+      })
       .catch(() => {
       })
       .finally(() => {
@@ -615,52 +692,49 @@ function AssistantPage(props: Props): JSX.Element {
     contactQueueRef.current.set(contact, next)
   }
 
-  const handleIncoming = async (contact: string, text: string, isSelf: boolean, triggerReply: boolean) => {
+  const handleIncoming = async (
+    contact: string,
+    text: string,
+    isSelf: boolean,
+    triggerReply: boolean,
+    imageDataUrl?: string,
+    imageNotice?: string
+  ) => {
     const normalizedText = normalizeMessage(text)
     if (!normalizedText) return
 
     const now = Date.now()
     
-    // 更新消息列表
     const newMessage: ChatMessage = {
       id: `${contact}-${now}-${Math.random().toString(36).substr(2, 9)}`,
       contact,
       content: normalizedText,
       isSelf,
-      timestamp: now
+      timestamp: now,
+      imageDataUrl: imageDataUrl || undefined,
+      imageNotice: imageNotice || undefined
     }
     setMessages((prev) => [...prev, newMessage])
 
-    // 如果是自己发的消息，则停止处理
     if (isSelf) return
 
-    // 只有当 triggerReply 为 true 时才回复
     if (!triggerReply) {
       console.log('Ignore reply (not latest or already replied):', normalizedText)
       return
     }
 
     const last = lastProcessedByContactRef.current.get(contact)
-    if (last && last.text === normalizedText && now - last.at < 120000) {
+    const isImageMessage = !!imageDataUrl
+    if (!isImageMessage && last && last.text === normalizedText && now - last.at < 120000) {
       return
     }
-    if (last && now - last.at < 8000) {
+    if (!isImageMessage && last && now - last.at < 8000) {
       return
     }
-    lastProcessedByContactRef.current.set(contact, { text: normalizedText, at: now })
+    lastProcessedByContactRef.current.set(contact, { text: isImageMessage ? `${normalizedText}-${now}` : normalizedText, at: now })
 
     setIsSending(true)
     setDifyResponse('')
-    
-    // 初始化可视化流程
-    const initialItems: ProcessItem[] = [{
-      id: `step-intent-${now}`,
-      step: 'INTENT',
-      status: 'running',
-      content: '正在分析用户意图...',
-      timestamp: new Date().toLocaleTimeString()
-    }]
-    setProcessItems(initialItems)
 
     try {
       const role = activeRoleRef.current
@@ -670,172 +744,277 @@ function AssistantPage(props: Props): JSX.Element {
         return
       }
 
-      // Abort previous request if any
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
-      }
-      const ac = new AbortController()
-      abortControllerRef.current = ac
-
       const { token, tenantId } = readAuthSnapshot()
       const storedBaseUrl = localStorage.getItem('backendBaseUrl')
       const baseURL = (storedBaseUrl || AppConfig.apiBaseUrl).replace(/\/api\/?$/, '').replace(/\/$/, '')
-      
-      const response = await fetch(`${baseURL}/api/user/dify/monitor-chat/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': token ? `Bearer ${token}` : '',
-          'X-Tenant-Id': tenantId || ''
-        },
-        body: JSON.stringify({
-          roleId: role.id,
-          message: normalizedText,
-          role: role.content || '',
-          wechatContact: contact
-        }),
-        signal: ac.signal
-      })
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error('Response body is null')
-      
-      const decoder = new TextDecoder()
-      let buffer = ''
-      const localItems = [...initialItems]
+      const createInitialProcessItems = (): ProcessItem[] => [{
+        id: `step-intent-${Date.now()}`,
+        step: 'INTENT',
+        status: 'running',
+        content: '正在分析用户意图...',
+        timestamp: new Date().toLocaleTimeString()
+      }]
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n\n')
-        buffer = lines.pop() || ''
+      const runMonitorChatStream = async (requestImageDataUrl?: string) => {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort()
+        }
+        const currentAbortController = new AbortController()
+        abortControllerRef.current = currentAbortController
 
-        for (const line of lines) {
-          if (line.startsWith('data:')) {
-            const jsonStr = line.replace('data:', '').trim()
-            if (!jsonStr) continue
-            
-            try {
-              const data = JSON.parse(jsonStr)
-              const { step, content } = data
-              
-              if (step === 'INTENT') {
-                const item = localItems.find(i => i.step === 'INTENT')
-                if (item) {
-                  item.status = 'completed'
-                  item.content = content
-                }
-                if (!localItems.find(i => i.step === 'KNOWLEDGE')) {
-                  localItems.push({
-                    id: `step-knowledge-${Date.now()}`,
-                    step: 'KNOWLEDGE',
-                    status: 'running',
-                    content: '正在检索知识库...',
-                    timestamp: new Date().toLocaleTimeString()
-                  })
-                }
-              } else if (step === 'KNOWLEDGE') {
-                const item = localItems.find(i => i.step === 'KNOWLEDGE')
-                if (item) {
-                  item.status = 'completed'
-                  item.content = content
-                }
-                if (!localItems.find(i => i.step === 'LOGIC')) {
-                  localItems.push({
-                    id: `step-logic-${Date.now()}`,
-                    step: 'LOGIC',
-                    status: 'running',
-                    content: '正在规划回复逻辑...',
-                    timestamp: new Date().toLocaleTimeString()
-                  })
-                }
-              } else if (step === 'LOGIC') {
-                const item = localItems.find(i => i.step === 'LOGIC')
-                if (item) {
-                  item.status = content.includes('积分不足') ? 'error' : 'completed'
-                  item.content = content
-                }
-                
-                if (content.includes('积分不足')) {
-                  setShowRechargeDialog(true)
-                  setIsRunning(false)
-                  try {
-                    const api = (window as any).api
-                    if (api?.stopWeChatBridge) {
-                      api.stopWeChatBridge()
-                    }
-                  } catch (e) {
-                    console.error('Failed to stop after points exhausted', e)
+        const localItems = createInitialProcessItems()
+        setProcessItems(localItems)
+        const requestMessage = requestImageDataUrl ? '请识别这张图片并结合上下文回复。' : normalizedText
+        const effectiveChunkTimeoutMs = requestImageDataUrl ? IMAGE_STREAM_CHUNK_TIMEOUT_MS : STREAM_CHUNK_TIMEOUT_MS
+        const effectiveTotalTimeoutMs = requestImageDataUrl ? IMAGE_STREAM_TOTAL_TIMEOUT_MS : STREAM_TOTAL_TIMEOUT_MS
+        const streamTraceId = `${contact}-${now}-${requestImageDataUrl ? 'image' : 'text'}`
+
+        console.log('[流式回复] 开始请求', {
+          streamTraceId,
+          contact,
+          isImageMessage: !!requestImageDataUrl,
+          messageLength: requestMessage.length,
+          hasImageData: !!requestImageDataUrl,
+          chunkTimeoutMs: effectiveChunkTimeoutMs,
+          totalTimeoutMs: effectiveTotalTimeoutMs
+        })
+
+        const response = await fetch(`${baseURL}/api/user/dify/monitor-chat/stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token ? `Bearer ${token}` : '',
+            'X-Tenant-Id': tenantId || ''
+          },
+          body: JSON.stringify({
+            roleId: role.id,
+            message: requestMessage,
+            role: role.content || '',
+            wechatContact: contact,
+            ...(requestImageDataUrl ? { imageDataUrl: requestImageDataUrl } : {})
+          }),
+          signal: currentAbortController.signal
+        })
+
+        if (!response.ok) {
+          const responseText = await response.text()
+          let backendMessage = ''
+          try {
+            const parsed = JSON.parse(responseText)
+            backendMessage = String(parsed?.msg || parsed?.message || parsed?.error || '').trim()
+          } catch {
+            backendMessage = responseText.trim()
+          }
+          console.error('[流式回复] HTTP状态异常', {
+            streamTraceId,
+            status: response.status,
+            responseText: backendMessage || responseText
+          })
+          throw new Error(backendMessage || `HTTP error! status: ${response.status}`)
+        }
+
+        const reader = response.body?.getReader()
+        if (!reader) throw new Error('Response body is null')
+
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let hasOutput = false
+        let lastChunkAt = Date.now()
+        const streamStartAt = Date.now()
+        let chunkCount = 0
+
+        const handleSsePayload = async (jsonStr: string) => {
+          if (!jsonStr) return
+          try {
+            const data = JSON.parse(jsonStr)
+            const { step, content } = data
+            console.log('[流式回复] 收到SSE事件', {
+              streamTraceId,
+              step,
+              contentLength: String(content || '').length
+            })
+
+            if (step === 'INTENT') {
+              const item = localItems.find(i => i.step === 'INTENT')
+              if (item) {
+                item.status = 'completed'
+                item.content = content
+              }
+              if (!localItems.find(i => i.step === 'KNOWLEDGE')) {
+                localItems.push({
+                  id: `step-knowledge-${Date.now()}`,
+                  step: 'KNOWLEDGE',
+                  status: 'running',
+                  content: '正在检索知识库...',
+                  timestamp: new Date().toLocaleTimeString()
+                })
+              }
+            } else if (step === 'KNOWLEDGE') {
+              const item = localItems.find(i => i.step === 'KNOWLEDGE')
+              if (item) {
+                item.status = 'completed'
+                item.content = content
+              }
+              if (!localItems.find(i => i.step === 'LOGIC')) {
+                localItems.push({
+                  id: `step-logic-${Date.now()}`,
+                  step: 'LOGIC',
+                  status: 'running',
+                  content: '正在规划回复逻辑...',
+                  timestamp: new Date().toLocaleTimeString()
+                })
+              }
+            } else if (step === 'LOGIC') {
+              const item = localItems.find(i => i.step === 'LOGIC')
+              if (item) {
+                item.status = content.includes('积分不足') ? 'error' : 'completed'
+                item.content = content
+              }
+
+              if (content.includes('积分不足')) {
+                setShowRechargeDialog(true)
+                setIsRunning(false)
+                try {
+                  const api = (window as any).api
+                  if (api?.stopWeChatBridge) {
+                    api.stopWeChatBridge()
                   }
-                } else {
-                  if (!localItems.find(i => i.step === 'OUTPUT')) {
-                    localItems.push({
-                      id: `step-output-${Date.now()}`,
-                      step: 'OUTPUT',
-                      status: 'running',
-                      content: '正在生成最终回复...',
-                      timestamp: new Date().toLocaleTimeString()
-                    })
-                  }
+                } catch (e) {
+                  console.error('Failed to stop after points exhausted', e)
                 }
-              } else if (step === 'OUTPUT') {
-                const cleanOutput = dedupeRepeatedOutput(content)
-                const item = localItems.find(i => i.step === 'OUTPUT')
-                if (item) {
-                  item.status = 'completed'
-                  item.content = cleanOutput
-                  outputStoreContextRef.current.set(item.id, {
-                    contactKey: contact,
-                    customerMessage: normalizedText
-                  })
-                }
-                
-                // Send WeChat Message
-                const reply = cleanOutput
-                if (reply && managedModeRef.current === 'full') {
-                   // Calculate delay based on session config
-                   const config = sessionConfigRef.current?.sceneConfig
-                   if (config) {
-                     const min = (config.replyIntervalStartSec || 0) * 1000
-                     const max = (config.replyIntervalEndSec || 0) * 1000
-                     if (max >= min && min >= 0) {
-                       const delayMs = Math.floor(min + Math.random() * (max - min))
-                       const elapsed = Date.now() - now
-                       if (delayMs > elapsed) {
-                         const waitTime = delayMs - elapsed
-                         await new Promise(resolve => setTimeout(resolve, waitTime))
-                       }
+              } else if (!localItems.find(i => i.step === 'OUTPUT')) {
+                localItems.push({
+                  id: `step-output-${Date.now()}`,
+                  step: 'OUTPUT',
+                  status: 'running',
+                  content: requestImageDataUrl ? '正在分析图片并生成最终回复...' : '正在生成最终回复...',
+                  timestamp: new Date().toLocaleTimeString()
+                })
+              }
+            } else if (step === 'OUTPUT') {
+              hasOutput = true
+              const cleanOutput = dedupeRepeatedOutput(content)
+              const item = localItems.find(i => i.step === 'OUTPUT')
+              if (item) {
+                item.status = 'completed'
+                item.content = cleanOutput
+                outputStoreContextRef.current.set(item.id, {
+                  contactKey: contact,
+                  customerMessage: normalizedText
+                })
+              }
+
+              const reply = cleanOutput
+              if (reply && managedModeRef.current === 'full') {
+                 const config = sessionConfigRef.current?.sceneConfig
+                 if (config) {
+                   const min = (config.replyIntervalStartSec || 0) * 1000
+                   const max = (config.replyIntervalEndSec || 0) * 1000
+                   if (max >= min && min >= 0) {
+                     const delayMs = Math.floor(min + Math.random() * (max - min))
+                     const elapsed = Date.now() - now
+                     if (delayMs > elapsed) {
+                       const waitTime = delayMs - elapsed
+                       await new Promise(resolve => setTimeout(resolve, waitTime))
                      }
                    }
+                 }
 
-                   const api = (window as any).api
-                   const sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
-                   if (!sendRes?.ok || sendRes?.success === false) {
-                     setDifyResponse(reply + '\n\n(自动发送失败)')
-                   } else {
-                     setLastReplied({ contact, text: reply, at: Date.now() })
-                   }
-                }
+                 const api = (window as any).api
+                 const sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
+                 if (!sendRes?.ok || sendRes?.success === false) {
+                   setDifyResponse(reply + '\n\n(自动发送失败)')
+                 } else {
+                   setLastReplied({ contact, text: reply, at: Date.now() })
+                 }
               }
-              
-              setProcessItems([...localItems])
-            } catch (e) {
-              console.error('Error parsing SSE data', e)
+            }
+
+            setProcessItems([...localItems])
+          } catch (e) {
+            console.error('Error parsing SSE data', e)
+          }
+        }
+
+        while (true) {
+          if (Date.now() - streamStartAt > effectiveTotalTimeoutMs) {
+            console.error('[流式回复] 总超时触发', {
+              streamTraceId,
+              elapsedMs: Date.now() - streamStartAt,
+                chunkCount
+            })
+            throw new Error('流式响应超时，请稍后重试')
+          }
+          const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+            const timer = setTimeout(() => {
+              console.error('[流式回复] 分片超时触发', {
+                streamTraceId,
+                idleMs: Date.now() - lastChunkAt,
+                chunkCount
+              })
+              reject(new Error('流式响应长时间无数据'))
+            }, effectiveChunkTimeoutMs)
+            reader.read().then((result) => {
+              clearTimeout(timer)
+              resolve(result)
+            }).catch((error) => {
+              clearTimeout(timer)
+              reject(error)
+            })
+          })
+          const { done, value } = readResult
+          if (done) break
+          lastChunkAt = Date.now()
+          chunkCount += 1
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              const jsonStr = line.replace('data:', '').trim()
+              await handleSsePayload(jsonStr)
             }
           }
         }
+
+        const tail = buffer.trim()
+        if (tail.startsWith('data:')) {
+          console.log('[流式回复] 处理尾包事件', { streamTraceId, tailLength: tail.length })
+          await handleSsePayload(tail.replace('data:', '').trim())
+        }
+        if (!hasOutput) {
+          console.warn('[流式回复] 本次流结束但未收到OUTPUT', { streamTraceId, chunkCount })
+          setProcessItems((prev) => prev.map((item) => {
+            if (item.step === 'OUTPUT' && item.status === 'running') {
+              return { ...item, status: 'completed', content: '本次未收到模型输出，请稍后重试。' }
+            }
+            return item
+          }))
+        }
+        if (Date.now() - lastChunkAt > effectiveChunkTimeoutMs) {
+          console.error('[流式回复] 流结束后二次空闲超时', {
+            streamTraceId,
+            idleMs: Date.now() - lastChunkAt,
+            chunkCount
+          })
+          throw new Error('流式响应长时间无数据')
+        }
+        console.log('[流式回复] 完成', { streamTraceId, chunkCount, hasOutput })
+      }
+
+      if (imageDataUrl) {
+        await runMonitorChatStream(imageDataUrl)
+      } else {
+        await runMonitorChatStream()
       }
 
     } catch (err: any) {
       if (err.name === 'AbortError') return
+      console.error('[流式回复] 失败', { contact, error: err?.message || String(err) })
       setDifyResponse('发送失败: ' + (err.message || 'Error'))
-      // Mark running items as failed (or just leave them)
       setProcessItems(prev => prev.map(i => i.status === 'running' ? { ...i, status: 'completed', content: '发生错误: ' + err.message } : i))
     } finally {
       setIsSending(false)
@@ -1189,7 +1368,12 @@ function AssistantPage(props: Props): JSX.Element {
               半托管
             </button>
           </div>
-          <button className={btnClass} onClick={toggleRunning} disabled={isSending || isConnecting}>
+          <button 
+            className={btnClass} 
+            onClick={toggleRunning} 
+            disabled={isSending || isConnecting}
+            title={!isRunning && !isConnecting ? '点击接管微信聊天窗口' : undefined}
+          >
             {btnContent}
           </button>
         </div>
@@ -1215,7 +1399,14 @@ function AssistantPage(props: Props): JSX.Element {
                <div className={styles.chatHistoryContainer} ref={chatHistoryRef}>
                   {messages.length === 0 && (
                     <div className={styles.emptyState}>
-                      启动后，收到的微信消息会出现在这里...
+                      {isRunning ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span className={styles.iconBreathing} style={{ color: '#52c41a' }}></span>
+                          <span>AI 引擎已就绪，正在等待新的对话产生...</span>
+                        </div>
+                      ) : (
+                        '启动后，收到的微信消息会出现在这里...'
+                      )}
                     </div>
                   )}
                   {messages.map((msg, index) => {
@@ -1240,7 +1431,20 @@ function AssistantPage(props: Props): JSX.Element {
                         <div
                           className={`${styles.messageBubble} ${msg.isSelf ? styles.messageBubbleSelf : styles.messageBubbleOther}`}
                         >
-                          {msg.content}
+                          {msg.imageDataUrl ? (
+                            <img
+                              className={styles.messageImage}
+                              src={msg.imageDataUrl}
+                              alt="微信图片"
+                            />
+                          ) : (
+                            msg.content
+                          )}
+                          {msg.imageNotice && (
+                            <div className={styles.messageNotice}>
+                              {msg.imageNotice}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )
@@ -1256,7 +1460,7 @@ function AssistantPage(props: Props): JSX.Element {
                   {isRunning ? (
                     <>
                       <span className={styles.aiThinkingDot}></span>
-                      视界正在查看你的屏幕，正在阅读你的聊天内容
+                      <span>视界正在查看你的屏幕，正在阅读你的聊天内容<span className={styles.typingDots}></span></span>
                     </>
                   ) : (
                     <span>AI 思考过程</span>
@@ -1279,7 +1483,7 @@ function AssistantPage(props: Props): JSX.Element {
                   )
                 ) : (
                    <div className={styles.emptyState}>
-                     <div className={styles.emptyIcon}>🧠</div>
+                     <div className={styles.emptyIcon}>✨</div>
                      <div>等待触发任务...</div>
                    </div>
                 )}

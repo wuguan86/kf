@@ -75,7 +75,7 @@ http.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       clearAuthSnapshot()
-      window.location.hash = '#/login' // Simple redirect for hash router
+      window.dispatchEvent(new CustomEvent('auth-expired'))
     }
     return Promise.reject(error)
   }

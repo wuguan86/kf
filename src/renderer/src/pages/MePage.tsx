@@ -3,6 +3,7 @@ import http from '../utils/http'
 import styles from './MePage.module.css'
 import { Toast, useToast } from '../components/Toast'
 import { PaymentModal } from '../components/PaymentModal'
+import { eventBus } from '../utils/eventBus'
 
 type Props = {
   backendBaseUrl: string
@@ -324,6 +325,7 @@ function MePage(props: Props): JSX.Element {
       }
       const membershipData = await http.get<MembershipMeResponse>('/api/user/membership/me', { headers })
       setMembership(membershipData)
+      eventBus.emit('points-updated')
       if (successText) {
         showToast(successText, 'success')
       }

@@ -10,6 +10,7 @@ export type WeChatLoginPollResult = {
   token: string | null
   userId: number | null
   tenantId: number | null
+  sessionId: string | null
 }
 
 export async function fetchWeChatQrCode(tenantId: string): Promise<WeChatQrCodeResult> {
@@ -25,4 +26,3 @@ export async function fetchWeChatLoginStatus(state: string): Promise<WeChatLogin
   })
   return res as unknown as WeChatLoginPollResult
 }
-

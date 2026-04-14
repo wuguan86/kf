@@ -5,10 +5,12 @@ import { existsSync } from 'fs'
 import { spawn, execSync, type ChildProcessWithoutNullStreams } from 'child_process'
 import os from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { WeChatImageExtractor } from './services/WeChatImageExtractor'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let wechatBridgeProcess: ReturnType<typeof spawn> | null = null
+let wechatImageExtractor: WeChatImageExtractor | null = null
 const WECHAT_BRIDGE_REQUEST_TIMEOUT_MS = 5000
 const WECHAT_BRIDGE_STARTUP_TIMEOUT_MS = 20000
 
@@ -431,6 +433,14 @@ ipcMain.handle('wechat-bridge-start', async () => {
   if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
     try {
       await waitForWeChatBridgeReady(3000)
+      if (wechatImageExtractor && !wechatImageExtractor.isStarted()) {
+        try {
+          await wechatImageExtractor.start()
+          console.log('微信图片监听启动成功:', wechatImageExtractor.getImageDir())
+        } catch (error) {
+          console.error('微信图片监听启动失败，不影响文字通道:', error)
+        }
+      }
       return { ok: true }
     } catch (e: any) {
       return { ok: true, warmingUp: true, message: 'bridge_starting' }
@@ -459,13 +469,27 @@ ipcMain.handle('wechat-bridge-start', async () => {
   }
 
   wechatBridgeProcess.on('exit', () => {
+    if (wechatImageExtractor?.isStarted()) {
+      void wechatImageExtractor.stop()
+    }
     wechatBridgeProcess = null
   })
   wechatBridgeProcess.on('error', () => {
+    if (wechatImageExtractor?.isStarted()) {
+      void wechatImageExtractor.stop()
+    }
     wechatBridgeProcess = null
   })
   try {
     await waitForWeChatBridgeReady(WECHAT_BRIDGE_STARTUP_TIMEOUT_MS)
+    if (wechatImageExtractor && !wechatImageExtractor.isStarted()) {
+      try {
+        await wechatImageExtractor.start()
+        console.log('微信图片监听启动成功:', wechatImageExtractor.getImageDir())
+      } catch (error) {
+        console.error('微信图片监听启动失败，不影响文字通道:', error)
+      }
+    }
     return { ok: true }
   } catch (e: any) {
     if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
@@ -482,6 +506,13 @@ ipcMain.handle('wechat-bridge-stop', async () => {
       killProcessTree(wechatBridgeProcess.pid)
     } catch (e) {
       console.error('Failed to stop WeChat Bridge:', e)
+    }
+  }
+  if (wechatImageExtractor?.isStarted()) {
+    try {
+      await wechatImageExtractor.stop()
+    } catch (error) {
+      console.error('停止微信图片监听失败:', error)
     }
   }
   wechatBridgeProcess = null
@@ -529,12 +560,67 @@ ipcMain.handle('wechat-bridge-set-managed-mode', async (_, mode: 'full' | 'semi'
   })
 })
 
-app.whenReady().then(() => {
+ipcMain.handle(
+  'wechat-wait-image',
+  async (_, payload: { senderId?: string; timestamp?: number | string; timeout?: number }) => {
+    if (!wechatImageExtractor) {
+      console.warn('[主进程] wechat-wait-image 失败：提取器未初始化', payload)
+      return { ok: false, error: 'image_extractor_not_ready', message: '图片提取器未初始化' }
+    }
+    if (!wechatImageExtractor.isStarted()) {
+      console.warn('[主进程] wechat-wait-image 失败：监听尚未启动', payload)
+      return { ok: false, error: 'image_listener_not_started', message: '图片监听尚未启动，已跳过真实图片提取' }
+    }
+    try {
+      const senderId = String(payload?.senderId || '').trim()
+      const rawTimestamp = payload?.timestamp
+      let timestamp = Date.now()
+      if (typeof rawTimestamp === 'number' && Number.isFinite(rawTimestamp)) {
+        timestamp = rawTimestamp
+      } else if (typeof rawTimestamp === 'string' && rawTimestamp.trim()) {
+        const parsed = Date.parse(rawTimestamp)
+        if (!Number.isNaN(parsed)) {
+          timestamp = parsed
+        }
+      }
+      const timeout = Number.isFinite(payload?.timeout) ? Number(payload.timeout) : 5000
+      console.log('[主进程] wechat-wait-image 开始等待', { senderId, timestamp, timeout })
+      const dataUrl = await wechatImageExtractor.waitForImage(senderId, timestamp, timeout)
+      console.log('[主进程] wechat-wait-image 成功返回', {
+        senderId,
+        timestamp,
+        dataUrlLength: dataUrl.length
+      })
+      return { ok: true, dataUrl }
+    } catch (error: any) {
+      const errorName = String(error?.name || '')
+      const errorMessage = error?.message || String(error)
+      if (errorName === 'ImageMessageBeforeWatcherStartError') {
+        console.warn('[主进程] wechat-wait-image 跳过旧图片消息', { payload, error: errorMessage })
+        return {
+          ok: false,
+          error: 'image_message_before_listener_start',
+          message: errorMessage
+        }
+      }
+      console.error('[主进程] wechat-wait-image 失败', { payload, error: error?.message || String(error) })
+      return {
+        ok: false,
+        error: 'wait_image_failed',
+        message: errorMessage
+      }
+    }
+  }
+)
+
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.electron')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
+
+  wechatImageExtractor = new WeChatImageExtractor()
 
   createWindow()
 
@@ -558,5 +644,9 @@ app.on('before-quit', () => {
       console.error('Failed to kill WeChat Bridge before quit:', e)
     }
   }
+  if (wechatImageExtractor) {
+    void wechatImageExtractor.stop()
+  }
+  wechatImageExtractor = null
   wechatBridgeProcess = null
 })

@@ -67,15 +67,40 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #1890ff;
+  background: #07c160;
   display: inline-block;
+  animation: radarRipple 1.2s infinite ease-out;
+}
+
+@keyframes radarRipple {
+  0% {
+    box-shadow: 0 0 0 0 rgba(7, 193, 96, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(7, 193, 96, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(7, 193, 96, 0);
+  }
+}
+
+.typingDots::after {
+  content: '';
+  animation: typingDots 1.5s infinite steps(4, end);
+}
+
+@keyframes typingDots {
+  0%, 20% { content: ''; }
+  40% { content: '.'; }
+  60% { content: '..'; }
+  80%, 100% { content: '...'; }
 }
 
 .sectionContent {
   flex: 1;
   overflow: hidden;
   position: relative;
-  background: #f8f9fc;
+  background: transparent;
 }
 
 .chatHistorySection {
@@ -153,6 +178,21 @@
   color: #333;
   border: 1px solid #e8e8e8;
   align-self: flex-start;
+}
+
+.messageImage {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.messageNotice {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #fa8c16;
 }
 
 .emptyState {
@@ -316,7 +356,7 @@
   padding: 16px;
   font-size: 14px;
   line-height: 1.6;
-  color: #E2E8F0;
+  color: #333;
   margin: 20px;
   height: 100%;
   overflow-y: auto;
