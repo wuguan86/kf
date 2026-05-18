@@ -21,7 +21,7 @@ class FakeUI:
             {
                 "contact": contact,
                 "type": "text",
-                "content": "对方消息",
+                "content": "历史对方消息",
                 "is_self": False,
                 "ui_id": "other-1",
             },
@@ -31,6 +31,14 @@ class FakeUI:
                 "content": "我的消息",
                 "is_self": True,
                 "ui_id": "self-1",
+            },
+            {
+                "contact": contact,
+                "type": "text",
+                "content": "最新对方消息",
+                "is_self": False,
+                "trigger_reply": True,
+                "ui_id": "other-2",
             },
         ]
 
@@ -50,7 +58,7 @@ class ListenerReportingTests(unittest.TestCase):
 
         listener._fetch_and_report("夏天")
 
-        self.assertEqual([msg["content"] for msg in poller.messages], ["对方消息"])
+        self.assertEqual([msg["content"] for msg in poller.messages], ["最新对方消息"])
 
 
 if __name__ == "__main__":

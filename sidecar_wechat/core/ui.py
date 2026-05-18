@@ -1711,6 +1711,20 @@ class WeChatUI:
             return "other"
         return "unknown"
 
+    def _is_message_item_visible_enough(
+        self,
+        item_bbox: Tuple[int, int, int, int],
+        list_bbox: Tuple[int, int, int, int],
+    ) -> bool:
+        """过滤已经大部分滑出消息列表可视区域的消息项。"""
+        if item_bbox is None or list_bbox is None:
+            return False
+        item_height = max(1, item_bbox[3] - item_bbox[1])
+        visible_top = max(item_bbox[1], list_bbox[1])
+        visible_bottom = min(item_bbox[3], list_bbox[3])
+        visible_height = max(0, visible_bottom - visible_top)
+        return (visible_height / item_height) >= 0.6
+
     def _analyze_item_alignment(self, item: Any, list_bbox: Tuple[int, int, int, int]) -> str:
         if item is None or list_bbox is None:
             return "other"
@@ -1799,6 +1813,15 @@ class WeChatUI:
             self._logger.info("开始提取最新消息: 会话=%s, 总节点=%d, 扫描节点=%d", normalized_contact, len(items), len(scan_items))
 
             for item in scan_items:
+                item_bbox = utils.rect_to_bbox(getattr(item, "BoundingRectangle", None))
+                if item_bbox and not self._is_message_item_visible_enough(item_bbox, list_bbox):
+                    self._logger.info(
+                        "跳过可视区域不足的消息项: 文本=%s, item_bbox=%s, list_bbox=%s",
+                        (_safe_attr(item, "Name") or "")[:40],
+                        item_bbox,
+                        list_bbox,
+                    )
+                    continue
                 msg = self._extract_message_from_item(normalized_contact or contact_hint, item)
                 if not msg: continue 
 

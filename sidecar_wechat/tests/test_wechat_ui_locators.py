@@ -78,6 +78,22 @@ class WeChatUiLocatorTests(unittest.TestCase):
 
         self.assertEqual(direction, "other")
 
+    def test_message_item_mostly_outside_visible_list_is_ignored(self):
+        visible = self.ui._is_message_item_visible_enough(
+            item_bbox=(370, 360, 945, 415),
+            list_bbox=(370, 414, 945, 828),
+        )
+
+        self.assertFalse(visible)
+
+    def test_message_item_inside_visible_list_is_kept(self):
+        visible = self.ui._is_message_item_visible_enough(
+            item_bbox=(370, 527, 945, 582),
+            list_bbox=(370, 414, 945, 828),
+        )
+
+        self.assertTrue(visible)
+
 
 if __name__ == "__main__":
     unittest.main()
