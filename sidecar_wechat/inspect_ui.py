@@ -2,6 +2,11 @@ import uiautomation as auto
 import sys
 import time
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 def print_control(control, depth):
     indent = "  " * depth
     try:
@@ -25,15 +30,15 @@ def print_control(control, depth):
         print(f"{indent}Error reading control: {e}")
 
 def main():
-    print("正在寻找微信窗口 (WeChatMainWndForPC)...")
+    print("正在寻找微信窗口 (mmui::MainWindow)...")
     sys.stdout.flush()
     
     # 尝试查找微信主窗口
-    # 注意：微信 3.9.12+ 的类名通常是 WeChatMainWndForPC
-    wechat_window = auto.WindowControl(ClassName="WeChatMainWndForPC", searchDepth=1)
+    # 当前新版微信主窗口类名为 mmui::MainWindow。
+    wechat_window = auto.WindowControl(ClassName="mmui::MainWindow", searchDepth=1)
     
     if not wechat_window.Exists(maxSearchSeconds=2):
-        print("未找到 WeChatMainWndForPC，尝试通过名称 '微信' 查找...")
+        print("未找到 mmui::MainWindow，尝试通过名称 '微信' 查找...")
         wechat_window = auto.WindowControl(Name="微信", searchDepth=1)
         
     if not wechat_window.Exists(maxSearchSeconds=2):

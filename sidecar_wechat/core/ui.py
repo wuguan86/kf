@@ -140,6 +140,7 @@ class WeChatUI:
         self._cached_message_list = None
         self._cached_input_box = None
         self._cached_chat_title_ctrl = None
+        self._last_direction_pixel_stats: Dict[str, int] = {"left": 0, "right": 0, "total": 0}
 
     def _normalize_contact_name(self, name: str) -> str:
         if not name:
@@ -250,6 +251,37 @@ class WeChatUI:
             return None
         candidates.sort(key=lambda x: x[0])
         return candidates[0][1]
+
+    def _find_descendant_by_automation_id(
+        self,
+        root: Any,
+        automation_ids: List[str],
+        max_depth: int = 18,
+        control_type: str = "",
+    ) -> Optional[Any]:
+        """按 AutomationId 定位新版微信控件，支持完整匹配和后缀匹配。"""
+        if root is None:
+            return None
+
+        expected_ids = [str(item).strip() for item in automation_ids if str(item).strip()]
+        if not expected_ids:
+            return None
+
+        def matched(ctrl: Any) -> bool:
+            automation_id = _safe_attr(ctrl, "AutomationId")
+            if not automation_id:
+                return False
+            if control_type and _control_type_name(ctrl) != control_type:
+                return False
+            return any(automation_id == item or automation_id.endswith(item) for item in expected_ids)
+
+        if matched(root):
+            return root
+
+        for ctrl in _iter_descendants(root, max_depth=max_depth):
+            if matched(ctrl):
+                return ctrl
+        return None
 
     def _get_moments_window(self, main_window: Any) -> Optional[Any]:
         if auto is None:
@@ -895,7 +927,7 @@ class WeChatUI:
 
     def _get_wechat_pids(self) -> List[int]:
         pids = []
-        for name in ["WeChat.exe", "Weixin.exe"]:
+        for name in ["WeChat.exe", "Weixin.exe", "WeChatAppEx.exe"]:
             try:
                 cmd = f'tasklist /FI "IMAGENAME eq {name}" /FO CSV /NH'
                 output = subprocess.check_output(cmd, shell=True).decode("gbk", errors="ignore")
@@ -915,7 +947,7 @@ class WeChatUI:
         if auto is None:
             raise RuntimeError("uiautomation 未加载")
         
-        self._logger.info("Debug: _find_main_window start (Adaptation for 3.9.12)")
+        self._logger.info("开始查找新版微信主窗口: ClassName=%s Name=%s", self._cfg.window_class_name, self._cfg.window_name)
         
         if hasattr(auto, "SetGlobalSearchTimeout"):
             try:
@@ -929,30 +961,28 @@ class WeChatUI:
             except Exception:
                 pass
         
-        # Strategy 0: Direct Win32 FindWindow
-        # Using self._cfg.window_class_name which is now WeChatMainWndForPC by default
+        # 策略 0：新版微信窗口类名稳定为 mmui::MainWindow，优先走 Win32 精确查找。
         try:
-            hwnd = ctypes.windll.user32.FindWindowW(self._cfg.window_class_name, self._cfg.window_name)
+            hwnd = ctypes.windll.user32.FindWindowW(self._cfg.window_class_name, None)
             if hwnd and hwnd != 0:
-                self._logger.info(f"FindWindowW found EXACT match handle: {hwnd}")
+                self._logger.info(f"通过 Win32 精确找到微信窗口 handle: {hwnd}")
                 if ctypes.windll.user32.IsHungAppWindow(hwnd):
-                    self._logger.warning(f"Handle {hwnd} is HUNG. Skipping.")
+                    self._logger.warning(f"微信窗口句柄 {hwnd} 无响应，跳过本次使用。")
                 else:
                     window = auto.ControlFromHandle(hwnd)
                     if window.Exists(0, 0):
                         return window
         except Exception as e:
-            self._logger.warning(f"Win32 FindWindow failed: {e}")
+            self._logger.warning(f"Win32 查找微信窗口失败: {e}")
 
         # Strategy 1: Global UIA Search
         try:
             window = auto.WindowControl(
                 searchDepth=1,
                 ClassName=self._cfg.window_class_name,
-                Name=self._cfg.window_name,
             )
             if window.Exists(0, 0):
-                self._logger.info("Found window via Global Search")
+                self._logger.info("通过 UIA 全局搜索找到微信窗口")
                 return window
         except Exception:
             pass
@@ -1046,8 +1076,20 @@ class WeChatUI:
         # 1. 优先使用缓存 (0毫秒级响应)
         if self._cached_session_list and self._cached_session_list.Exists(0, 0):
             return self._cached_session_list
+
+        # 2. 新版微信优先使用稳定 AutomationId=session_list。
+        target = self._find_descendant_by_automation_id(
+            window,
+            ["session_list"],
+            max_depth=24,
+            control_type="ListControl",
+        )
+        if target is not None:
+            self._logger.debug("_locate_session_list Found AutomationId='session_list'")
+            self._cached_session_list = target
+            return target
             
-        # 2. Strategy 1: Standard Name="会话" (For 3.9.12) - 原生底层 C++ 搜索，极快
+        # 3. 名称兜底：新版微信中文环境仍可能暴露 Name="会话"。
         try:
             target = auto.ListControl(searchFromControl=window, searchDepth=12, Name="会话")
             if target and target.Exists(0, 0):
@@ -1057,7 +1099,7 @@ class WeChatUI:
         except Exception:
             pass
 
-        # 3. Strategy 2: English Name="Session"
+        # 4. 英文环境兜底。
         try:
             target = auto.ListControl(searchFromControl=window, searchDepth=12, Name="Session")
             if target and target.Exists(0, 0):
@@ -1066,8 +1108,8 @@ class WeChatUI:
                 return target
         except Exception:
             pass
-            
-        self._logger.warning("未找到微信会话列表(Name='会话')，请确认微信版本。")
+              
+        self._logger.warning("未找到微信会话列表，已尝试 AutomationId=session_list 和名称会话/Session。")
         return None
 
     def _locate_message_list(self, window: Any) -> Optional[Any]:
@@ -1085,7 +1127,18 @@ class WeChatUI:
                 pass
             self._cached_message_list = None # 失效则清理
             
-        # 2. 快速底层搜索 Name="消息"
+        # 2. 新版微信优先使用稳定 AutomationId=chat_message_list。
+        target = self._find_descendant_by_automation_id(
+            window,
+            ["chat_message_list"],
+            max_depth=24,
+            control_type="ListControl",
+        )
+        if target is not None:
+            self._cached_message_list = target
+            return target
+
+        # 3. 名称兜底。
         try:
             target = auto.ListControl(searchFromControl=window, searchDepth=15, Name="消息")
             if target and target.Exists(0, 0):
@@ -1094,7 +1147,7 @@ class WeChatUI:
         except Exception:
             pass
 
-        # 3. 英文系统兼容
+        # 4. 英文系统兼容。
         try:
             target = auto.ListControl(searchFromControl=window, searchDepth=15, Name="Message")
             if target and target.Exists(0, 0):
@@ -1273,6 +1326,22 @@ class WeChatUI:
             self._cached_chat_title_ctrl = None
 
         try:
+            # 新版微信标题控件的 AutomationId 以 current_chat_name_label 结尾。
+            title_ctrl = self._find_descendant_by_automation_id(
+                window,
+                ["current_chat_name_label"],
+                max_depth=24,
+                control_type="TextControl",
+            )
+            if title_ctrl is not None:
+                name = (getattr(title_ctrl, "Name", "") or "").strip()
+                if not self._is_invalid_chat_title_candidate(name):
+                    normalized_name = self._normalize_contact_name(name)
+                    if normalized_name:
+                        self._cached_chat_title_ctrl = title_ctrl
+                        self._logger.info(f"通过新版标题控件锁定当前聊天窗口标题: {normalized_name}")
+                        return normalized_name
+
             msg_list = self._locate_message_list(window)
             msg_bbox = utils.rect_to_bbox(getattr(msg_list, "BoundingRectangle", None)) if msg_list else None
 
@@ -1401,8 +1470,19 @@ class WeChatUI:
         # 1. 优先使用缓存
         if self._cached_input_box and self._cached_input_box.Exists(0, 0):
             return self._cached_input_box
-            
-        # 2. 策略：根据当前聊天标题查找 (EditControl Name通常等于聊天标题)
+
+        # 2. 新版微信输入框有稳定 AutomationId=chat_input_field。
+        edit = self._find_descendant_by_automation_id(
+            window,
+            ["chat_input_field"],
+            max_depth=24,
+            control_type="EditControl",
+        )
+        if edit is not None:
+            self._cached_input_box = edit
+            return edit
+              
+        # 3. 策略：根据当前聊天标题查找 (EditControl Name通常等于聊天标题)
         current_title = self.get_current_chat_title(window)
         if current_title:
             try:
@@ -1421,7 +1501,7 @@ class WeChatUI:
             except Exception:
                 pass
 
-        # 3. 策略：从右侧主面板向下查找 (最可靠)
+        # 4. 策略：从右侧主面板向下查找 (最可靠)
         msg_list = self._locate_message_list(window)
         if msg_list:
             try:
@@ -1465,7 +1545,7 @@ class WeChatUI:
             except Exception:
                 pass
 
-        # 4. 策略：启发式查找 (全局遍历，位置+尺寸)
+        # 5. 策略：启发式查找 (全局遍历，位置+尺寸)
         try:
             candidates = []
             for ctrl in _iter_descendants(window, max_depth=20):
@@ -1488,7 +1568,7 @@ class WeChatUI:
         except Exception:
             pass
             
-        # 5. 旧策略：查找 Name="输入" (兜底)
+        # 6. 旧策略：查找 Name="输入" (兜底)
         try:
             edit = auto.EditControl(searchFromControl=window, searchDepth=15, Name="输入")
             if edit and edit.Exists(0, 0):
@@ -1502,8 +1582,30 @@ class WeChatUI:
     def find_send_button(self, window: Any) -> Optional[Any]:
         if auto is None:
             return None
-            
-        # 0. 策略：基于输入框的相对位置查找 (最稳)
+             
+        # 0. 新版微信发送按钮位于 mmui::ChatInputSendView 内，类名为 mmui::XOutlineButton。
+        try:
+            candidates = []
+            for ctrl in _iter_descendants(window, max_depth=20):
+                if _control_type_name(ctrl) != "ButtonControl":
+                    continue
+                if _safe_attr(ctrl, "ClassName") != "mmui::XOutlineButton":
+                    continue
+                text = (_safe_attr(ctrl, "Name") or "").strip()
+                if text and text != "发送":
+                    continue
+                rect = getattr(ctrl, "BoundingRectangle", None)
+                b = utils.rect_to_bbox(rect)
+                if b is None:
+                    continue
+                candidates.append((b[1], b[0], ctrl))
+            if candidates:
+                candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+                return candidates[0][2]
+        except Exception:
+            pass
+
+        # 1. 策略：基于输入框的相对位置查找 (最稳)
         if self._cached_input_box:
             try:
                 # 发送按钮通常是输入框的兄弟或叔叔节点，且位置在输入框下方
@@ -1556,6 +1658,59 @@ class WeChatUI:
             pass
         return None
 
+    def _is_wechat_self_bubble_pixel(self, red: int, green: int, blue: int) -> bool:
+        """识别新版微信自己发送消息使用的绿色气泡像素。"""
+        return green >= 120 and 70 <= red <= 230 and 70 <= blue <= 230 and green - red >= 20 and green - blue >= 20
+
+    def _classify_message_direction_by_bubble_pixels(
+        self,
+        image: Any,
+        item_bbox: Tuple[int, int, int, int],
+        list_bbox: Tuple[int, int, int, int],
+    ) -> str:
+        """根据消息行截图中的绿色气泡位置判断消息方向。"""
+        if image is None or item_bbox is None or list_bbox is None:
+            return "unknown"
+
+        try:
+            width, height = image.size
+        except Exception:
+            return "unknown"
+        if width <= 0 or height <= 0:
+            return "unknown"
+
+        list_center_x = (list_bbox[0] + list_bbox[2]) / 2.0
+        right_green = 0
+        left_green = 0
+        total_green = 0
+        self._last_direction_pixel_stats = {"left": 0, "right": 0, "total": 0}
+        sample_step = 2
+
+        try:
+            rgb_image = image.convert("RGB")
+            for y in range(0, height, sample_step):
+                for x in range(0, width, sample_step):
+                    red, green, blue = rgb_image.getpixel((x, y))
+                    if not self._is_wechat_self_bubble_pixel(red, green, blue):
+                        continue
+                    total_green += 1
+                    absolute_x = item_bbox[0] + x
+                    if absolute_x >= list_center_x:
+                        right_green += 1
+                    else:
+                        left_green += 1
+        except Exception:
+            return "unknown"
+
+        self._last_direction_pixel_stats = {"left": left_green, "right": right_green, "total": total_green}
+        if total_green < 20:
+            return "unknown"
+        if right_green >= 100 and right_green > left_green * 1.15:
+            return "self"
+        if left_green >= 100 and left_green > right_green * 1.15:
+            return "other"
+        return "unknown"
+
     def _analyze_item_alignment(self, item: Any, list_bbox: Tuple[int, int, int, int]) -> str:
         if item is None or list_bbox is None:
             return "other"
@@ -1579,14 +1734,29 @@ class WeChatUI:
                             else:
                                 return "other"
                                 
-            # 兜底：如果没找到头像，根据整个 item 的文本重心判断
-            rect = getattr(item, "BoundingRectangle", None)
-            if rect:
-                if ((rect.left + rect.right) / 2.0) > list_center_x:
-                    return "self"
         except Exception:
             pass
-            
+
+        try:
+            item_bbox = utils.rect_to_bbox(getattr(item, "BoundingRectangle", None))
+            if item_bbox and ImageGrab is not None:
+                image = ImageGrab.grab(bbox=item_bbox)
+                direction = self._classify_message_direction_by_bubble_pixels(image, item_bbox, list_bbox)
+                self._logger.info(
+                    "消息方向判定: direction=%s, green_left=%s, green_right=%s, green_total=%s, 文本=%s, item_bbox=%s, list_bbox=%s",
+                    direction,
+                    self._last_direction_pixel_stats.get("left", 0),
+                    self._last_direction_pixel_stats.get("right", 0),
+                    self._last_direction_pixel_stats.get("total", 0),
+                    (_safe_attr(item, "Name") or "")[:40],
+                    item_bbox,
+                    list_bbox,
+                )
+                if direction in ("self", "other"):
+                    return direction
+        except Exception as e:
+            self._logger.debug("消息方向颜色判定失败: %s", e)
+
         return "other"
 
     def extract_latest_messages(self, contact_hint: str) -> List[Dict[str, Any]]:
@@ -1594,6 +1764,18 @@ class WeChatUI:
         with self._uia_lock:
             window = self.get_main_window()
             if window is None: return []
+
+            # 新版微信不再暴露消息气泡子控件，只能通过可见气泡颜色判断方向；
+            # 因此提取前先激活微信窗口，避免被助手窗口遮挡导致截图拿到其它窗口内容。
+            try:
+                window.ShowWindow(auto.SW.Restore)
+            except Exception:
+                pass
+            try:
+                window.SetActive()
+            except Exception:
+                pass
+            time.sleep(0.08)
             
             normalized_contact = self._normalize_contact_name(contact_hint)
             if not normalized_contact:
@@ -1712,6 +1894,8 @@ class WeChatUI:
         if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", normalized):
             return True
         if re.fullmatch(r"(今天|昨天)(\d{1,2}:\d{2}(:\d{2})?)?", normalized):
+            return True
+        if re.fullmatch(r"\d{1,2}月\d{1,2}日([上下]午)?\d{1,2}:\d{2}(:\d{2})?", normalized):
             return True
         if re.fullmatch(r"星期[一二三四五六日天]([上下]午)?\d{1,2}:\d{2}(:\d{2})?", normalized):
             return True

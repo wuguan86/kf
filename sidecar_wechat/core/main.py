@@ -115,7 +115,7 @@ def self_test(cfg, logger) -> int:
         if win:
             class_name = getattr(win, "ClassName", "")
             if class_name != cfg.window_class_name:
-                logger.warning(f"Self-test 检测到 '黑盒' 微信 (ClassName={class_name})，正式运行可能会有问题")
+                logger.warning(f"Self-test 检测到微信窗口类名不匹配 (ClassName={class_name})，正式运行可能会有问题")
                 
         poller = Poller(ui_inst, logger)
 
@@ -215,7 +215,7 @@ def main() -> int:
                         last_state_time = time.time()
                 else:
                     if time.time() - last_state_time > 4.0:
-                        logger_inst.warning("检测到微信窗口类名异常: %s (预期 %s)，等待你手动重启微信", class_name, cfg.window_class_name)
+                        logger_inst.warning("检测到微信窗口类名不匹配: %s (预期 %s)，请确认当前运行的是新版微信", class_name, cfg.window_class_name)
                         last_state_time = time.time()
                     ui_inst._cached_main = None
                     ui_inst._tree_logged_handle = None
@@ -231,7 +231,7 @@ def main() -> int:
         if win:
             class_name = getattr(win, "ClassName", "")
             if class_name != cfg.window_class_name:
-                logger_inst.warning(f"检测到黑盒/异常微信 (ClassName={class_name} != {cfg.window_class_name})，请手动关闭微信后再启动。")
+                logger_inst.warning(f"检测到微信窗口类名不匹配 (ClassName={class_name} != {cfg.window_class_name})，请确认当前运行的是新版微信。")
                 ui_inst._cached_main = None
                 ui_inst._tree_logged_handle = None
             else:
@@ -248,7 +248,7 @@ def main() -> int:
     listener_inst.prime_initial_state()
     server.set_listener(listener_inst)
     readiness_state["listenerReady"] = True
-    logger_inst.info("wechat_bridge 已启动 (监听模式) - 适配版本 3.9.12")
+    logger_inst.info("wechat_bridge 已启动 (监听模式) - 适配当前新版微信")
     try:
         while True:
             listener_inst.process_cycle()

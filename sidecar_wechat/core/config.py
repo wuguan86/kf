@@ -8,8 +8,8 @@ from . import utils
 
 @dataclasses.dataclass(frozen=True)
 class BridgeConfig:
-    # Changed default from mmui::MainWindow to WeChatMainWndForPC for version 3.9.12
-    window_class_name: str = "WeChatMainWndForPC"
+    # 当前新版微信主窗口类名，服务不再适配 3.9.12 的 WeChatMainWndForPC。
+    window_class_name: str = "mmui::MainWindow"
     window_name: str = "微信"
 
     scan_interval_seconds: float = 0.6

@@ -159,6 +159,9 @@ class Listener:
                 self._last_fingerprints_by_contact.clear()
 
             for msg in new_messages:
+                if msg.get("is_self", False):
+                    self._logger.info("跳过自己发送的消息，不上报 AI 助手: %s", str(msg.get("content") or "")[:40])
+                    continue
                 if self._poller is not None:
                     self._logger.info(f"==> 正在推送到 AI 助手界面: {msg['content'][:15]}")
                     self._poller.enqueue(msg)
