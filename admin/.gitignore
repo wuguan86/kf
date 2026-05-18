@@ -1,0 +1,26 @@
+# 忽略 Maven 编译生成的目录（最重要）
+target/
+
+# 忽略 IntelliJ IDEA 的配置
+.idea/
+*.iml
+
+# 忽略 application.yml 的配置
+application.yml
+application-dev.yml
+application-prod.yml
+
+# 忽略 VS Code 的配置
+.vscode/
+
+# 忽略日志文件
+*.log
+
+# 忽略数据库文件
+*.sql
+
+# 忽略操作系统生成的临时文件
+bin/
+tmp/
+.DS_Store
+Thumbs.db
