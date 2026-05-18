@@ -1,0 +1,237 @@
+.processVisualizer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 15px 20px;
+  height: 100%;
+  overflow-y: auto;
+  background-color: transparent;
+}
+
+.processVisualizerEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #999;
+  font-size: 13px;
+}
+
+.emptyContent {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.processTimeline {
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  border: none;
+}
+
+.processStep {
+  display: flex;
+  gap: 12px;
+  position: relative;
+  padding-bottom: 20px;
+}
+
+.processStep:last-child {
+  padding-bottom: 0;
+}
+
+/* Connector Line */
+.processStep:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 14px; /* Center of 28px icon */
+  top: 28px;
+  bottom: 0;
+  width: 2px;
+  background-color: #f3f4f6;
+  z-index: 0;
+}
+
+.processIconWrapper {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  z-index: 1;
+  background-color: white;
+  box-shadow: 0 0 0 4px white; /* Create gap around icon */
+}
+
+/* Colors based on step */
+.intent .processIconWrapper {
+  background-color: #eef2ff;
+  color: #4f46e5;
+}
+
+.knowledge .processIconWrapper {
+  background-color: #fdf2f8;
+  color: #db2777;
+}
+
+.logic .processIconWrapper {
+  background-color: #eff6ff;
+  color: #2563eb;
+}
+
+.output .processIconWrapper {
+  background-color: #ecfdf5;
+  color: #059669;
+}
+
+.errorState .processIconWrapper {
+  background-color: #fef2f2;
+  color: #ef4444;
+}
+
+.errorState .stepName {
+  color: #ef4444;
+}
+
+.errorState .processBody {
+  color: #ef4444;
+}
+
+.animateSpin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.processContent {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.processHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.stepName {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #9ca3af;
+}
+
+.intent .stepName { color: #818cf8; }
+.knowledge .stepName { color: #f472b6; }
+.logic .stepName { color: #60a5fa; }
+.output .stepName { color: #34d399; }
+
+.timestamp {
+  font-size: 10px;
+  color: #d1d5db;
+}
+
+.processBody {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #374151;
+  word-break: break-word;
+}
+
+/* Action Bar for Semi-Managed Mode */
+.actionBar {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.actionBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: white;
+  color: #6b7280;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.actionBtn:hover {
+  background: #f3f4f6;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+.actionBtn.active {
+  color: #059669;
+  border-color: #059669;
+  background: #ecfdf5;
+}
+
+.editArea {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editTextarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+  outline: none;
+}
+
+.editTextarea:focus {
+  border-color: #059669;
+  box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.1);
+}
+
+.editActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.saveBtn {
+  background: #059669;
+  color: white;
+  border: 1px solid #059669;
+}
+
+.saveBtn:hover {
+  background: #047857;
+  border-color: #047857;
+}
+
+.cancelBtn {
+  background: white;
+  border: 1px solid #d1d5db;
+}
+
+.cancelBtn:hover {
+  background: #f3f4f6;
+}

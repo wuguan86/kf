@@ -1,0 +1,272 @@
+
+.loginPage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #F5F7FA;
+  z-index: 50;
+  overflow: hidden;
+}
+
+.loginSurface {
+  width: 420px;
+  padding: 60px 40px;
+  background: #FFFFFF;
+  border-radius: 24px;
+  box-shadow: 0 20px 60px -12px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 40px;
+  z-index: 10;
+  position: relative;
+}
+
+.loginBrand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.loginLogo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.loginLogoMark {
+  font-size: 48px;
+  font-weight: 800;
+  font-family: var(--font-display);
+  color: #1677FF;
+  background: transparent;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  filter: none;
+  letter-spacing: 2px;
+}
+
+.loginSubtitle {
+  font-size: 14px;
+  color: #666666;
+  text-align: center;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.loginActions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  align-items: center;
+}
+
+.loginWechatBtn {
+  width: 85%;
+  height: 52px;
+  background: #07C160;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 10px 25px -5px rgba(7, 193, 96, 0.4);
+  letter-spacing: 1px;
+}
+
+.loginWechatBtn:hover {
+  transform: translateY(-2px);
+  background: #06AD56;
+  box-shadow: 0 15px 35px -10px rgba(7, 193, 96, 0.5);
+}
+
+.loginWechatBtn:active {
+  transform: translateY(0);
+}
+
+.loginCompliance {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #9CA3AF;
+  width: 100%;
+}
+
+.complianceCheckbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #D1D5DB;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+}
+
+.complianceCheckbox:checked {
+  background: #07C160;
+  border-color: #07C160;
+}
+
+.complianceCheckbox:checked::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 8px;
+  height: 8px;
+  background: white;
+  border-radius: 50%;
+}
+
+.loginHint {
+  font-size: 12px;
+  color: #9CA3AF;
+  text-align: center;
+}
+
+/* Modal Styles */
+.wechatModalMask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.wechatModal {
+  width: 360px;
+  background: #FFFFFF;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wechatModalHeader {
+  padding: 16px 20px;
+  border-bottom: 1px solid #F3F4F6;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.wechatModalTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.wechatModalClose {
+  background: transparent;
+  border: none;
+  font-size: 24px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.wechatModalClose:hover {
+  background: #F3F4F6;
+  color: var(--text-main);
+}
+
+.wechatModalBody {
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.wechatQr {
+  width: 260px;
+  height: 260px;
+  background: #F9FAFB;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #E5E7EB;
+}
+
+.wechatQrPlaceholder {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.wechatStatus {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-align: center;
+  min-height: 20px;
+}
+
+.wechatActions {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.btnGhostBlue {
+  background: transparent;
+  color: var(--color-primary);
+  border: 1px solid transparent;
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-base);
+}
+
+.btnGhostBlue:hover:not(:disabled) {
+  background: rgba(22, 119, 255, 0.08);
+}
+
+.btnGhostBlue:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}

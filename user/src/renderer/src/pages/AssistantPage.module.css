@@ -1,0 +1,387 @@
+.assistantPage {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  overflow: hidden;
+}
+
+.pageBody {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.assistantContainer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  margin: 0;
+}
+
+.mainCard {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.aiThinkingSection {
+  flex: 0 0 38%;
+  min-height: 150px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.sectionHeader {
+  padding: 12px 20px;
+  border-bottom: 1px solid #e8e8e8;
+  background: #fff;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.aiThinkingDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #07c160;
+  display: inline-block;
+  animation: radarRipple 1.2s infinite ease-out;
+}
+
+@keyframes radarRipple {
+  0% {
+    box-shadow: 0 0 0 0 rgba(7, 193, 96, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(7, 193, 96, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(7, 193, 96, 0);
+  }
+}
+
+.typingDots::after {
+  content: '';
+  animation: typingDots 1.5s infinite steps(4, end);
+}
+
+@keyframes typingDots {
+  0%, 20% { content: ''; }
+  40% { content: '.'; }
+  60% { content: '..'; }
+  80%, 100% { content: '...'; }
+}
+
+.sectionContent {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  background: transparent;
+}
+
+.chatHistorySection {
+  flex: 1;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  overflow: hidden;
+}
+
+.lastRepliedBadge {
+  font-size: 11px;
+  color: #666;
+  background: #f5f5f5;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.chatHistoryContainer {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 15px 20px;
+  overflow-y: auto;
+}
+
+.messageItem {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 15px;
+}
+
+.messageMeta {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.newBadge {
+  background: #ff4d4f;
+  color: white;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  margin-right: 6px;
+}
+
+.messageBubble {
+  padding: 10px 14px;
+  border-radius: 8px;
+  max-width: 85%;
+  word-break: break-word;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+.messageBubbleSelf {
+  background: #95ec69;
+  color: #333;
+  border: none;
+  align-self: flex-end;
+}
+
+.messageBubbleOther {
+  background: #ffffff;
+  color: #333;
+  border: 1px solid #e8e8e8;
+  align-self: flex-start;
+}
+
+.messageImage {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.messageNotice {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #fa8c16;
+}
+
+.emptyState {
+  color: #999;
+  text-align: center;
+  height: 100%;
+  justify-content: center;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.emptyIcon {
+  font-size: 20px;
+  opacity: 0.3;
+}
+
+.statusBadge {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: var(--transition-base);
+  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-secondary);
+}
+
+.statusBadge.active {
+  color: #07C160;
+  background: rgba(7, 193, 96, 0.1);
+  border-color: rgba(7, 193, 96, 0.2);
+}
+
+.statusIndicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: var(--transition-base);
+}
+
+.statusBadge.active .statusIndicator {
+  background: #07C160;
+  box-shadow: 0 0 8px rgba(7, 193, 96, 0.6);
+}
+
+.cardDivider {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 20px;
+  margin-top: 4px;
+}
+
+.pageHeaderTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pageHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  flex-shrink: 0;
+}
+
+.pageTitle {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.pageHeaderActions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.modeToggle {
+  display: flex;
+  background: #f0f0f0;
+  border-radius: 6px;
+  padding: 3px;
+}
+
+.modeBtn {
+  padding: 5px 16px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: #666;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.modeBtn.active {
+  background: var(--color-primary, #1677FF);
+  color: #fff;
+  box-shadow: 0 2px 5px rgba(22, 119, 255, 0.2);
+}
+
+/* Start Button Styles */
+.btnStartAction {
+  border-radius: 9999px;
+  padding: 8px 24px;
+  font-weight: 600;
+  font-size: 14px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+
+/* READY State */
+.btnStartAction.ready {
+  background: var(--color-primary);
+  color: white;
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.3);
+  border: 1px solid transparent;
+}
+.btnStartAction.ready:hover {
+  background: var(--color-primary-hover);
+  box-shadow: 0 6px 16px rgba(22, 119, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+/* STARTING State */
+.btnStartAction.starting {
+  background: #E5E7EB; /* Gray 200 */
+  color: #9CA3AF;
+  cursor: not-allowed;
+  box-shadow: none;
+  border: 1px solid transparent;
+}
+
+/* RUNNING State */
+.btnStartAction.running {
+  background: #FFFFFF;
+  color: #07C160; /* WeChat Green */
+  border: 1px solid #07C160;
+  box-shadow: 0 2px 8px rgba(7, 193, 96, 0.15);
+}
+.btnStartAction.running:hover {
+  background: #F0FDF4; /* Green 50 */
+}
+
+.aiResponseBox {
+  background: rgba(99, 102, 241, 0.05);
+  border: 1px solid rgba(99, 102, 241, 0.1);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+  margin: 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.iconSpin {
+  animation: spin 1s linear infinite;
+  transform-origin: center;
+}
+
+.iconBreathing {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+  display: inline-block;
+  animation: breathe 2s ease-in-out infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}

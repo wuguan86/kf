@@ -1,0 +1,281 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 16px 24px;
+  box-sizing: border-box;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #eef2f8;
+  padding-bottom: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 24px;
+  /* border-bottom moved to header */
+  margin-bottom: 0;
+}
+
+.tab {
+  border: none;
+  background: transparent;
+  color: #77829a;
+  font-size: 16px;
+  font-weight: 600;
+  height: 32px;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s;
+}
+
+.tab:hover {
+  color: #2b56ff;
+}
+
+.tabActive {
+  color: #2b56ff;
+}
+
+.tabActive::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -13px; /* Adjusted for header padding */
+  margin: 0 auto;
+  width: 100%;
+  height: 2px;
+  border-radius: 2px;
+  background: #2b56ff;
+}
+
+.saveBtn {
+  background: #2b56ff;
+  color: white;
+  border: none;
+  padding: 8px 24px;
+  border-radius: 9999px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(43, 86, 255, 0.3);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.saveBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(43, 86, 255, 0.4);
+  background: #1a45ee;
+}
+
+.saveBtn:disabled {
+  background-color: #a0cfff;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.divider {
+  height: 1px;
+  background-color: #f0f2f5;
+  margin: 16px 0;
+}
+
+.body {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding-bottom: 16px;
+}
+
+.sectionTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: #121a2f;
+  margin-top: 8px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #ebeff7;
+  box-shadow: 0 2px 12px rgba(30, 55, 90, 0.05);
+  padding: 16px 20px;
+}
+
+.rowGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(200px, 1fr));
+  gap: 12px 20px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  color: #202a3d;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.helper {
+  color: #8a95ac;
+  font-size: 12px;
+}
+
+.labelMain {
+  color: #202a3d;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sep {
+  color: #8a95ac;
+}
+
+.input {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #606266;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  border-color: #409eff;
+  outline: none;
+}
+
+.timeInput {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #606266;
+  width: 120px;
+}
+
+.strategyRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.strategyLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  background-color: #dcdfe6;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  border: none;
+  padding: 0;
+}
+
+.switchChecked {
+  background-color: #409eff;
+}
+
+.switchHandle {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background-color: #fff;
+  border-radius: 50%;
+  transition: transform 0.3s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.switchChecked .switchHandle {
+  transform: translateX(20px);
+}
+
+.textarea {
+  min-height: 80px;
+  padding: 8px 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #606266;
+  width: 100%;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.textarea:focus {
+  border-color: #409eff;
+  outline: none;
+}
+
+/* saveBar styles removed */
+
+.phoneRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.phoneLabel {
+  color: #202a3d;
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 80px;
+}
+
+.phoneInput {
+  flex: 1;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #606266;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.phoneInput:focus {
+  border-color: #409eff;
+  outline: none;
+}

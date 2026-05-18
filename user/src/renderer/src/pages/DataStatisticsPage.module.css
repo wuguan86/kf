@@ -1,0 +1,304 @@
+.page {
+  padding: 0 32px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: #ffffff;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.listHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.listTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.total {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.filterBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: #f7f9fc;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+}
+
+.filterItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.filterLabel {
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.filterInput,
+.filterSelect {
+  height: 34px;
+  min-width: 140px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-main);
+  background: #fff;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.filterInput:focus,
+.filterSelect:focus {
+  outline: none;
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.filterActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.queryBtn,
+.resetBtn {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0 16px;
+  height: 34px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.queryBtn {
+  border-color: #1677ff;
+  background: #1677ff;
+  color: #fff;
+}
+
+.resetBtn {
+  background: #fff;
+  color: var(--text-main);
+}
+
+.loading {
+  color: var(--text-secondary);
+  padding: 12px 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.periodCard {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #fafcff 100%);
+}
+
+.periodTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-main);
+}
+
+.metricRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.metricLabel {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.metricValue {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.highValue {
+  color: #f5222d;
+}
+
+.midValue {
+  color: #faad14;
+}
+
+.lowValue {
+  color: #1677ff;
+}
+
+.tableWrap {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  background: #f8f9fc;
+  color: #475569;
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.table td {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 13px;
+  color: var(--text-main);
+  vertical-align: top;
+}
+
+.nameCell {
+  max-width: 200px;
+  word-break: break-all;
+}
+
+.summaryCell {
+  max-width: 420px;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.intentTag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.highTag {
+  background: rgba(245, 34, 45, 0.12);
+  color: #cf1322;
+}
+
+.midTag {
+  background: rgba(250, 173, 20, 0.16);
+  color: #ad6800;
+}
+
+.lowTag {
+  background: rgba(22, 119, 255, 0.12);
+  color: #1d39c4;
+}
+
+.unknownTag {
+  background: rgba(0, 0, 0, 0.08);
+  color: #595959;
+}
+
+.emptyCell {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 22px 0;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.pageBtn {
+  border: 1px solid var(--border-subtle);
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.pageBtn:disabled {
+  cursor: not-allowed;
+  color: #a3a3a3;
+  background: #f5f5f5;
+}
+
+.pageInfo {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 1200px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cardHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+}
