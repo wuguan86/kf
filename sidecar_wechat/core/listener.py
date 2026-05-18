@@ -160,7 +160,10 @@ class Listener:
 
             for msg in new_messages:
                 if msg.get("is_self", False):
-                    self._logger.info("跳过自己发送的消息，不上报 AI 助手: %s", str(msg.get("content") or "")[:40])
+                    msg["trigger_reply"] = False
+                    if self._poller is not None:
+                        self._logger.info("推送自己发送的消息到界面显示，不触发 AI: %s", str(msg.get("content") or "")[:40])
+                        self._poller.enqueue(msg)
                     continue
                 if not msg.get("trigger_reply", False):
                     self._logger.info("跳过非最新触发消息，不上报 AI 助手: %s", str(msg.get("content") or "")[:40])

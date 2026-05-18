@@ -52,13 +52,16 @@ class FakePoller:
 
 
 class ListenerReportingTests(unittest.TestCase):
-    def test_self_messages_are_not_reported_to_ai_assistant(self):
+    def test_self_messages_are_reported_for_display_without_triggering_ai(self):
         poller = FakePoller()
         listener = Listener(BridgeConfig(), FakeUI(), logging.getLogger("test_listener_reporting"), poller)
 
         listener._fetch_and_report("夏天")
 
-        self.assertEqual([msg["content"] for msg in poller.messages], ["最新对方消息"])
+        self.assertEqual([msg["content"] for msg in poller.messages], ["我的消息", "最新对方消息"])
+        self.assertTrue(poller.messages[0]["is_self"])
+        self.assertFalse(poller.messages[0].get("trigger_reply", False))
+        self.assertTrue(poller.messages[1]["trigger_reply"])
 
 
 if __name__ == "__main__":
