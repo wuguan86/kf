@@ -1,0 +1,160 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.dialog {
+  width: min(720px, calc(100vw - 48px));
+  max-height: calc(100vh - 56px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.header h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.4;
+  color: #111827;
+}
+
+.header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.closeBtn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: #f3f4f6;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.body {
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.section + .section {
+  margin-top: 24px;
+}
+
+.section h4 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: #111827;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #d9e1ef;
+  border-radius: 8px;
+  padding: 0 11px;
+  color: #111827;
+  background: #fff;
+  font-size: 13px;
+  outline: none;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 24px 20px;
+  border-top: 1px solid #edf0f5;
+}
+
+.loadingText {
+  margin-right: auto;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cancelBtn,
+.saveBtn {
+  height: 36px;
+  border-radius: 999px;
+  border: none;
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cancelBtn {
+  color: #374151;
+  background: #f3f4f6;
+}
+
+.saveBtn {
+  color: #fff;
+  background: #1677ff;
+  box-shadow: 0 6px 16px rgba(22, 119, 255, 0.25);
+}
+
+.cancelBtn:disabled,
+.saveBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+@media (max-width: 720px) {
+  .dialog {
+    width: calc(100vw - 24px);
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

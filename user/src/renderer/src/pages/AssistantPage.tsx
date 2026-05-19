@@ -5,6 +5,8 @@ import { ProcessVisualizer, ProcessItem, ProcessStep } from '../components/Proce
 import StoreToKnowledgeBaseDialog, { SelectableKnowledgeBase } from '../components/StoreToKnowledgeBaseDialog'
 import { RechargeDialog } from '../components/RechargeDialog'
 import { NoRoleDialog } from '../components/NoRoleDialog'
+import AssistantRunToolbar from '../components/AssistantRunToolbar'
+import EnterpriseWeChatConfigDialog, { WeChatChannelConfig } from '../components/EnterpriseWeChatConfigDialog'
 import { Toast, useToast } from '../components/Toast'
 import { eventBus } from '../utils/eventBus'
 import styles from './AssistantPage.module.css'
@@ -63,6 +65,14 @@ const STREAM_TOTAL_TIMEOUT_MS = 180000
 const IMAGE_STREAM_CHUNK_TIMEOUT_MS = 90000
 const IMAGE_STREAM_TOTAL_TIMEOUT_MS = 240000
 type WeChatChannel = 'personal' | 'enterprise'
+const defaultWechatChannelConfig: WeChatChannelConfig = {
+  channel: 'personal',
+  corpId: '',
+  apiBaseUrl: '',
+  secretConfigured: 'false',
+  tokenConfigured: 'false',
+  encodingAesKeyConfigured: 'false'
+}
 
 const getNextMonitorDelay = (): number => {
   return Math.floor(MONITOR_INTERVAL_MIN + Math.random() * (MONITOR_INTERVAL_MAX - MONITOR_INTERVAL_MIN))
@@ -520,6 +530,8 @@ function AssistantPage(props: Props): JSX.Element {
   const [storeContext, setStoreContext] = useState<StoreContext | null>(null)
   const [showRechargeDialog, setShowRechargeDialog] = useState(false)
   const [showNoRoleDialog, setShowNoRoleDialog] = useState(false)
+  const [wechatChannelConfig, setWechatChannelConfig] = useState<WeChatChannelConfig>(defaultWechatChannelConfig)
+  const [showEnterpriseConfigDialog, setShowEnterpriseConfigDialog] = useState(false)
   const managedModeRef = useRef<'full' | 'semi'>('full')
 
   const syncManagedModeToBridge = async (mode: 'full' | 'semi') => {
@@ -559,13 +571,50 @@ function AssistantPage(props: Props): JSX.Element {
   const pollFailureCountRef = useRef(0)
   const wechatChannelRef = useRef<WeChatChannel>('personal')
 
-  const fetchWechatChannel = async (): Promise<WeChatChannel> => {
+  const normalizeWechatChannelConfig = (config?: Partial<WeChatChannelConfig> | null): WeChatChannelConfig => ({
+    channel: config?.channel === 'enterprise' ? 'enterprise' : 'personal',
+    corpId: config?.corpId || '',
+    apiBaseUrl: config?.apiBaseUrl || '',
+    secretConfigured: config?.secretConfigured === 'true' ? 'true' : 'false',
+    tokenConfigured: config?.tokenConfigured === 'true' ? 'true' : 'false',
+    encodingAesKeyConfigured: config?.encodingAesKeyConfigured === 'true' ? 'true' : 'false'
+  })
+
+  const fetchWechatChannelConfig = async (): Promise<WeChatChannelConfig> => {
     try {
-      const res = await http.get<{ channel?: string }>('/api/user/system-config/wechat-channel')
-      return res?.channel === 'enterprise' ? 'enterprise' : 'personal'
+      const res = await http.get<WeChatChannelConfig>('/api/user/system-config/wechat-channel')
+      const nextConfig = normalizeWechatChannelConfig(res)
+      setWechatChannelConfig(nextConfig)
+      wechatChannelRef.current = nextConfig.channel
+      return nextConfig
     } catch (error) {
       console.warn('获取微信消息通道失败，默认使用个人微信通道', error)
-      return 'personal'
+      showToast('获取微信消息通道失败，已默认使用个人微信', 'error')
+      setWechatChannelConfig(defaultWechatChannelConfig)
+      wechatChannelRef.current = 'personal'
+      return defaultWechatChannelConfig
+    }
+  }
+
+  const saveWechatChannel = async (channel: WeChatChannel) => {
+    const previous = wechatChannelConfig
+    const nextConfig = { ...previous, channel }
+    setWechatChannelConfig(nextConfig)
+    wechatChannelRef.current = channel
+    try {
+      await http.post('/api/user/system-config/wechat-channel', {
+        channel,
+        corpId: previous.corpId,
+        apiBaseUrl: previous.apiBaseUrl
+      })
+      if (channel === 'enterprise') {
+        setShowEnterpriseConfigDialog(true)
+      }
+    } catch (error) {
+      console.error('保存微信消息通道失败', error)
+      setWechatChannelConfig(previous)
+      wechatChannelRef.current = previous.channel
+      showToast('保存微信消息通道失败', 'error')
     }
   }
 
@@ -621,6 +670,12 @@ function AssistantPage(props: Props): JSX.Element {
     isRunningRef.current = isRunning
     eventBus.emit('assistant-state-change', { isRunning, isConnecting })
   }, [isRunning, isConnecting])
+
+  useEffect(() => {
+    if (backendBaseUrl && userToken) {
+      void fetchWechatChannelConfig()
+    }
+  }, [backendBaseUrl, userToken])
 
   useEffect(() => {
     const handleForceLogout = () => {
@@ -1312,8 +1367,7 @@ function AssistantPage(props: Props): JSX.Element {
     setDifyResponse('')
 
     try {
-      const channel = await fetchWechatChannel()
-      wechatChannelRef.current = channel
+      const channel = wechatChannelRef.current
       const runningRole = await fetchRunningRole()
       if (!runningRole?.id) {
         setShowNoRoleDialog(true)
@@ -1395,30 +1449,18 @@ function AssistantPage(props: Props): JSX.Element {
           </div>
         </div>
         
-        <div className={styles.pageHeaderActions}>
-          <div className={styles.modeToggle}>
-            <button
-              onClick={() => setManagedMode('full')}
-              className={`${styles.modeBtn} ${managedMode === 'full' ? styles.active : ''}`}
-            >
-              全托管
-            </button>
-            <button
-              onClick={() => setManagedMode('semi')}
-              className={`${styles.modeBtn} ${managedMode === 'semi' ? styles.active : ''}`}
-            >
-              半托管
-            </button>
-          </div>
-          <button 
-            className={btnClass} 
-            onClick={toggleRunning} 
-            disabled={isSending || isConnecting}
-            title={!isRunning && !isConnecting ? '点击接管微信聊天窗口' : undefined}
-          >
-            {btnContent}
-          </button>
-        </div>
+        <AssistantRunToolbar
+          wechatChannel={wechatChannelConfig.channel}
+          managedMode={managedMode}
+          disabled={isSending || isConnecting}
+          showEnterpriseConfig={wechatChannelConfig.channel === 'enterprise'}
+          startButtonClassName={btnClass}
+          startButtonContent={btnContent}
+          onWechatChannelChange={saveWechatChannel}
+          onManagedModeChange={setManagedMode}
+          onOpenEnterpriseConfig={() => setShowEnterpriseConfigDialog(true)}
+          onToggleRunning={toggleRunning}
+        />
       </header>
 
       <div className={styles.pageBody}>
@@ -1565,6 +1607,16 @@ function AssistantPage(props: Props): JSX.Element {
           }
         }}
         onCancel={() => setShowNoRoleDialog(false)}
+      />
+      <EnterpriseWeChatConfigDialog
+        open={showEnterpriseConfigDialog}
+        config={wechatChannelConfig}
+        onClose={() => setShowEnterpriseConfigDialog(false)}
+        onSaved={(config) => {
+          setWechatChannelConfig(config)
+          wechatChannelRef.current = config.channel
+        }}
+        showToast={showToast}
       />
       {toast && <Toast message={toast.message} type={toast.type} />}
     </div>

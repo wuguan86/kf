@@ -146,6 +146,43 @@ public class EnterpriseWeChatMessageService {
     return entity;
   }
 
+  @Transactional
+  public EnterpriseWeChatUserBindingEntity saveMyBinding(long tenantId, long userId, MyBindingCommand command) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      EnterpriseWeChatUserBindingEntity entity = bindingMapper.selectOne(
+          new LambdaQueryWrapper<EnterpriseWeChatUserBindingEntity>()
+              .eq(EnterpriseWeChatUserBindingEntity::getTenantId, tenantId)
+              .eq(EnterpriseWeChatUserBindingEntity::getUserId, userId));
+      if (entity == null) {
+        entity = new EnterpriseWeChatUserBindingEntity();
+        entity.setTenantId(tenantId);
+        entity.setUserId(userId);
+      }
+      normalizeMyBinding(entity, command);
+      if (entity.getId() == null) {
+        bindingMapper.insert(entity);
+      } else {
+        bindingMapper.updateById(entity);
+      }
+      return entity;
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  public EnterpriseWeChatUserBindingEntity getMyBinding(long tenantId, long userId) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      return bindingMapper.selectOne(
+          new LambdaQueryWrapper<EnterpriseWeChatUserBindingEntity>()
+              .eq(EnterpriseWeChatUserBindingEntity::getTenantId, tenantId)
+              .eq(EnterpriseWeChatUserBindingEntity::getUserId, userId));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
   public EnterpriseWeChatCallbackMessage parseCallbackMessage(String plainText) {
     String messageType = firstText(readXml(plainText, "MsgType"), "text");
     String enterpriseUserId = firstText(
@@ -201,5 +238,22 @@ public class EnterpriseWeChatMessageService {
 
   private String defaultString(String value) {
     return value == null ? "" : value.trim();
+  }
+
+  private void normalizeMyBinding(EnterpriseWeChatUserBindingEntity entity, MyBindingCommand command) {
+    if (!StringUtils.hasText(command.enterpriseUserId())) {
+      throw new IllegalArgumentException("企业微信 userid 不能为空");
+    }
+    entity.setEnterpriseUserId(command.enterpriseUserId().trim());
+    entity.setEnterpriseUserName(defaultString(command.enterpriseUserName()));
+    entity.setRemark(defaultString(command.remark()));
+    entity.setStatus("DISABLED".equalsIgnoreCase(command.status()) ? "DISABLED" : "ENABLED");
+  }
+
+  public record MyBindingCommand(
+      String enterpriseUserId,
+      String enterpriseUserName,
+      String remark,
+      String status) {
   }
 }

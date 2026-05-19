@@ -3,15 +3,21 @@ package com.shijie.transit.userapi.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.shijie.transit.common.db.entity.SystemConfigEntity;
 import com.shijie.transit.common.mapper.SystemConfigMapper;
+import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.web.Result;
+import com.shijie.transit.userapi.enterprisewechat.EnterpriseWeChatConfigService;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.util.StringUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,9 +30,11 @@ import java.util.Map;
 public class UserSystemConfigController {
 
     private final SystemConfigMapper systemConfigMapper;
+    private final EnterpriseWeChatConfigService enterpriseWeChatConfigService;
 
-    public UserSystemConfigController(SystemConfigMapper systemConfigMapper) {
+    public UserSystemConfigController(SystemConfigMapper systemConfigMapper, EnterpriseWeChatConfigService enterpriseWeChatConfigService) {
         this.systemConfigMapper = systemConfigMapper;
+        this.enterpriseWeChatConfigService = enterpriseWeChatConfigService;
     }
 
     @GetMapping("/customer-service")
@@ -54,12 +62,22 @@ public class UserSystemConfigController {
     @GetMapping("/wechat-channel")
     public Result<Map<String, String>> getWechatChannel() {
         Map<String, String> config = new HashMap<>();
-        SystemConfigEntity channel = systemConfigMapper.selectOne(
-                new LambdaQueryWrapper<SystemConfigEntity>().eq(SystemConfigEntity::getConfigKey, "wechat_channel")
-        );
-        String value = channel != null ? channel.getConfigValue() : "personal";
-        config.put("channel", "enterprise".equalsIgnoreCase(value) ? "enterprise" : "personal");
+        String channel = readConfig("wechat_channel");
+        config.put("channel", "enterprise".equalsIgnoreCase(channel) ? "enterprise" : "personal");
+        config.put("corpId", defaultString(readConfig("enterprise_wechat_corp_id")));
+        config.put("apiBaseUrl", defaultString(readConfig("enterprise_wechat_api_base_url")));
+        config.put("secretConfigured", StringUtils.hasText(readConfig("enterprise_wechat_secret")) ? "true" : "false");
+        config.put("tokenConfigured", StringUtils.hasText(readConfig("enterprise_wechat_token")) ? "true" : "false");
+        config.put("encodingAesKeyConfigured", StringUtils.hasText(readConfig("enterprise_wechat_encoding_aes_key")) ? "true" : "false");
         return Result.success(config);
+    }
+
+    @PostMapping("/wechat-channel")
+    public Result<Void> updateWechatChannel(@RequestBody EnterpriseWeChatConfigService.SaveWeChatChannelCommand command,
+                                            Authentication authentication) {
+        TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
+        enterpriseWeChatConfigService.saveTenantConfig(principal.tenantId(), command);
+        return Result.success(null);
     }
 
     @GetMapping("/image/{filename:.+}")
@@ -81,5 +99,16 @@ public class UserSystemConfigController {
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
+    }
+
+    private String readConfig(String key) {
+        SystemConfigEntity entity = systemConfigMapper.selectOne(
+                new LambdaQueryWrapper<SystemConfigEntity>().eq(SystemConfigEntity::getConfigKey, key)
+        );
+        return entity == null ? "" : entity.getConfigValue();
+    }
+
+    private String defaultString(String value) {
+        return value == null ? "" : value;
     }
 }

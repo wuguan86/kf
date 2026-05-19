@@ -125,6 +125,23 @@ public class EnterpriseWeChatController {
     return Result.<List<EnterpriseWeChatUserBindingEntity>>success(messageService.listBindings(tenantId));
   }
 
+  @GetMapping("/my-binding")
+  public Result<EnterpriseWeChatUserBindingEntity> myBinding(
+      @RequestHeader("X-Tenant-Id") long tenantId,
+      Authentication authentication) {
+    TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
+    return Result.success(messageService.getMyBinding(tenantId, principal.subjectId()));
+  }
+
+  @PostMapping("/my-binding")
+  public Result<EnterpriseWeChatUserBindingEntity> saveMyBinding(
+      @RequestHeader("X-Tenant-Id") long tenantId,
+      Authentication authentication,
+      @RequestBody EnterpriseWeChatMessageService.MyBindingCommand request) {
+    TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
+    return Result.success(messageService.saveMyBinding(tenantId, principal.subjectId(), request));
+  }
+
   private String extractEncrypted(String body) {
     if (body == null) {
       return "";
