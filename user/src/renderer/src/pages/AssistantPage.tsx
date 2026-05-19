@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+﻿import React, { useEffect, useRef, useState } from 'react'
 import http from '../utils/http'
 import { readAuthSnapshot } from '../auth/authStore'
 import { ProcessVisualizer, ProcessItem, ProcessStep } from '../components/ProcessVisualizer'
@@ -42,6 +42,9 @@ type ChatMessage = {
   timestamp: number
   imageDataUrl?: string
   imageNotice?: string
+  source?: 'personal' | 'enterprise'
+  messageId?: string
+  customerId?: string
 }
 type StoreContext = {
   itemId: string
@@ -59,6 +62,7 @@ const STREAM_CHUNK_TIMEOUT_MS = 45000
 const STREAM_TOTAL_TIMEOUT_MS = 180000
 const IMAGE_STREAM_CHUNK_TIMEOUT_MS = 90000
 const IMAGE_STREAM_TOTAL_TIMEOUT_MS = 240000
+type WeChatChannel = 'personal' | 'enterprise'
 
 const getNextMonitorDelay = (): number => {
   return Math.floor(MONITOR_INTERVAL_MIN + Math.random() * (MONITOR_INTERVAL_MAX - MONITOR_INTERVAL_MIN))
@@ -116,7 +120,7 @@ const findSendButtonItem = (items: any[]): any | null => {
 const isNoiseText = (text: string): boolean => {
   const trimmed = text.replace(/\s+/g, '').replace(/\u200B/g, '')
   if (!trimmed) return true
-  if (/^[%?·•*#@]+$/.test(trimmed)) return true
+  if (/^[%?路鈥?#@]+$/.test(trimmed)) return true
   if (trimmed.length === 1 && !/[\u4e00-\u9fff]/.test(trimmed)) return true
   return false
 }
@@ -125,7 +129,7 @@ const isNoiseItem = (item: any, avgHeight: number): boolean => {
   const text = getItemText(item)
   const trimmed = text.replace(/\s+/g, '').replace(/\u200B/g, '')
   if (!trimmed) return true
-  if (/^[%?·•*#@]+$/.test(trimmed)) return true
+  if (/^[%?路鈥?#@]+$/.test(trimmed)) return true
   const score = getItemScore(item)
   if (score !== null && score < 0.45) return true
   if (trimmed.length === 1) {
@@ -212,7 +216,7 @@ const normalizeMessage = (text: string): string => {
 
 const isImagePlaceholderMessage = (text: string): boolean => {
   const normalized = normalizeMessage(String(text || ''))
-  return normalized === '[图片]' || normalized === '图片' || normalized === '[Image]'
+  return normalized === '[鍥剧墖]' || normalized === '鍥剧墖' || normalized === '[Image]'
 }
 
 const resolveMessageTimestamp = (raw: unknown): number => {
@@ -553,6 +557,17 @@ function AssistantPage(props: Props): JSX.Element {
   const outputStoreContextRef = useRef<Map<string, { contactKey: string; customerMessage: string }>>(new Map())
   const abortControllerRef = useRef<AbortController | null>(null)
   const pollFailureCountRef = useRef(0)
+  const wechatChannelRef = useRef<WeChatChannel>('personal')
+
+  const fetchWechatChannel = async (): Promise<WeChatChannel> => {
+    try {
+      const res = await http.get<{ channel?: string }>('/api/user/system-config/wechat-channel')
+      return res?.channel === 'enterprise' ? 'enterprise' : 'personal'
+    } catch (error) {
+      console.warn('鑾峰彇寰俊娑堟伅閫氶亾澶辫触锛岄粯璁や娇鐢ㄤ釜浜哄井淇￠€氶亾', error)
+      return 'personal'
+    }
+  }
 
   const fetchRunningRole = async (): Promise<Role | null> => {
     try {
@@ -609,11 +624,11 @@ function AssistantPage(props: Props): JSX.Element {
 
   useEffect(() => {
     const handleForceLogout = () => {
-      console.warn('收到强制下线事件，立即停止自动化任务')
+      console.warn('鏀跺埌寮哄埗涓嬬嚎浜嬩欢锛岀珛鍗冲仠姝㈣嚜鍔ㄥ寲浠诲姟')
       setIsRunning(false)
       setIsConnecting(false)
       pollFailureCountRef.current = 0
-      showToast('您的账号已在其他地方登录，当前自动回复已停止', 'error')
+      showToast('鎮ㄧ殑璐﹀彿宸插湪鍏朵粬鍦版柟鐧诲綍锛屽綋鍓嶈嚜鍔ㄥ洖澶嶅凡鍋滄', 'error')
     }
     window.addEventListener('force-logout', handleForceLogout)
     return () => {
@@ -640,11 +655,14 @@ function AssistantPage(props: Props): JSX.Element {
     const isSelf = !!msg?.is_self
     const triggerReply = !!msg?.trigger_reply
     const messageTimestamp = resolveMessageTimestamp(msg?.timestamp)
+    const source: 'personal' | 'enterprise' = msg?.source === 'enterprise' ? 'enterprise' : 'personal'
+    const messageId = String(msg?.messageId || msg?.id || '').trim()
+    const customerId = String(msg?.customerId || '').trim()
     if (!contact || !text) return
     const shouldWaitForImage = !isSelf && isImagePlaceholderMessage(text)
     const imageTask: Promise<{ imageDataUrl: string; imageNotice: string }> = shouldWaitForImage
       ? (async () => {
-          console.log('[图片链路-DEBUG] 识别到图片占位消息，立即开始等待图片文件', { contact, messageTimestamp })
+          console.log('图片链路：识别到图片占位消息，开始等待图片文件', { contact, messageTimestamp })
           showToast('识别到图片，正在提取中...', 'info')
           try {
             const api = (window as any).api
@@ -655,23 +673,23 @@ function AssistantPage(props: Props): JSX.Element {
             })
             if (imageResult?.ok && imageResult?.dataUrl) {
               const imageDataUrl = String(imageResult.dataUrl)
-              console.log('[图片链路-DEBUG] 图片匹配成功', { contact, dataUrlLength: imageDataUrl.length })
-              showToast('图片提取成功', 'success')
+              console.log('[鍥剧墖閾捐矾-DEBUG] 鍥剧墖鍖归厤鎴愬姛', { contact, dataUrlLength: imageDataUrl.length })
+              showToast('鍥剧墖鎻愬彇鎴愬姛', 'success')
               return { imageDataUrl, imageNotice: '' }
             }
 
-            console.warn('[图片链路-DEBUG] 图片匹配失败，降级文本处理', imageResult)
+            console.warn('图片链路：图片匹配失败，降级为文本处理', imageResult)
             const imageErrorCode = String(imageResult?.error || '')
             if (imageErrorCode === 'image_listener_not_started' || imageErrorCode === 'image_message_before_listener_start') {
               showToast('这张图片发生在监听启动前，已按普通文本处理', 'info')
               return { imageDataUrl: '', imageNotice: '历史图片，未做识别' }
             }
 
-            showToast(`图片获取失败: ${imageResult?.error || '未知错误'}，已降级为文本`, 'error')
+            showToast('图片获取失败，已降级为文本', 'error')
             return { imageDataUrl: '', imageNotice: '' }
           } catch (error: any) {
-            console.error('[图片链路-DEBUG] 图片等待异常', { contact, messageTimestamp, error: error?.message || String(error) })
-            showToast(`图片提取异常: ${error?.message || '未知错误'}`, 'error')
+            console.error('图片链路：图片等待异常', { contact, messageTimestamp, error: error?.message || String(error) })
+            showToast('图片提取异常', 'error')
             return { imageDataUrl: '', imageNotice: '' }
           }
         })()
@@ -680,7 +698,7 @@ function AssistantPage(props: Props): JSX.Element {
     const next = prev
       .then(async () => {
         const { imageDataUrl, imageNotice } = await imageTask
-        await handleIncoming(contact, text, isSelf, triggerReply, imageDataUrl, imageNotice)
+        await handleIncoming(contact, text, isSelf, triggerReply, imageDataUrl, imageNotice, source, messageId, customerId)
       })
       .catch(() => {
       })
@@ -698,7 +716,10 @@ function AssistantPage(props: Props): JSX.Element {
     isSelf: boolean,
     triggerReply: boolean,
     imageDataUrl?: string,
-    imageNotice?: string
+    imageNotice?: string,
+    source: 'personal' | 'enterprise' = 'personal',
+    messageId?: string,
+    customerId?: string
   ) => {
     const normalizedText = normalizeMessage(text)
     if (!normalizedText) return
@@ -712,7 +733,10 @@ function AssistantPage(props: Props): JSX.Element {
       isSelf,
       timestamp: now,
       imageDataUrl: imageDataUrl || undefined,
-      imageNotice: imageNotice || undefined
+      imageNotice: imageNotice || undefined,
+      source,
+      messageId,
+      customerId
     }
     setMessages((prev) => [...prev, newMessage])
 
@@ -739,7 +763,7 @@ function AssistantPage(props: Props): JSX.Element {
     try {
       const role = activeRoleRef.current
       if (!role?.id) {
-        setDifyResponse('请先在角色配置中开启一个角色')
+        setDifyResponse('请先在角色配置中启用一个角色')
         setProcessItems([])
         return
       }
@@ -752,7 +776,7 @@ function AssistantPage(props: Props): JSX.Element {
         id: `step-intent-${Date.now()}`,
         step: 'INTENT',
         status: 'running',
-        content: '正在分析用户意图...',
+        content: '姝ｅ湪鍒嗘瀽鐢ㄦ埛鎰忓浘...',
         timestamp: new Date().toLocaleTimeString()
       }]
 
@@ -770,7 +794,7 @@ function AssistantPage(props: Props): JSX.Element {
         const effectiveTotalTimeoutMs = requestImageDataUrl ? IMAGE_STREAM_TOTAL_TIMEOUT_MS : STREAM_TOTAL_TIMEOUT_MS
         const streamTraceId = `${contact}-${now}-${requestImageDataUrl ? 'image' : 'text'}`
 
-        console.log('[流式回复] 开始请求', {
+        console.log('流式回复开始请求', {
           streamTraceId,
           contact,
           isImageMessage: !!requestImageDataUrl,
@@ -806,7 +830,7 @@ function AssistantPage(props: Props): JSX.Element {
           } catch {
             backendMessage = responseText.trim()
           }
-          console.error('[流式回复] HTTP状态异常', {
+          console.error('流式回复 HTTP 状态异常', {
             streamTraceId,
             status: response.status,
             responseText: backendMessage || responseText
@@ -829,7 +853,7 @@ function AssistantPage(props: Props): JSX.Element {
           try {
             const data = JSON.parse(jsonStr)
             const { step, content } = data
-            console.log('[流式回复] 收到SSE事件', {
+            console.log('[娴佸紡鍥炲] 鏀跺埌SSE浜嬩欢', {
               streamTraceId,
               step,
               contentLength: String(content || '').length
@@ -846,7 +870,7 @@ function AssistantPage(props: Props): JSX.Element {
                   id: `step-knowledge-${Date.now()}`,
                   step: 'KNOWLEDGE',
                   status: 'running',
-                  content: '正在检索知识库...',
+                  content: '姝ｅ湪妫€绱㈢煡璇嗗簱...',
                   timestamp: new Date().toLocaleTimeString()
                 })
               }
@@ -861,18 +885,18 @@ function AssistantPage(props: Props): JSX.Element {
                   id: `step-logic-${Date.now()}`,
                   step: 'LOGIC',
                   status: 'running',
-                  content: '正在规划回复逻辑...',
+                  content: '姝ｅ湪瑙勫垝鍥炲閫昏緫...',
                   timestamp: new Date().toLocaleTimeString()
                 })
               }
             } else if (step === 'LOGIC') {
               const item = localItems.find(i => i.step === 'LOGIC')
               if (item) {
-                item.status = content.includes('积分不足') ? 'error' : 'completed'
+                item.status = content.includes('绉垎涓嶈冻') ? 'error' : 'completed'
                 item.content = content
               }
 
-              if (content.includes('积分不足')) {
+              if (content.includes('绉垎涓嶈冻')) {
                 setShowRechargeDialog(true)
                 setIsRunning(false)
                 try {
@@ -921,8 +945,20 @@ function AssistantPage(props: Props): JSX.Element {
                    }
                  }
 
-                 const api = (window as any).api
-                 const sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
+                 let sendRes: any
+                 if (source === 'enterprise') {
+                   if (!customerId) {
+                     throw new Error('企业微信客户ID为空，无法发送回复')
+                   }
+                   sendRes = await http.post('/api/user/enterprise-wechat/messages/send', {
+                     messageId,
+                     customerId,
+                     content: reply
+                   })
+                 } else {
+                   const api = (window as any).api
+                   sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
+                 }
                  if (!sendRes?.ok || sendRes?.success === false) {
                    setDifyResponse(reply + '\n\n(自动发送失败)')
                  } else {
@@ -939,21 +975,21 @@ function AssistantPage(props: Props): JSX.Element {
 
         while (true) {
           if (Date.now() - streamStartAt > effectiveTotalTimeoutMs) {
-            console.error('[流式回复] 总超时触发', {
+            console.error('流式回复总超时触发', {
               streamTraceId,
               elapsedMs: Date.now() - streamStartAt,
                 chunkCount
             })
-            throw new Error('流式响应超时，请稍后重试')
+            throw new Error('娴佸紡鍝嶅簲瓒呮椂锛岃绋嶅悗閲嶈瘯')
           }
           const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
             const timer = setTimeout(() => {
-              console.error('[流式回复] 分片超时触发', {
+              console.error('[娴佸紡鍥炲] 鍒嗙墖瓒呮椂瑙﹀彂', {
                 streamTraceId,
                 idleMs: Date.now() - lastChunkAt,
                 chunkCount
               })
-              reject(new Error('流式响应长时间无数据'))
+              reject(new Error('娴佸紡鍝嶅簲闀挎椂闂存棤鏁版嵁'))
             }, effectiveChunkTimeoutMs)
             reader.read().then((result) => {
               clearTimeout(timer)
@@ -982,11 +1018,11 @@ function AssistantPage(props: Props): JSX.Element {
 
         const tail = buffer.trim()
         if (tail.startsWith('data:')) {
-          console.log('[流式回复] 处理尾包事件', { streamTraceId, tailLength: tail.length })
+          console.log('[娴佸紡鍥炲] 澶勭悊灏惧寘浜嬩欢', { streamTraceId, tailLength: tail.length })
           await handleSsePayload(tail.replace('data:', '').trim())
         }
         if (!hasOutput) {
-          console.warn('[流式回复] 本次流结束但未收到OUTPUT', { streamTraceId, chunkCount })
+          console.warn('[娴佸紡鍥炲] 鏈娴佺粨鏉熶絾鏈敹鍒癘UTPUT', { streamTraceId, chunkCount })
           setProcessItems((prev) => prev.map((item) => {
             if (item.step === 'OUTPUT' && item.status === 'running') {
               return { ...item, status: 'completed', content: '本次未收到模型输出，请稍后重试。' }
@@ -995,14 +1031,14 @@ function AssistantPage(props: Props): JSX.Element {
           }))
         }
         if (Date.now() - lastChunkAt > effectiveChunkTimeoutMs) {
-          console.error('[流式回复] 流结束后二次空闲超时', {
+          console.error('[娴佸紡鍥炲] 娴佺粨鏉熷悗浜屾绌洪棽瓒呮椂', {
             streamTraceId,
             idleMs: Date.now() - lastChunkAt,
             chunkCount
           })
-          throw new Error('流式响应长时间无数据')
+          throw new Error('娴佸紡鍝嶅簲闀挎椂闂存棤鏁版嵁')
         }
-        console.log('[流式回复] 完成', { streamTraceId, chunkCount, hasOutput })
+        console.log('[娴佸紡鍥炲] 瀹屾垚', { streamTraceId, chunkCount, hasOutput })
       }
 
       if (imageDataUrl) {
@@ -1013,7 +1049,7 @@ function AssistantPage(props: Props): JSX.Element {
 
     } catch (err: any) {
       if (err.name === 'AbortError') return
-      console.error('[流式回复] 失败', { contact, error: err?.message || String(err) })
+      console.error('流式回复失败', { contact, error: err?.message || String(err) })
       setDifyResponse('发送失败: ' + (err.message || 'Error'))
       setProcessItems(prev => prev.map(i => i.status === 'running' ? { ...i, status: 'completed', content: '发生错误: ' + err.message } : i))
     } finally {
@@ -1048,11 +1084,13 @@ function AssistantPage(props: Props): JSX.Element {
       if (!isRunningRef.current) return
       try {
         const api = (window as any).api
-        const res = await api.pollWeChatMessages()
+        const res = wechatChannelRef.current === 'enterprise'
+          ? await http.get<any>('/api/user/enterprise-wechat/messages/poll')
+          : await api.pollWeChatMessages()
         if (res?.ok && Array.isArray(res.messages)) {
           pollFailureCountRef.current = 0
           setDifyResponse((prev) => {
-            if (prev.startsWith('轮询失败: ') || prev.startsWith('启动失败: ')) {
+            if (prev.startsWith('杞澶辫触: ') || prev.startsWith('鍚姩澶辫触: ')) {
               return ''
             }
             return prev
@@ -1066,13 +1104,13 @@ function AssistantPage(props: Props): JSX.Element {
           pollFailureCountRef.current += 1
           const errText = String(res.message || res.error || '')
           if (errText !== 'bridge_starting' && pollFailureCountRef.current >= 3) {
-            setDifyResponse('轮询失败: ' + errText)
+            setDifyResponse('杞澶辫触: ' + errText)
           }
         }
       } catch (e: any) {
         pollFailureCountRef.current += 1
         if (pollFailureCountRef.current >= 3) {
-          setDifyResponse('轮询失败: ' + (e?.message || String(e)))
+          setDifyResponse('杞澶辫触: ' + (e?.message || String(e)))
         }
       } finally {
         if (isRunningRef.current) {
@@ -1161,7 +1199,7 @@ function AssistantPage(props: Props): JSX.Element {
 
             const api = (window as any).api
             if (api?.executeWeChatCommand) {
-              console.log('开始朋友圈自动评论任务', { enabled: commentConfig.enabled })
+              console.log('寮€濮嬫湅鍙嬪湀鑷姩璇勮浠诲姟', { enabled: commentConfig.enabled })
               await api.executeWeChatCommand({
                 action: 'marketing_comment',
                 config: {
@@ -1210,14 +1248,14 @@ function AssistantPage(props: Props): JSX.Element {
     }
     const source = outputStoreContextRef.current.get(id)
     if (!source || !source.contactKey || !source.customerMessage || !aiReplyText.trim()) {
-      showToast('无法入库：缺少上下文消息', 'error')
+      showToast('鏃犳硶鍏ュ簱锛氱己灏戜笂涓嬫枃娑堟伅', 'error')
       return
     }
     try {
       const options = await fetchKnowledgeBaseOptions()
       const enabled = options.filter((item) => item.status === 'ENABLED')
       if (enabled.length === 0) {
-        showToast('暂无可用知识库，请先创建并启用知识库', 'error')
+        showToast('鏆傛棤鍙敤鐭ヨ瘑搴擄紝璇峰厛鍒涘缓骞跺惎鐢ㄧ煡璇嗗簱', 'error')
         return
       }
       setStoreContext({
@@ -1229,7 +1267,7 @@ function AssistantPage(props: Props): JSX.Element {
       setSelectedKnowledgeBaseId(enabled[0].id)
       setStoreDialogOpen(true)
     } catch (error: any) {
-      showToast(`获取知识库失败: ${error?.message || '未知错误'}`, 'error')
+      showToast(`鑾峰彇鐭ヨ瘑搴撳け璐? ${error?.message || '鏈煡閿欒'}`, 'error')
     }
   }
 
@@ -1246,10 +1284,10 @@ function AssistantPage(props: Props): JSX.Element {
         customerMessage: storeContext.customerMessage,
         aiReplyMessage: storeContext.aiReplyMessage
       })
-      showToast('已入库，等待同步到知识库文档', 'success')
+      showToast('宸插叆搴擄紝绛夊緟鍚屾鍒扮煡璇嗗簱鏂囨。', 'success')
       closeStoreDialog()
     } catch (error: any) {
-      showToast(`入库失败: ${error?.message || '未知错误'}`, 'error')
+      showToast(`鍏ュ簱澶辫触: ${error?.message || '鏈煡閿欒'}`, 'error')
       setStoreSubmitting(false)
     }
   }
@@ -1274,6 +1312,8 @@ function AssistantPage(props: Props): JSX.Element {
     setDifyResponse('')
 
     try {
+      const channel = await fetchWechatChannel()
+      wechatChannelRef.current = channel
       const runningRole = await fetchRunningRole()
       if (!runningRole?.id) {
         setShowNoRoleDialog(true)
@@ -1281,7 +1321,7 @@ function AssistantPage(props: Props): JSX.Element {
         return
       }
 
-      // 检查是否有套餐或积分
+      // 妫€鏌ユ槸鍚︽湁濂楅鎴栫Н鍒?
       try {
         const safeTenantId = tenantId?.trim() || '1'
         const headers: Record<string, string> = { 'X-Tenant-Id': safeTenantId, 'Authorization': `Bearer ${userToken}` }
@@ -1297,11 +1337,13 @@ function AssistantPage(props: Props): JSX.Element {
         console.error('Failed to check membership before running', e)
       }
 
-      const startRes = await api.startWeChatBridge()
-      if (!startRes?.ok) {
-        throw new Error(startRes?.message || startRes?.error || '启动失败')
+      if (channel === 'personal') {
+        const startRes = await api.startWeChatBridge()
+        if (!startRes?.ok) {
+          throw new Error(startRes?.message || startRes?.error || '启动失败')
+        }
+        await syncManagedModeToBridge(managedModeRef.current)
       }
-      await syncManagedModeToBridge(managedModeRef.current)
       pollFailureCountRef.current = 0
       setIsRunning(true)
     } catch (e: any) {
@@ -1321,7 +1363,7 @@ function AssistantPage(props: Props): JSX.Element {
     btnContent = (
       <>
         <LoaderIcon />
-        <span>连接中...</span>
+        <span>杩炴帴涓?..</span>
       </>
     )
   } else if (isRunning) {
@@ -1329,7 +1371,7 @@ function AssistantPage(props: Props): JSX.Element {
     btnContent = (
       <>
         <div className={styles.iconBreathing} />
-        <span>停止运行</span>
+        <span>鍋滄杩愯</span>
       </>
     )
   } else {
@@ -1337,7 +1379,7 @@ function AssistantPage(props: Props): JSX.Element {
     btnContent = (
       <>
         <PlayIcon />
-        <span>启动运行</span>
+        <span>鍚姩杩愯</span>
       </>
     )
   }
@@ -1346,7 +1388,7 @@ function AssistantPage(props: Props): JSX.Element {
     <div className={styles.assistantPage}>
       <header className={styles.pageHeader}>
         <div className={styles.pageHeaderTitleGroup}>
-          <h4 className={styles.pageTitle}>AI 运营助手</h4>
+          <h4 className={styles.pageTitle}>AI 杩愯惀鍔╂墜</h4>
           <div className={`${styles.statusBadge} ${isRunning ? styles.active : ''}`}>
             <div className={styles.statusIndicator}></div>
             {isRunning ? '运行中' : '就绪'}
@@ -1359,20 +1401,20 @@ function AssistantPage(props: Props): JSX.Element {
               onClick={() => setManagedMode('full')}
               className={`${styles.modeBtn} ${managedMode === 'full' ? styles.active : ''}`}
             >
-              全托管
+              鍏ㄦ墭绠?
             </button>
             <button
               onClick={() => setManagedMode('semi')}
               className={`${styles.modeBtn} ${managedMode === 'semi' ? styles.active : ''}`}
             >
-              半托管
+              鍗婃墭绠?
             </button>
           </div>
           <button 
             className={btnClass} 
             onClick={toggleRunning} 
             disabled={isSending || isConnecting}
-            title={!isRunning && !isConnecting ? '点击接管微信聊天窗口' : undefined}
+            title={!isRunning && !isConnecting ? '鐐瑰嚮鎺ョ寰俊鑱婂ぉ绐楀彛' : undefined}
           >
             {btnContent}
           </button>
@@ -1387,11 +1429,11 @@ function AssistantPage(props: Props): JSX.Element {
             <div className={styles.chatHistorySection}>
                <div className={styles.sectionHeader}>
                  <h5 className={styles.sectionTitle}>
-                   实时对话读取
+                   瀹炴椂瀵硅瘽璇诲彇
                  </h5>
                  {lastReplied && (
                     <span className={styles.lastRepliedBadge}>
-                      最近回复: {lastReplied.contact}
+                      鏈€杩戝洖澶? {lastReplied.contact}
                     </span>
                  )}
                </div>
@@ -1402,7 +1444,7 @@ function AssistantPage(props: Props): JSX.Element {
                       {isRunning ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span className={styles.iconBreathing} style={{ color: '#52c41a' }}></span>
-                          <span>AI 引擎已就绪，正在等待新的对话产生...</span>
+                          <span>AI 寮曟搸宸插氨缁紝姝ｅ湪绛夊緟鏂扮殑瀵硅瘽浜х敓...</span>
                         </div>
                       ) : (
                         '启动后，收到的微信消息会出现在这里...'
@@ -1435,7 +1477,7 @@ function AssistantPage(props: Props): JSX.Element {
                             <img
                               className={styles.messageImage}
                               src={msg.imageDataUrl}
-                              alt="微信图片"
+                              alt="寰俊鍥剧墖"
                             />
                           ) : (
                             msg.content
@@ -1460,7 +1502,7 @@ function AssistantPage(props: Props): JSX.Element {
                   {isRunning ? (
                     <>
                       <span className={styles.aiThinkingDot}></span>
-                      <span>视界正在查看你的屏幕，正在阅读你的聊天内容<span className={styles.typingDots}></span></span>
+                      <span>正在读取聊天内容</span><span className={styles.typingDots}></span>
                     </>
                   ) : (
                     <span>AI 思考过程</span>
@@ -1483,7 +1525,7 @@ function AssistantPage(props: Props): JSX.Element {
                   )
                 ) : (
                    <div className={styles.emptyState}>
-                     <div className={styles.emptyIcon}>✨</div>
+                     <div className={styles.emptyIcon}>*</div>
                      <div>等待触发任务...</div>
                    </div>
                 )}
@@ -1530,3 +1572,5 @@ function AssistantPage(props: Props): JSX.Element {
 }
 
 export default AssistantPage
+
+

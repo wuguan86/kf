@@ -51,6 +51,17 @@ public class UserSystemConfigController {
         return Result.success(config);
     }
 
+    @GetMapping("/wechat-channel")
+    public Result<Map<String, String>> getWechatChannel() {
+        Map<String, String> config = new HashMap<>();
+        SystemConfigEntity channel = systemConfigMapper.selectOne(
+                new LambdaQueryWrapper<SystemConfigEntity>().eq(SystemConfigEntity::getConfigKey, "wechat_channel")
+        );
+        String value = channel != null ? channel.getConfigValue() : "personal";
+        config.put("channel", "enterprise".equalsIgnoreCase(value) ? "enterprise" : "personal");
+        return Result.success(config);
+    }
+
     @GetMapping("/image/{filename:.+}")
     public ResponseEntity<Resource> getImage(@PathVariable("filename") String filename) {
         try {

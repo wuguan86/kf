@@ -7,7 +7,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "transit.tenant")
 public class TenantProperties {
   private String headerName = "X-Tenant-Id";
-  private List<String> ignoredPathPrefixes = new ArrayList<>(List.of("/actuator", "/api/user/auth"));
+  private List<String> ignoredPathPrefixes = new ArrayList<>(List.of(
+      "/actuator",
+      "/api/user/auth",
+      "/api/user/enterprise-wechat/callback"));
 
   public String getHeaderName() {
     return headerName;
