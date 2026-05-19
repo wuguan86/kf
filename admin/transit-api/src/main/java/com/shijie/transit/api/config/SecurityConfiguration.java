@@ -48,6 +48,7 @@ public class SecurityConfiguration {
             List.of(
                 "/api/user/auth",
                 "/api/user/avatar",
+                "/api/user/enterprise-wechat/callback",
                 "/api/user/payment/wechat/notify",
                 "/api/user/system-config/image/"
             ));

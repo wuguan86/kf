@@ -18,6 +18,8 @@ public class ManualSchemaUpdater implements ApplicationRunner {
     public void run(ApplicationArguments args) throws Exception {
         ensureUserAccountInitColumn();
         ensureUserIntentDailySummaryColumn();
+        ensureEnterpriseWechatTables();
+        ensureEnterpriseWechatMessageOpenKfidColumn();
         jdbcTemplate.execute("""
             CREATE TABLE IF NOT EXISTS system_config (
               id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
@@ -159,5 +161,58 @@ public class ManualSchemaUpdater implements ApplicationRunner {
             tableName,
             columnName);
         return count != null && count > 0;
+    }
+
+    private void ensureEnterpriseWechatTables() {
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS enterprise_wechat_user_binding (
+              id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
+              tenant_id BIGINT NOT NULL COMMENT '租户ID',
+              enterprise_user_id VARCHAR(128) NOT NULL COMMENT '企业微信客服或成员userid',
+              enterprise_user_name VARCHAR(128) NOT NULL DEFAULT '' COMMENT '企业微信客服或成员名称',
+              user_id BIGINT NOT NULL COMMENT '系统用户ID',
+              remark VARCHAR(255) NOT NULL DEFAULT '' COMMENT '备注',
+              status VARCHAR(32) NOT NULL DEFAULT 'ENABLED' COMMENT '状态:ENABLED启用,DISABLED停用',
+              created_at DATETIME(3) NOT NULL COMMENT '创建时间',
+              updated_at DATETIME(3) NOT NULL COMMENT '更新时间',
+              UNIQUE KEY uk_enterprise_wechat_binding_userid (tenant_id, enterprise_user_id) COMMENT '唯一索引:租户+企微userid',
+              KEY idx_enterprise_wechat_binding_user (tenant_id, user_id) COMMENT '索引:租户+系统用户'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业微信客服用户映射表';
+        """);
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS enterprise_wechat_message (
+              id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
+              tenant_id BIGINT NOT NULL COMMENT '租户ID',
+              message_id VARCHAR(128) NOT NULL COMMENT '内部消息ID',
+              enterprise_user_id VARCHAR(128) NOT NULL DEFAULT '' COMMENT '企业微信客服或成员userid',
+              open_kfid VARCHAR(128) NOT NULL DEFAULT '' COMMENT '微信客服账号ID',
+              owner_user_id BIGINT COMMENT '映射后的系统用户ID',
+              customer_id VARCHAR(128) NOT NULL DEFAULT '' COMMENT '企业微信外部联系人ID',
+              customer_name VARCHAR(128) NOT NULL DEFAULT '' COMMENT '客户展示名称',
+              content TEXT NOT NULL COMMENT '消息内容',
+              message_type VARCHAR(32) NOT NULL DEFAULT 'text' COMMENT '消息类型',
+              direction VARCHAR(16) NOT NULL DEFAULT 'IN' COMMENT '消息方向:IN客户消息,OUT系统回复',
+              status VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT '状态:PENDING待处理,REPLIED已回复,FAILED失败,UNMAPPED未映射',
+              raw_payload TEXT COMMENT '企业微信回调原始明文',
+              fail_reason TEXT COMMENT '失败原因',
+              received_at DATETIME(3) NOT NULL COMMENT '接收时间',
+              replied_at DATETIME(3) COMMENT '回复时间',
+              created_at DATETIME(3) NOT NULL COMMENT '创建时间',
+              updated_at DATETIME(3) NOT NULL COMMENT '更新时间',
+              UNIQUE KEY uk_enterprise_wechat_message_id (tenant_id, message_id) COMMENT '唯一索引:租户+消息ID',
+              KEY idx_enterprise_wechat_pending (tenant_id, owner_user_id, status, received_at) COMMENT '索引:用户待处理消息'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业微信消息队列表';
+        """);
+    }
+
+    private void ensureEnterpriseWechatMessageOpenKfidColumn() {
+        if (hasColumn("enterprise_wechat_message", "open_kfid")) {
+            return;
+        }
+        jdbcTemplate.execute("""
+            ALTER TABLE enterprise_wechat_message
+            ADD COLUMN open_kfid VARCHAR(128) NOT NULL DEFAULT '' COMMENT '微信客服账号ID'
+            AFTER enterprise_user_id;
+        """);
     }
 }
