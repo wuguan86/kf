@@ -216,7 +216,7 @@ const normalizeMessage = (text: string): string => {
 
 const isImagePlaceholderMessage = (text: string): boolean => {
   const normalized = normalizeMessage(String(text || ''))
-  return normalized === '[鍥剧墖]' || normalized === '鍥剧墖' || normalized === '[Image]'
+  return normalized === '[图片]' || normalized === '图片' || normalized === '[Image]'
 }
 
 const resolveMessageTimestamp = (raw: unknown): number => {
@@ -564,7 +564,7 @@ function AssistantPage(props: Props): JSX.Element {
       const res = await http.get<{ channel?: string }>('/api/user/system-config/wechat-channel')
       return res?.channel === 'enterprise' ? 'enterprise' : 'personal'
     } catch (error) {
-      console.warn('鑾峰彇寰俊娑堟伅閫氶亾澶辫触锛岄粯璁や娇鐢ㄤ釜浜哄井淇￠€氶亾', error)
+      console.warn('获取微信消息通道失败，默认使用个人微信通道', error)
       return 'personal'
     }
   }
@@ -624,11 +624,11 @@ function AssistantPage(props: Props): JSX.Element {
 
   useEffect(() => {
     const handleForceLogout = () => {
-      console.warn('鏀跺埌寮哄埗涓嬬嚎浜嬩欢锛岀珛鍗冲仠姝㈣嚜鍔ㄥ寲浠诲姟')
+      console.warn('收到强制下线事件，立即停止自动化任务')
       setIsRunning(false)
       setIsConnecting(false)
       pollFailureCountRef.current = 0
-      showToast('鎮ㄧ殑璐﹀彿宸插湪鍏朵粬鍦版柟鐧诲綍锛屽綋鍓嶈嚜鍔ㄥ洖澶嶅凡鍋滄', 'error')
+      showToast('您的账号已在其他地方登录，当前自动回复已停止', 'error')
     }
     window.addEventListener('force-logout', handleForceLogout)
     return () => {
@@ -673,8 +673,8 @@ function AssistantPage(props: Props): JSX.Element {
             })
             if (imageResult?.ok && imageResult?.dataUrl) {
               const imageDataUrl = String(imageResult.dataUrl)
-              console.log('[鍥剧墖閾捐矾-DEBUG] 鍥剧墖鍖归厤鎴愬姛', { contact, dataUrlLength: imageDataUrl.length })
-              showToast('鍥剧墖鎻愬彇鎴愬姛', 'success')
+              console.log('[图片链路-DEBUG] 图片匹配成功', { contact, dataUrlLength: imageDataUrl.length })
+              showToast('图片提取成功', 'success')
               return { imageDataUrl, imageNotice: '' }
             }
 
@@ -776,7 +776,7 @@ function AssistantPage(props: Props): JSX.Element {
         id: `step-intent-${Date.now()}`,
         step: 'INTENT',
         status: 'running',
-        content: '姝ｅ湪鍒嗘瀽鐢ㄦ埛鎰忓浘...',
+        content: '正在分析用户意图...',
         timestamp: new Date().toLocaleTimeString()
       }]
 
@@ -853,7 +853,7 @@ function AssistantPage(props: Props): JSX.Element {
           try {
             const data = JSON.parse(jsonStr)
             const { step, content } = data
-            console.log('[娴佸紡鍥炲] 鏀跺埌SSE浜嬩欢', {
+            console.log('[流式回复] 收到 SSE 事件', {
               streamTraceId,
               step,
               contentLength: String(content || '').length
@@ -870,7 +870,7 @@ function AssistantPage(props: Props): JSX.Element {
                   id: `step-knowledge-${Date.now()}`,
                   step: 'KNOWLEDGE',
                   status: 'running',
-                  content: '姝ｅ湪妫€绱㈢煡璇嗗簱...',
+                  content: '正在检索知识库...',
                   timestamp: new Date().toLocaleTimeString()
                 })
               }
@@ -885,18 +885,18 @@ function AssistantPage(props: Props): JSX.Element {
                   id: `step-logic-${Date.now()}`,
                   step: 'LOGIC',
                   status: 'running',
-                  content: '姝ｅ湪瑙勫垝鍥炲閫昏緫...',
+                  content: '正在规划回复逻辑...',
                   timestamp: new Date().toLocaleTimeString()
                 })
               }
             } else if (step === 'LOGIC') {
               const item = localItems.find(i => i.step === 'LOGIC')
               if (item) {
-                item.status = content.includes('绉垎涓嶈冻') ? 'error' : 'completed'
+                item.status = content.includes('积分不足') ? 'error' : 'completed'
                 item.content = content
               }
 
-              if (content.includes('绉垎涓嶈冻')) {
+              if (content.includes('积分不足')) {
                 setShowRechargeDialog(true)
                 setIsRunning(false)
                 try {
@@ -980,16 +980,16 @@ function AssistantPage(props: Props): JSX.Element {
               elapsedMs: Date.now() - streamStartAt,
                 chunkCount
             })
-            throw new Error('娴佸紡鍝嶅簲瓒呮椂锛岃绋嶅悗閲嶈瘯')
+            throw new Error('流式响应超时，请稍后重试')
           }
           const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
             const timer = setTimeout(() => {
-              console.error('[娴佸紡鍥炲] 鍒嗙墖瓒呮椂瑙﹀彂', {
+              console.error('[流式回复] 分片超时触发', {
                 streamTraceId,
                 idleMs: Date.now() - lastChunkAt,
                 chunkCount
               })
-              reject(new Error('娴佸紡鍝嶅簲闀挎椂闂存棤鏁版嵁'))
+              reject(new Error('流式响应长时间无数据'))
             }, effectiveChunkTimeoutMs)
             reader.read().then((result) => {
               clearTimeout(timer)
@@ -1018,11 +1018,11 @@ function AssistantPage(props: Props): JSX.Element {
 
         const tail = buffer.trim()
         if (tail.startsWith('data:')) {
-          console.log('[娴佸紡鍥炲] 澶勭悊灏惧寘浜嬩欢', { streamTraceId, tailLength: tail.length })
+          console.log('[流式回复] 处理尾包事件', { streamTraceId, tailLength: tail.length })
           await handleSsePayload(tail.replace('data:', '').trim())
         }
         if (!hasOutput) {
-          console.warn('[娴佸紡鍥炲] 鏈娴佺粨鏉熶絾鏈敹鍒癘UTPUT', { streamTraceId, chunkCount })
+          console.warn('[流式回复] 本次流结束但未收到 OUTPUT', { streamTraceId, chunkCount })
           setProcessItems((prev) => prev.map((item) => {
             if (item.step === 'OUTPUT' && item.status === 'running') {
               return { ...item, status: 'completed', content: '本次未收到模型输出，请稍后重试。' }
@@ -1031,14 +1031,14 @@ function AssistantPage(props: Props): JSX.Element {
           }))
         }
         if (Date.now() - lastChunkAt > effectiveChunkTimeoutMs) {
-          console.error('[娴佸紡鍥炲] 娴佺粨鏉熷悗浜屾绌洪棽瓒呮椂', {
+          console.error('[流式回复] 流结束后二次空闲超时', {
             streamTraceId,
             idleMs: Date.now() - lastChunkAt,
             chunkCount
           })
-          throw new Error('娴佸紡鍝嶅簲闀挎椂闂存棤鏁版嵁')
+          throw new Error('流式响应长时间无数据')
         }
-        console.log('[娴佸紡鍥炲] 瀹屾垚', { streamTraceId, chunkCount, hasOutput })
+        console.log('[流式回复] 完成', { streamTraceId, chunkCount, hasOutput })
       }
 
       if (imageDataUrl) {
@@ -1090,7 +1090,7 @@ function AssistantPage(props: Props): JSX.Element {
         if (res?.ok && Array.isArray(res.messages)) {
           pollFailureCountRef.current = 0
           setDifyResponse((prev) => {
-            if (prev.startsWith('杞澶辫触: ') || prev.startsWith('鍚姩澶辫触: ')) {
+            if (prev.startsWith('轮询失败: ') || prev.startsWith('启动失败: ')) {
               return ''
             }
             return prev
@@ -1104,13 +1104,13 @@ function AssistantPage(props: Props): JSX.Element {
           pollFailureCountRef.current += 1
           const errText = String(res.message || res.error || '')
           if (errText !== 'bridge_starting' && pollFailureCountRef.current >= 3) {
-            setDifyResponse('杞澶辫触: ' + errText)
+            setDifyResponse('轮询失败: ' + errText)
           }
         }
       } catch (e: any) {
         pollFailureCountRef.current += 1
         if (pollFailureCountRef.current >= 3) {
-          setDifyResponse('杞澶辫触: ' + (e?.message || String(e)))
+          setDifyResponse('轮询失败: ' + (e?.message || String(e)))
         }
       } finally {
         if (isRunningRef.current) {
@@ -1199,7 +1199,7 @@ function AssistantPage(props: Props): JSX.Element {
 
             const api = (window as any).api
             if (api?.executeWeChatCommand) {
-              console.log('寮€濮嬫湅鍙嬪湀鑷姩璇勮浠诲姟', { enabled: commentConfig.enabled })
+              console.log('开始朋友圈自动评论任务', { enabled: commentConfig.enabled })
               await api.executeWeChatCommand({
                 action: 'marketing_comment',
                 config: {
@@ -1248,14 +1248,14 @@ function AssistantPage(props: Props): JSX.Element {
     }
     const source = outputStoreContextRef.current.get(id)
     if (!source || !source.contactKey || !source.customerMessage || !aiReplyText.trim()) {
-      showToast('鏃犳硶鍏ュ簱锛氱己灏戜笂涓嬫枃娑堟伅', 'error')
+      showToast('无法入库：缺少上下文消息', 'error')
       return
     }
     try {
       const options = await fetchKnowledgeBaseOptions()
       const enabled = options.filter((item) => item.status === 'ENABLED')
       if (enabled.length === 0) {
-        showToast('鏆傛棤鍙敤鐭ヨ瘑搴擄紝璇峰厛鍒涘缓骞跺惎鐢ㄧ煡璇嗗簱', 'error')
+        showToast('暂无可用知识库，请先创建并启用知识库', 'error')
         return
       }
       setStoreContext({
@@ -1267,7 +1267,7 @@ function AssistantPage(props: Props): JSX.Element {
       setSelectedKnowledgeBaseId(enabled[0].id)
       setStoreDialogOpen(true)
     } catch (error: any) {
-      showToast(`鑾峰彇鐭ヨ瘑搴撳け璐? ${error?.message || '鏈煡閿欒'}`, 'error')
+      showToast(`获取知识库失败: ${error?.message || '未知错误'}`, 'error')
     }
   }
 
@@ -1284,10 +1284,10 @@ function AssistantPage(props: Props): JSX.Element {
         customerMessage: storeContext.customerMessage,
         aiReplyMessage: storeContext.aiReplyMessage
       })
-      showToast('宸插叆搴擄紝绛夊緟鍚屾鍒扮煡璇嗗簱鏂囨。', 'success')
+      showToast('已入库，等待同步到知识库文档', 'success')
       closeStoreDialog()
     } catch (error: any) {
-      showToast(`鍏ュ簱澶辫触: ${error?.message || '鏈煡閿欒'}`, 'error')
+      showToast(`入库失败: ${error?.message || '未知错误'}`, 'error')
       setStoreSubmitting(false)
     }
   }
@@ -1321,7 +1321,7 @@ function AssistantPage(props: Props): JSX.Element {
         return
       }
 
-      // 妫€鏌ユ槸鍚︽湁濂楅鎴栫Н鍒?
+      // 检查是否有套餐或积分
       try {
         const safeTenantId = tenantId?.trim() || '1'
         const headers: Record<string, string> = { 'X-Tenant-Id': safeTenantId, 'Authorization': `Bearer ${userToken}` }
@@ -1363,7 +1363,7 @@ function AssistantPage(props: Props): JSX.Element {
     btnContent = (
       <>
         <LoaderIcon />
-        <span>杩炴帴涓?..</span>
+        <span>连接中...</span>
       </>
     )
   } else if (isRunning) {
@@ -1371,7 +1371,7 @@ function AssistantPage(props: Props): JSX.Element {
     btnContent = (
       <>
         <div className={styles.iconBreathing} />
-        <span>鍋滄杩愯</span>
+        <span>停止运行</span>
       </>
     )
   } else {
@@ -1379,7 +1379,7 @@ function AssistantPage(props: Props): JSX.Element {
     btnContent = (
       <>
         <PlayIcon />
-        <span>鍚姩杩愯</span>
+        <span>启动运行</span>
       </>
     )
   }
@@ -1388,7 +1388,7 @@ function AssistantPage(props: Props): JSX.Element {
     <div className={styles.assistantPage}>
       <header className={styles.pageHeader}>
         <div className={styles.pageHeaderTitleGroup}>
-          <h4 className={styles.pageTitle}>AI 杩愯惀鍔╂墜</h4>
+          <h4 className={styles.pageTitle}>AI 运营助手</h4>
           <div className={`${styles.statusBadge} ${isRunning ? styles.active : ''}`}>
             <div className={styles.statusIndicator}></div>
             {isRunning ? '运行中' : '就绪'}
@@ -1401,20 +1401,20 @@ function AssistantPage(props: Props): JSX.Element {
               onClick={() => setManagedMode('full')}
               className={`${styles.modeBtn} ${managedMode === 'full' ? styles.active : ''}`}
             >
-              鍏ㄦ墭绠?
+              全托管
             </button>
             <button
               onClick={() => setManagedMode('semi')}
               className={`${styles.modeBtn} ${managedMode === 'semi' ? styles.active : ''}`}
             >
-              鍗婃墭绠?
+              半托管
             </button>
           </div>
           <button 
             className={btnClass} 
             onClick={toggleRunning} 
             disabled={isSending || isConnecting}
-            title={!isRunning && !isConnecting ? '鐐瑰嚮鎺ョ寰俊鑱婂ぉ绐楀彛' : undefined}
+            title={!isRunning && !isConnecting ? '点击接管微信聊天窗口' : undefined}
           >
             {btnContent}
           </button>
@@ -1429,11 +1429,11 @@ function AssistantPage(props: Props): JSX.Element {
             <div className={styles.chatHistorySection}>
                <div className={styles.sectionHeader}>
                  <h5 className={styles.sectionTitle}>
-                   瀹炴椂瀵硅瘽璇诲彇
+                   实时对话读取
                  </h5>
                  {lastReplied && (
                     <span className={styles.lastRepliedBadge}>
-                      鏈€杩戝洖澶? {lastReplied.contact}
+                      最近回复 {lastReplied.contact}
                     </span>
                  )}
                </div>
@@ -1444,7 +1444,7 @@ function AssistantPage(props: Props): JSX.Element {
                       {isRunning ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span className={styles.iconBreathing} style={{ color: '#52c41a' }}></span>
-                          <span>AI 寮曟搸宸插氨缁紝姝ｅ湪绛夊緟鏂扮殑瀵硅瘽浜х敓...</span>
+                          <span>AI 引擎已就绪，正在等待新的对话产生...</span>
                         </div>
                       ) : (
                         '启动后，收到的微信消息会出现在这里...'
@@ -1477,7 +1477,7 @@ function AssistantPage(props: Props): JSX.Element {
                             <img
                               className={styles.messageImage}
                               src={msg.imageDataUrl}
-                              alt="寰俊鍥剧墖"
+                              alt="微信图片"
                             />
                           ) : (
                             msg.content
