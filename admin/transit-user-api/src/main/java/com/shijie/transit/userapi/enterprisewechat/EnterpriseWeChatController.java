@@ -49,11 +49,12 @@ public class EnterpriseWeChatController {
 
   @GetMapping(value = "/callback", produces = MediaType.TEXT_PLAIN_VALUE)
   public String verify(
+      @RequestHeader(value = "X-Tenant-Id", required = false, defaultValue = "1") long tenantId,
       @RequestParam("msg_signature") String msgSignature,
       @RequestParam("timestamp") String timestamp,
       @RequestParam("nonce") String nonce,
       @RequestParam("echostr") String echostr) {
-    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig();
+    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig(tenantId);
     return crypto.decrypt(runtime.token(), runtime.encodingAesKey(), runtime.corpId(), msgSignature, timestamp, nonce, echostr);
   }
 
@@ -64,7 +65,7 @@ public class EnterpriseWeChatController {
       @RequestParam("timestamp") String timestamp,
       @RequestParam("nonce") String nonce,
       @RequestBody String body) {
-    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig();
+    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig(tenantId);
     String plain = crypto.decrypt(runtime.token(), runtime.encodingAesKey(), runtime.corpId(), msgSignature, timestamp, nonce, extractEncrypted(body));
     EnterpriseWeChatCallbackMessage message = messageService.parseCallbackMessage(plain);
     messageService.enqueueIncoming(
@@ -100,7 +101,7 @@ public class EnterpriseWeChatController {
       Authentication authentication,
       @RequestBody SendRequest request) {
     TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
-    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig();
+    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig(tenantId);
     EnterpriseWeChatMessageEntity pendingMessage = messageService.findPendingForReply(tenantId, principal.subjectId(), request.messageId());
     if (pendingMessage == null) {
       throw new IllegalArgumentException("企业微信待回复消息不存在或已处理");

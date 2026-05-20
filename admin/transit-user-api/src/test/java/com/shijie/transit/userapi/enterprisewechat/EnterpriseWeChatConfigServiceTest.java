@@ -70,4 +70,19 @@ class EnterpriseWeChatConfigServiceTest {
         .anyMatch(item -> item.getTenantId() == 8L && "wechat_channel".equals(item.getConfigKey())));
     assertNull(TenantContext.getTenantId());
   }
+
+  @Test
+  void getRuntimeConfigCanReadTenantScopedConfigForCallbackWithoutHeader() {
+    SystemConfigMapper mapper = mock(SystemConfigMapper.class);
+    EnterpriseWeChatProperties properties = new EnterpriseWeChatProperties();
+    EnterpriseWeChatConfigService service = new EnterpriseWeChatConfigService(mapper, properties);
+    SystemConfigEntity corpId = new SystemConfigEntity();
+    corpId.setConfigValue("corp-1");
+    when(mapper.selectOne(any())).thenReturn(corpId);
+
+    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig config = service.getRuntimeConfig(1L);
+
+    assertEquals("corp-1", config.corpId());
+    assertNull(TenantContext.getTenantId());
+  }
 }

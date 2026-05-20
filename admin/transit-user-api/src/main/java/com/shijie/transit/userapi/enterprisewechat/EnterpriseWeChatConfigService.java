@@ -25,6 +25,15 @@ public class EnterpriseWeChatConfigService {
     return new WeChatChannelConfig(channel);
   }
 
+  public WeChatChannelConfig getChannelConfig(long tenantId) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      return getChannelConfig();
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
   public EnterpriseWeChatRuntimeConfig getRuntimeConfig() {
     String corpId = firstText(System.getenv("ENTERPRISE_WECHAT_CORP_ID"), readConfig("enterprise_wechat_corp_id"), properties.getCorpId());
     String secret = firstText(System.getenv("ENTERPRISE_WECHAT_SECRET"), readConfig("enterprise_wechat_secret"), properties.getSecret());
@@ -35,6 +44,15 @@ public class EnterpriseWeChatConfigService {
         properties.getEncodingAesKey());
     String apiBaseUrl = firstText(readConfig("enterprise_wechat_api_base_url"), properties.getApiBaseUrl(), "https://qyapi.weixin.qq.com");
     return new EnterpriseWeChatRuntimeConfig(corpId, secret, token, aesKey, apiBaseUrl);
+  }
+
+  public EnterpriseWeChatRuntimeConfig getRuntimeConfig(long tenantId) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      return getRuntimeConfig();
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   @Transactional
