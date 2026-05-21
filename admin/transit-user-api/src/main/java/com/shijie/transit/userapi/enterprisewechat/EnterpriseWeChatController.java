@@ -68,15 +68,19 @@ public class EnterpriseWeChatController {
     EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig(tenantId);
     String plain = crypto.decrypt(runtime.token(), runtime.encodingAesKey(), runtime.corpId(), msgSignature, timestamp, nonce, extractEncrypted(body));
     EnterpriseWeChatCallbackMessage message = messageService.parseCallbackMessage(plain);
-    messageService.enqueueIncoming(
-        tenantId,
-        message.enterpriseUserId(),
-        message.openKfid(),
-        message.customerId(),
-        message.customerName(),
-        message.content(),
-        message.messageType(),
-        plain);
+    if (isWechatKfSyncEvent(message)) {
+      syncWechatKfMessages(tenantId, runtime, message);
+    } else {
+      messageService.enqueueIncoming(
+          tenantId,
+          message.enterpriseUserId(),
+          message.openKfid(),
+          message.customerId(),
+          message.customerName(),
+          message.content(),
+          message.messageType(),
+          plain);
+    }
     return "success";
   }
 
@@ -160,6 +164,32 @@ public class EnterpriseWeChatController {
   }
 
   public record SendRequest(String messageId, String customerId, String content) {
+  }
+
+  private boolean isWechatKfSyncEvent(EnterpriseWeChatCallbackMessage message) {
+    return "event".equalsIgnoreCase(message.messageType())
+        && "kf_msg_or_event".equalsIgnoreCase(message.eventType())
+        && StringUtils.hasText(message.syncToken())
+        && StringUtils.hasText(message.openKfid());
+  }
+
+  private void syncWechatKfMessages(
+      long tenantId,
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime,
+      EnterpriseWeChatCallbackMessage message) {
+    String cursor = "";
+    int totalInserted = 0;
+    for (int i = 0; i < 5; i++) {
+      String payload = client.syncCustomerMessages(runtime, message.openKfid(), message.syncToken(), cursor, 100);
+      EnterpriseWeChatMessageService.SyncedMessageBatch batch = messageService.parseSyncedMessages(payload);
+      totalInserted += messageService.enqueueSyncedMessages(tenantId, batch.messages()).size();
+      cursor = batch.nextCursor();
+      if (!batch.hasMore() || !StringUtils.hasText(cursor)) {
+        break;
+      }
+    }
+    log.info("企业微信客服消息同步完成，tenantId={}，openKfid={}，新增消息数={}",
+        tenantId, message.openKfid(), totalInserted);
   }
 
   private Map<String, Object> toBridgeMessage(EnterpriseWeChatMessageEntity entity) {

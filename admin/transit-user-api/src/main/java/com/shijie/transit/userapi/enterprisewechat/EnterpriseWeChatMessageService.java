@@ -1,35 +1,55 @@
 package com.shijie.transit.userapi.enterprisewechat;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shijie.transit.common.db.entity.EnterpriseWeChatMessageEntity;
 import com.shijie.transit.common.db.entity.EnterpriseWeChatUserBindingEntity;
 import com.shijie.transit.common.mapper.EnterpriseWeChatMessageMapper;
 import com.shijie.transit.common.mapper.EnterpriseWeChatUserBindingMapper;
 import com.shijie.transit.common.tenant.TenantContext;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 @Service
 public class EnterpriseWeChatMessageService {
+  private static final Logger log = LoggerFactory.getLogger(EnterpriseWeChatMessageService.class);
   private static final Pattern XML_TAG_PATTERN = Pattern.compile("<%s><!\\[CDATA\\[([\\s\\S]*?)]]></%s>|<%s>([\\s\\S]*?)</%s>");
   private final EnterpriseWeChatMessageMapper messageMapper;
   private final EnterpriseWeChatUserBindingMapper bindingMapper;
   private final Clock clock;
+  private final ObjectMapper objectMapper;
 
   public EnterpriseWeChatMessageService(
       EnterpriseWeChatMessageMapper messageMapper,
       EnterpriseWeChatUserBindingMapper bindingMapper,
       Clock clock) {
+    this(messageMapper, bindingMapper, clock, new ObjectMapper());
+  }
+
+  @Autowired
+  public EnterpriseWeChatMessageService(
+      EnterpriseWeChatMessageMapper messageMapper,
+      EnterpriseWeChatUserBindingMapper bindingMapper,
+      Clock clock,
+      ObjectMapper objectMapper) {
     this.messageMapper = messageMapper;
     this.bindingMapper = bindingMapper;
     this.clock = clock;
+    this.objectMapper = objectMapper;
   }
 
   @Transactional
@@ -59,8 +79,47 @@ public class EnterpriseWeChatMessageService {
       entity.setStatus(ownerUserId == null ? "UNMAPPED" : "PENDING");
       entity.setRawPayload(rawPayload);
       entity.setReceivedAt(LocalDateTime.now(clock));
-      messageMapper.insert(entity);
+      insertIgnoringDuplicate(entity);
       return entity;
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Transactional
+  public List<EnterpriseWeChatMessageEntity> enqueueSyncedMessages(long tenantId, List<SyncedCustomerMessage> messages) {
+    if (messages == null || messages.isEmpty()) {
+      return List.of();
+    }
+    TenantContext.setTenantId(tenantId);
+    try {
+      List<EnterpriseWeChatMessageEntity> inserted = new ArrayList<>();
+      for (SyncedCustomerMessage message : messages) {
+        if (!StringUtils.hasText(message.content())) {
+          log.info("企业微信同步消息跳过非文本或空内容，tenantId={}，messageId={}，messageType={}",
+              tenantId, message.messageId(), message.messageType());
+          continue;
+        }
+        Long ownerUserId = resolveOwnerUserId(tenantId, message.enterpriseUserId());
+        EnterpriseWeChatMessageEntity entity = new EnterpriseWeChatMessageEntity();
+        entity.setTenantId(tenantId);
+        entity.setMessageId(firstText(message.messageId(), generateMessageId(tenantId, message.enterpriseUserId(), message.customerId(), message.content())));
+        entity.setEnterpriseUserId(defaultString(message.enterpriseUserId()));
+        entity.setOpenKfid(defaultString(message.openKfid()));
+        entity.setOwnerUserId(ownerUserId);
+        entity.setCustomerId(defaultString(message.customerId()));
+        entity.setCustomerName(defaultString(message.customerName()));
+        entity.setContent(defaultString(message.content()));
+        entity.setMessageType(StringUtils.hasText(message.messageType()) ? message.messageType().trim() : "text");
+        entity.setDirection("IN");
+        entity.setStatus(ownerUserId == null ? "UNMAPPED" : "PENDING");
+        entity.setRawPayload(message.rawPayload());
+        entity.setReceivedAt(message.receivedAt() == null ? LocalDateTime.now(clock) : message.receivedAt());
+        if (insertIgnoringDuplicate(entity)) {
+          inserted.add(entity);
+        }
+      }
+      return inserted;
     } finally {
       TenantContext.clear();
     }
@@ -185,6 +244,7 @@ public class EnterpriseWeChatMessageService {
 
   public EnterpriseWeChatCallbackMessage parseCallbackMessage(String plainText) {
     String messageType = firstText(readXml(plainText, "MsgType"), "text");
+    String eventType = readXml(plainText, "Event");
     String enterpriseUserId = firstText(
         readXml(plainText, "ServicerUserId"),
         readXml(plainText, "UserID"),
@@ -199,7 +259,38 @@ public class EnterpriseWeChatMessageService {
         readXml(plainText, "FromUserName"));
     String customerName = firstText(readXml(plainText, "ExternalUserName"), customerId);
     String content = firstText(readXml(plainText, "Content"), readXml(plainText, "Text"), "");
-    return new EnterpriseWeChatCallbackMessage(enterpriseUserId, openKfid, customerId, customerName, content, messageType);
+    String syncToken = firstText(readXml(plainText, "Token"), readXml(plainText, "SyncToken"));
+    return new EnterpriseWeChatCallbackMessage(enterpriseUserId, openKfid, customerId, customerName, content, messageType, eventType, syncToken);
+  }
+
+  public SyncedMessageBatch parseSyncedMessages(String payload) {
+    if (!StringUtils.hasText(payload)) {
+      return new SyncedMessageBatch("", false, List.of());
+    }
+    try {
+      JsonNode root = objectMapper.readTree(payload);
+      int errCode = root.path("errcode").asInt(0);
+      if (errCode != 0) {
+        throw new IllegalStateException("企业微信同步消息失败: " + payload);
+      }
+      String nextCursor = text(root, "next_cursor");
+      boolean hasMore = root.path("has_more").asInt(0) == 1;
+      List<SyncedCustomerMessage> messages = new ArrayList<>();
+      JsonNode listNode = root.path("msg_list");
+      if (listNode.isArray()) {
+        for (JsonNode item : listNode) {
+          SyncedCustomerMessage message = toSyncedCustomerMessage(item);
+          if (message != null) {
+            messages.add(message);
+          }
+        }
+      }
+      return new SyncedMessageBatch(nextCursor, hasMore, messages);
+    } catch (RuntimeException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new IllegalArgumentException("企业微信同步消息解析失败", ex);
+    }
   }
 
   public List<EnterpriseWeChatUserBindingEntity> listBindings(long tenantId) {
@@ -240,6 +331,49 @@ public class EnterpriseWeChatMessageService {
     return value == null ? "" : value.trim();
   }
 
+  private SyncedCustomerMessage toSyncedCustomerMessage(JsonNode item) {
+    String messageType = firstText(text(item, "msgtype"), "text");
+    String content = "";
+    if ("text".equals(messageType)) {
+      content = text(item.path("text"), "content");
+    }
+    if (!StringUtils.hasText(content)) {
+      return null;
+    }
+    LocalDateTime receivedAt = null;
+    if (item.has("send_time")) {
+      receivedAt = LocalDateTime.ofInstant(Instant.ofEpochSecond(item.path("send_time").asLong()), ZoneId.systemDefault());
+    }
+    return new SyncedCustomerMessage(
+        text(item, "msgid"),
+        firstText(text(item, "open_kfid"), text(item, "openKfid")),
+        firstText(text(item, "servicer_userid"), text(item, "servicerUserId"), text(item, "userid")),
+        firstText(text(item, "external_userid"), text(item, "externalUserId"), text(item, "from_userid")),
+        firstText(text(item, "external_username"), text(item, "customer_name"), text(item, "external_userid")),
+        messageType,
+        content,
+        receivedAt,
+        item.toString());
+  }
+
+  private String text(JsonNode node, String field) {
+    JsonNode value = node == null ? null : node.get(field);
+    if (value == null || value.isNull()) {
+      return "";
+    }
+    return value.asText("");
+  }
+
+  private boolean insertIgnoringDuplicate(EnterpriseWeChatMessageEntity entity) {
+    try {
+      messageMapper.insert(entity);
+      return true;
+    } catch (DuplicateKeyException ex) {
+      log.info("企业微信消息已存在，跳过重复入库，tenantId={}，messageId={}", entity.getTenantId(), entity.getMessageId());
+      return false;
+    }
+  }
+
   private void normalizeMyBinding(EnterpriseWeChatUserBindingEntity entity, MyBindingCommand command) {
     if (!StringUtils.hasText(command.enterpriseUserId())) {
       throw new IllegalArgumentException("企业微信 userid 不能为空");
@@ -255,5 +389,23 @@ public class EnterpriseWeChatMessageService {
       String enterpriseUserName,
       String remark,
       String status) {
+  }
+
+  public record SyncedMessageBatch(
+      String nextCursor,
+      boolean hasMore,
+      List<SyncedCustomerMessage> messages) {
+  }
+
+  public record SyncedCustomerMessage(
+      String messageId,
+      String openKfid,
+      String enterpriseUserId,
+      String customerId,
+      String customerName,
+      String messageType,
+      String content,
+      LocalDateTime receivedAt,
+      String rawPayload) {
   }
 }

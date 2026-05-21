@@ -6,5 +6,7 @@ public record EnterpriseWeChatCallbackMessage(
     String customerId,
     String customerName,
     String content,
-    String messageType) {
+    String messageType,
+    String eventType,
+    String syncToken) {
 }

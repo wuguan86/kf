@@ -90,6 +90,39 @@ public class EnterpriseWeChatClient {
     }
   }
 
+  public String syncCustomerMessages(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig config,
+      String openKfid,
+      String syncToken,
+      String cursor,
+      int limit) {
+    if (!StringUtils.hasText(openKfid) || !StringUtils.hasText(syncToken)) {
+      throw new IllegalArgumentException("企业微信同步消息参数不完整");
+    }
+    String accessToken = getAccessToken(config);
+    try {
+      String url = config.apiBaseUrl() + "/cgi-bin/kf/sync_msg?access_token=" + URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
+      String body = objectMapper.writeValueAsString(Map.of(
+          "open_kfid", openKfid.trim(),
+          "token", syncToken.trim(),
+          "cursor", StringUtils.hasText(cursor) ? cursor.trim() : "",
+          "limit", Math.max(1, Math.min(limit, 1000))));
+      HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+          .header("Content-Type", "application/json")
+          .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+          .build();
+      HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      Map<?, ?> payload = objectMapper.readValue(response.body(), Map.class);
+      Object errCode = payload.get("errcode");
+      if (errCode != null && Integer.parseInt(String.valueOf(errCode)) != 0) {
+        throw new IllegalStateException("企业微信同步消息失败: " + payload);
+      }
+      return response.body();
+    } catch (Exception ex) {
+      throw new IllegalStateException("企业微信同步消息请求失败", ex);
+    }
+  }
+
   private record CachedAccessToken(String accessToken, Instant expiresAt) {
   }
 }
