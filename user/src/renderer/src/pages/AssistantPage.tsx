@@ -1017,6 +1017,16 @@ function AssistantPage(props: Props): JSX.Element {
                  if (!sendRes?.ok || sendRes?.success === false) {
                    setDifyResponse(reply + '\n\n(自动发送失败)')
                  } else {
+                   setMessages((prev) => [...prev, {
+                     id: `${contact}-${Date.now()}-reply-${Math.random().toString(36).substr(2, 9)}`,
+                     contact,
+                     content: reply,
+                     isSelf: true,
+                     timestamp: Date.now(),
+                     source,
+                     messageId,
+                     customerId
+                   }])
                    setLastReplied({ contact, text: reply, at: Date.now() })
                  }
               }

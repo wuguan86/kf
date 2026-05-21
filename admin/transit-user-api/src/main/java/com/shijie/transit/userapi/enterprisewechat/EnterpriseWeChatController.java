@@ -54,8 +54,14 @@ public class EnterpriseWeChatController {
       @RequestParam("timestamp") String timestamp,
       @RequestParam("nonce") String nonce,
       @RequestParam("echostr") String echostr) {
+    log.info("企业微信回调校验请求进入，tenantId={}，timestamp={}，nonceLength={}，echostrLength={}",
+        tenantId, timestamp, safeLength(nonce), safeLength(echostr));
     EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig(tenantId);
-    return crypto.decrypt(runtime.token(), runtime.encodingAesKey(), runtime.corpId(), msgSignature, timestamp, nonce, echostr);
+    log.info("企业微信回调校验配置状态，tenantId={}，corpIdConfigured={}，tokenConfigured={}，aesKeyConfigured={}",
+        tenantId, StringUtils.hasText(runtime.corpId()), StringUtils.hasText(runtime.token()), StringUtils.hasText(runtime.encodingAesKey()));
+    String result = crypto.decrypt(runtime.token(), runtime.encodingAesKey(), runtime.corpId(), msgSignature, timestamp, nonce, echostr);
+    log.info("企业微信回调校验成功，tenantId={}，resultLength={}", tenantId, safeLength(result));
+    return result;
   }
 
   @PostMapping(value = "/callback", produces = MediaType.TEXT_PLAIN_VALUE)
@@ -65,13 +71,44 @@ public class EnterpriseWeChatController {
       @RequestParam("timestamp") String timestamp,
       @RequestParam("nonce") String nonce,
       @RequestBody String body) {
+    log.info("企业微信消息回调进入，tenantId={}，timestamp={}，nonceLength={}，bodyLength={}",
+        tenantId, timestamp, safeLength(nonce), safeLength(body));
     EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig(tenantId);
-    String plain = crypto.decrypt(runtime.token(), runtime.encodingAesKey(), runtime.corpId(), msgSignature, timestamp, nonce, extractEncrypted(body));
+    log.info("企业微信消息回调配置状态，tenantId={}，corpIdConfigured={}，secretConfigured={}，tokenConfigured={}，aesKeyConfigured={}，apiBaseUrl={}",
+        tenantId,
+        StringUtils.hasText(runtime.corpId()),
+        StringUtils.hasText(runtime.secret()),
+        StringUtils.hasText(runtime.token()),
+        StringUtils.hasText(runtime.encodingAesKey()),
+        runtime.apiBaseUrl());
+    String encrypted = extractEncrypted(body);
+    log.info("企业微信消息回调密文已提取，tenantId={}，encryptedLength={}", tenantId, safeLength(encrypted));
+    String plain = crypto.decrypt(runtime.token(), runtime.encodingAesKey(), runtime.corpId(), msgSignature, timestamp, nonce, encrypted);
+    log.info("企业微信消息回调解密成功，tenantId={}，plainLength={}", tenantId, safeLength(plain));
     EnterpriseWeChatCallbackMessage message = messageService.parseCallbackMessage(plain);
+    log.info("企业微信消息回调解析完成，tenantId={}，messageType={}，eventType={}，openKfid={}，enterpriseUserId={}，customerId={}，hasSyncToken={}，contentLength={}",
+        tenantId,
+        message.messageType(),
+        message.eventType(),
+        maskMiddle(message.openKfid()),
+        message.enterpriseUserId(),
+        maskMiddle(message.customerId()),
+        StringUtils.hasText(message.syncToken()),
+        safeLength(message.content()));
     if (isWechatKfSyncEvent(message)) {
-      syncWechatKfMessages(tenantId, runtime, message);
+      try {
+        syncWechatKfMessages(tenantId, runtime, message);
+      } catch (RuntimeException ex) {
+        log.error("企业微信客服消息同步异常，tenantId={}，openKfid={}，hasSyncToken={}，原因={}",
+            tenantId, maskMiddle(message.openKfid()), StringUtils.hasText(message.syncToken()), ex.getMessage(), ex);
+        throw ex;
+      }
     } else {
-      messageService.enqueueIncoming(
+      if ("event".equalsIgnoreCase(message.messageType())) {
+        log.warn("企业微信事件回调未进入微信客服同步分支，tenantId={}，eventType={}，openKfidConfigured={}，syncTokenConfigured={}",
+            tenantId, message.eventType(), StringUtils.hasText(message.openKfid()), StringUtils.hasText(message.syncToken()));
+      }
+      EnterpriseWeChatMessageEntity entity = messageService.enqueueIncoming(
           tenantId,
           message.enterpriseUserId(),
           message.openKfid(),
@@ -80,6 +117,8 @@ public class EnterpriseWeChatController {
           message.content(),
           message.messageType(),
           plain);
+      log.info("企业微信直推消息已入队，tenantId={}，messageId={}，status={}，ownerUserId={}",
+          tenantId, entity.getMessageId(), entity.getStatus(), entity.getOwnerUserId());
     }
     return "success";
   }
@@ -90,9 +129,11 @@ public class EnterpriseWeChatController {
       Authentication authentication,
       @RequestParam(value = "limit", defaultValue = "20") int limit) {
     TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
+    log.info("企业微信前端轮询请求进入，tenantId={}，userId={}，limit={}", tenantId, principal.subjectId(), limit);
     List<Map<String, Object>> messages = messageService.pollPending(tenantId, principal.subjectId(), limit).stream()
         .map(this::toBridgeMessage)
         .toList();
+    log.info("企业微信前端轮询完成，tenantId={}，userId={}，count={}", tenantId, principal.subjectId(), messages.size());
     Map<String, Object> payload = new HashMap<>();
     payload.put("ok", true);
     payload.put("messages", messages);
@@ -147,7 +188,7 @@ public class EnterpriseWeChatController {
     return Result.success(messageService.saveMyBinding(tenantId, principal.subjectId(), request));
   }
 
-  private String extractEncrypted(String body) {
+  String extractEncrypted(String body) {
     if (body == null) {
       return "";
     }
@@ -160,7 +201,18 @@ public class EnterpriseWeChatController {
     if (start < 0 || end < 0 || end <= start) {
       return trimmed;
     }
-    return trimmed.substring(start + "<Encrypt>".length(), end).trim();
+    return unwrapCdata(trimmed.substring(start + "<Encrypt>".length(), end).trim());
+  }
+
+  private String unwrapCdata(String value) {
+    if (!StringUtils.hasText(value)) {
+      return "";
+    }
+    String trimmed = value.trim();
+    if (trimmed.startsWith("<![CDATA[") && trimmed.endsWith("]]>")) {
+      return trimmed.substring("<![CDATA[".length(), trimmed.length() - "]]>".length()).trim();
+    }
+    return trimmed;
   }
 
   public record SendRequest(String messageId, String customerId, String content) {
@@ -180,16 +232,36 @@ public class EnterpriseWeChatController {
     String cursor = "";
     int totalInserted = 0;
     for (int i = 0; i < 5; i++) {
+      log.info("企业微信客服消息开始同步，tenantId={}，openKfid={}，page={}，cursorConfigured={}，syncTokenConfigured={}",
+          tenantId, maskMiddle(message.openKfid()), i + 1, StringUtils.hasText(cursor), StringUtils.hasText(message.syncToken()));
       String payload = client.syncCustomerMessages(runtime, message.openKfid(), message.syncToken(), cursor, 100);
       EnterpriseWeChatMessageService.SyncedMessageBatch batch = messageService.parseSyncedMessages(payload);
-      totalInserted += messageService.enqueueSyncedMessages(tenantId, batch.messages()).size();
+      List<EnterpriseWeChatMessageEntity> inserted = messageService.enqueueSyncedMessages(tenantId, batch.messages());
+      totalInserted += inserted.size();
+      log.info("企业微信客服消息同步页完成，tenantId={}，openKfid={}，page={}，parsedCount={}，insertedCount={}，hasMore={}，nextCursorConfigured={}",
+          tenantId, maskMiddle(message.openKfid()), i + 1, batch.messages().size(), inserted.size(), batch.hasMore(), StringUtils.hasText(batch.nextCursor()));
       cursor = batch.nextCursor();
       if (!batch.hasMore() || !StringUtils.hasText(cursor)) {
         break;
       }
     }
     log.info("企业微信客服消息同步完成，tenantId={}，openKfid={}，新增消息数={}",
-        tenantId, message.openKfid(), totalInserted);
+        tenantId, maskMiddle(message.openKfid()), totalInserted);
+  }
+
+  private int safeLength(String value) {
+    return value == null ? 0 : value.length();
+  }
+
+  private String maskMiddle(String value) {
+    if (!StringUtils.hasText(value)) {
+      return "";
+    }
+    String trimmed = value.trim();
+    if (trimmed.length() <= 8) {
+      return "***";
+    }
+    return trimmed.substring(0, 4) + "***" + trimmed.substring(trimmed.length() - 4);
   }
 
   private Map<String, Object> toBridgeMessage(EnterpriseWeChatMessageEntity entity) {
@@ -203,8 +275,9 @@ public class EnterpriseWeChatController {
     message.put("contact", contact);
     message.put("content", entity.getContent());
     message.put("type", entity.getMessageType());
-    message.put("is_self", false);
-    message.put("trigger_reply", true);
+    boolean isSelf = "OUT".equals(entity.getDirection());
+    message.put("is_self", isSelf);
+    message.put("trigger_reply", !isSelf);
     message.put("timestamp", entity.getReceivedAt() == null ? System.currentTimeMillis() : entity.getReceivedAt().toString());
     message.put("source", "enterprise");
     return message;

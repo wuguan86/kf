@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.shijie.transit.common.db.entity.EnterpriseWeChatUserBindingEntity;
 import com.shijie.transit.common.mapper.EnterpriseWeChatUserBindingMapper;
 import java.time.Clock;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class EnterpriseWeChatMessageServiceBindingTest {
@@ -55,5 +56,21 @@ class EnterpriseWeChatMessageServiceBindingTest {
     assertEquals(99L, saved.getUserId());
     assertEquals("lisi", saved.getEnterpriseUserId());
     verify(bindingMapper).updateById(existing);
+  }
+
+  @Test
+  void resolveOwnerUserIdFallsBackToSingleEnabledBindingWhenServicerUserIdMissing() {
+    EnterpriseWeChatUserBindingMapper bindingMapper = mock(EnterpriseWeChatUserBindingMapper.class);
+    EnterpriseWeChatUserBindingEntity defaultBinding = new EnterpriseWeChatUserBindingEntity();
+    defaultBinding.setTenantId(8L);
+    defaultBinding.setUserId(99L);
+    defaultBinding.setEnterpriseUserId("WuGuanZhong");
+    defaultBinding.setStatus("ENABLED");
+    when(bindingMapper.selectList(any())).thenReturn(List.of(defaultBinding));
+    EnterpriseWeChatMessageService service = new EnterpriseWeChatMessageService(null, bindingMapper, Clock.systemUTC());
+
+    Long ownerUserId = service.resolveOwnerUserId(8L, "");
+
+    assertEquals(99L, ownerUserId);
   }
 }

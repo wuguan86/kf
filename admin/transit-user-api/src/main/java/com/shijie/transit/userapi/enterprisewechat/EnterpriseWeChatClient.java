@@ -1,5 +1,6 @@
 package com.shijie.transit.userapi.enterprisewechat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -10,12 +11,14 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
 public class EnterpriseWeChatClient {
+  private static final Logger log = LoggerFactory.getLogger(EnterpriseWeChatClient.class);
   private final ObjectMapper objectMapper;
   private final Clock clock;
   private final Map<String, CachedAccessToken> tokenCache = new ConcurrentHashMap<>();
@@ -31,6 +34,8 @@ public class EnterpriseWeChatClient {
     CachedAccessToken cached = tokenCache.get(cacheKey);
     Instant now = Instant.now(clock);
     if (cached != null && cached.expiresAt().isAfter(now)) {
+      log.info("企业微信 access_token 使用缓存，corpIdConfigured={}，expiresAt={}",
+          StringUtils.hasText(config.corpId()), cached.expiresAt());
       return cached.accessToken();
     }
     if (!StringUtils.hasText(config.corpId()) || !StringUtils.hasText(config.secret())) {
@@ -44,6 +49,8 @@ public class EnterpriseWeChatClient {
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
       Map<?, ?> payload = objectMapper.readValue(response.body(), Map.class);
       Object errCode = payload.get("errcode");
+      log.info("企业微信 access_token 响应，httpStatus={}，errcode={}，bodyLength={}",
+          response.statusCode(), errCode, safeLength(response.body()));
       if (errCode != null && Integer.parseInt(String.valueOf(errCode)) != 0) {
         throw new IllegalStateException("企业微信 access_token 获取失败: " + payload);
       }
@@ -82,6 +89,8 @@ public class EnterpriseWeChatClient {
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
       Map<?, ?> payload = objectMapper.readValue(response.body(), Map.class);
       Object errCode = payload.get("errcode");
+      log.info("企业微信发送客服消息响应，httpStatus={}，errcode={}，openKfid={}，customerId={}，bodyLength={}",
+          response.statusCode(), errCode, maskMiddle(openKfid), maskMiddle(externalUserId), safeLength(response.body()));
       if (errCode != null && Integer.parseInt(String.valueOf(errCode)) != 0) {
         throw new IllegalStateException("企业微信消息发送失败: " + payload);
       }
@@ -101,12 +110,15 @@ public class EnterpriseWeChatClient {
     }
     String accessToken = getAccessToken(config);
     try {
+      int safeLimit = Math.max(1, Math.min(limit, 1000));
+      log.info("企业微信同步客服消息请求，openKfid={}，cursorConfigured={}，limit={}",
+          maskMiddle(openKfid), StringUtils.hasText(cursor), safeLimit);
       String url = config.apiBaseUrl() + "/cgi-bin/kf/sync_msg?access_token=" + URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
       String body = objectMapper.writeValueAsString(Map.of(
           "open_kfid", openKfid.trim(),
           "token", syncToken.trim(),
           "cursor", StringUtils.hasText(cursor) ? cursor.trim() : "",
-          "limit", Math.max(1, Math.min(limit, 1000))));
+          "limit", safeLimit));
       HttpRequest request = HttpRequest.newBuilder(URI.create(url))
           .header("Content-Type", "application/json")
           .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
@@ -114,6 +126,12 @@ public class EnterpriseWeChatClient {
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
       Map<?, ?> payload = objectMapper.readValue(response.body(), Map.class);
       Object errCode = payload.get("errcode");
+      Object hasMore = payload.get("has_more");
+      Object nextCursor = payload.get("next_cursor");
+      Object msgList = payload.get("msg_list");
+      int msgCount = msgList instanceof java.util.List<?> list ? list.size() : -1;
+      log.info("企业微信同步客服消息响应，httpStatus={}，errcode={}，hasMore={}，nextCursorConfigured={}，msgCount={}，bodyLength={}",
+          response.statusCode(), errCode, hasMore, StringUtils.hasText(nextCursor == null ? "" : String.valueOf(nextCursor)), msgCount, safeLength(response.body()));
       if (errCode != null && Integer.parseInt(String.valueOf(errCode)) != 0) {
         throw new IllegalStateException("企业微信同步消息失败: " + payload);
       }
@@ -121,6 +139,21 @@ public class EnterpriseWeChatClient {
     } catch (Exception ex) {
       throw new IllegalStateException("企业微信同步消息请求失败", ex);
     }
+  }
+
+  private int safeLength(String value) {
+    return value == null ? 0 : value.length();
+  }
+
+  private String maskMiddle(String value) {
+    if (!StringUtils.hasText(value)) {
+      return "";
+    }
+    String trimmed = value.trim();
+    if (trimmed.length() <= 8) {
+      return "***";
+    }
+    return trimmed.substring(0, 4) + "***" + trimmed.substring(trimmed.length() - 4);
   }
 
   private record CachedAccessToken(String accessToken, Instant expiresAt) {

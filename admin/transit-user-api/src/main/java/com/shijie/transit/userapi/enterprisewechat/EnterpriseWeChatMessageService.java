@@ -79,7 +79,9 @@ public class EnterpriseWeChatMessageService {
       entity.setStatus(ownerUserId == null ? "UNMAPPED" : "PENDING");
       entity.setRawPayload(rawPayload);
       entity.setReceivedAt(LocalDateTime.now(clock));
-      insertIgnoringDuplicate(entity);
+      boolean inserted = insertIgnoringDuplicate(entity);
+      log.info("企业微信直推消息入队结果，tenantId={}，messageId={}，enterpriseUserId={}，ownerUserId={}，status={}，inserted={}，contentLength={}",
+          tenantId, entity.getMessageId(), entity.getEnterpriseUserId(), ownerUserId, entity.getStatus(), inserted, safeLength(entity.getContent()));
       return entity;
     } finally {
       TenantContext.clear();
@@ -111,12 +113,23 @@ public class EnterpriseWeChatMessageService {
         entity.setCustomerName(defaultString(message.customerName()));
         entity.setContent(defaultString(message.content()));
         entity.setMessageType(StringUtils.hasText(message.messageType()) ? message.messageType().trim() : "text");
-        entity.setDirection("IN");
-        entity.setStatus(ownerUserId == null ? "UNMAPPED" : "PENDING");
+        entity.setDirection(message.direction());
+        entity.setStatus(resolveInitialMessageStatus(ownerUserId, message.direction()));
         entity.setRawPayload(message.rawPayload());
         entity.setReceivedAt(message.receivedAt() == null ? LocalDateTime.now(clock) : message.receivedAt());
         if (insertIgnoringDuplicate(entity)) {
           inserted.add(entity);
+          log.info("企业微信同步消息已入队，tenantId={}，messageId={}，enterpriseUserId={}，ownerUserId={}，status={}，openKfid={}，customerId={}，contentLength={}",
+              tenantId,
+              entity.getMessageId(),
+              entity.getEnterpriseUserId(),
+              ownerUserId,
+              entity.getStatus(),
+              maskMiddle(entity.getOpenKfid()),
+              maskMiddle(entity.getCustomerId()),
+              safeLength(entity.getContent()));
+        } else {
+          log.info("企业微信同步消息重复跳过，tenantId={}，messageId={}", tenantId, entity.getMessageId());
         }
       }
       return inserted;
@@ -137,7 +150,7 @@ public class EnterpriseWeChatMessageService {
               .eq(EnterpriseWeChatMessageEntity::getOwnerUserId, userId)
               .eq(EnterpriseWeChatMessageEntity::getMessageId, messageId)
               .eq(EnterpriseWeChatMessageEntity::getDirection, "IN")
-              .eq(EnterpriseWeChatMessageEntity::getStatus, "PENDING"));
+              .in(EnterpriseWeChatMessageEntity::getStatus, List.of("PENDING", "PROCESSING")));
     } finally {
       TenantContext.clear();
     }
@@ -164,20 +177,31 @@ public class EnterpriseWeChatMessageService {
     }
   }
 
+  @Transactional
   public List<EnterpriseWeChatMessageEntity> pollPending(long tenantId, long userId, int limit) {
     TenantContext.setTenantId(tenantId);
     try {
+      int safeLimit = Math.max(1, Math.min(limit, 50));
       List<EnterpriseWeChatMessageEntity> list = messageMapper.selectList(
           new LambdaQueryWrapper<EnterpriseWeChatMessageEntity>()
               .eq(EnterpriseWeChatMessageEntity::getTenantId, tenantId)
               .eq(EnterpriseWeChatMessageEntity::getOwnerUserId, userId)
-              .eq(EnterpriseWeChatMessageEntity::getDirection, "IN")
-              .eq(EnterpriseWeChatMessageEntity::getStatus, "PENDING")
+              .and(wrapper -> wrapper
+                  .eq(EnterpriseWeChatMessageEntity::getStatus, "PENDING")
+                  .or()
+                  .eq(EnterpriseWeChatMessageEntity::getStatus, "DISPLAY_ONLY"))
               .orderByAsc(EnterpriseWeChatMessageEntity::getReceivedAt)
-              .last("LIMIT " + Math.max(1, Math.min(limit, 50))));
-      if (list == null) {
+              .last("LIMIT " + safeLimit));
+      log.info("企业微信待回复消息查询完成，tenantId={}，userId={}，limit={}，count={}",
+          tenantId, userId, safeLimit, list == null ? 0 : list.size());
+      if (list == null || list.isEmpty()) {
         return List.of();
       }
+      for (EnterpriseWeChatMessageEntity entity : list) {
+        entity.setStatus("IN".equals(entity.getDirection()) ? "PROCESSING" : "DISPLAYED");
+        messageMapper.updateById(entity);
+      }
+      log.info("企业微信待回复消息已标记处理中，tenantId={}，userId={}，count={}", tenantId, userId, list.size());
       return new ArrayList<>(list);
     } finally {
       TenantContext.clear();
@@ -186,14 +210,39 @@ public class EnterpriseWeChatMessageService {
 
   public Long resolveOwnerUserId(long tenantId, String enterpriseUserId) {
     if (!StringUtils.hasText(enterpriseUserId)) {
-      return null;
+      return resolveSingleEnabledOwnerUserId(tenantId);
     }
     EnterpriseWeChatUserBindingEntity binding = bindingMapper.selectOne(
         new LambdaQueryWrapper<EnterpriseWeChatUserBindingEntity>()
             .eq(EnterpriseWeChatUserBindingEntity::getTenantId, tenantId)
             .eq(EnterpriseWeChatUserBindingEntity::getEnterpriseUserId, enterpriseUserId.trim())
             .eq(EnterpriseWeChatUserBindingEntity::getStatus, "ENABLED"));
-    return binding == null ? null : binding.getUserId();
+    if (binding == null) {
+      log.warn("企业微信客服映射未命中，tenantId={}，enterpriseUserId={}", tenantId, maskMiddle(enterpriseUserId));
+      return null;
+    }
+    log.info("企业微信客服映射命中，tenantId={}，enterpriseUserId={}，userId={}",
+        tenantId, maskMiddle(enterpriseUserId), binding.getUserId());
+    return binding.getUserId();
+  }
+
+  private Long resolveSingleEnabledOwnerUserId(long tenantId) {
+    List<EnterpriseWeChatUserBindingEntity> bindings = bindingMapper.selectList(
+        new LambdaQueryWrapper<EnterpriseWeChatUserBindingEntity>()
+            .eq(EnterpriseWeChatUserBindingEntity::getTenantId, tenantId)
+            .eq(EnterpriseWeChatUserBindingEntity::getStatus, "ENABLED"));
+    if (bindings == null || bindings.isEmpty()) {
+      log.warn("企业微信客服映射失败，tenantId={}，原因=enterpriseUserId为空且没有启用映射", tenantId);
+      return null;
+    }
+    if (bindings.size() > 1) {
+      log.warn("企业微信客服映射失败，tenantId={}，原因=enterpriseUserId为空且启用映射数量={}", tenantId, bindings.size());
+      return null;
+    }
+    EnterpriseWeChatUserBindingEntity binding = bindings.get(0);
+    log.info("企业微信客服映射使用唯一启用映射兜底，tenantId={}，enterpriseUserId={}，userId={}",
+        tenantId, maskMiddle(binding.getEnterpriseUserId()), binding.getUserId());
+    return binding.getUserId();
   }
 
   public EnterpriseWeChatUserBindingEntity upsertBinding(EnterpriseWeChatUserBindingEntity entity) {
@@ -285,6 +334,8 @@ public class EnterpriseWeChatMessageService {
           }
         }
       }
+      log.info("企业微信同步消息解析完成，errcode={}，rawCount={}，textCount={}，hasMore={}，nextCursorConfigured={}",
+          errCode, listNode.isArray() ? listNode.size() : 0, messages.size(), hasMore, StringUtils.hasText(nextCursor));
       return new SyncedMessageBatch(nextCursor, hasMore, messages);
     } catch (RuntimeException ex) {
       throw ex;
@@ -331,13 +382,24 @@ public class EnterpriseWeChatMessageService {
     return value == null ? "" : value.trim();
   }
 
+  private String resolveInitialMessageStatus(Long ownerUserId, String direction) {
+    if (ownerUserId == null) {
+      return "UNMAPPED";
+    }
+    return "OUT".equals(direction) ? "DISPLAY_ONLY" : "PENDING";
+  }
+
   private SyncedCustomerMessage toSyncedCustomerMessage(JsonNode item) {
     String messageType = firstText(text(item, "msgtype"), "text");
+    int origin = item.path("origin").asInt(0);
+    String direction = origin > 0 && origin != 3 ? "OUT" : "IN";
     String content = "";
     if ("text".equals(messageType)) {
       content = text(item.path("text"), "content");
     }
     if (!StringUtils.hasText(content)) {
+      log.info("企业微信同步消息解析跳过，messageId={}，messageType={}，原因=非文本或内容为空",
+          text(item, "msgid"), messageType);
       return null;
     }
     LocalDateTime receivedAt = null;
@@ -351,6 +413,7 @@ public class EnterpriseWeChatMessageService {
         firstText(text(item, "external_userid"), text(item, "externalUserId"), text(item, "from_userid")),
         firstText(text(item, "external_username"), text(item, "customer_name"), text(item, "external_userid")),
         messageType,
+        direction,
         content,
         receivedAt,
         item.toString());
@@ -372,6 +435,21 @@ public class EnterpriseWeChatMessageService {
       log.info("企业微信消息已存在，跳过重复入库，tenantId={}，messageId={}", entity.getTenantId(), entity.getMessageId());
       return false;
     }
+  }
+
+  private int safeLength(String value) {
+    return value == null ? 0 : value.length();
+  }
+
+  private String maskMiddle(String value) {
+    if (!StringUtils.hasText(value)) {
+      return "";
+    }
+    String trimmed = value.trim();
+    if (trimmed.length() <= 8) {
+      return "***";
+    }
+    return trimmed.substring(0, 4) + "***" + trimmed.substring(trimmed.length() - 4);
   }
 
   private void normalizeMyBinding(EnterpriseWeChatUserBindingEntity entity, MyBindingCommand command) {
@@ -404,6 +482,7 @@ public class EnterpriseWeChatMessageService {
       String customerId,
       String customerName,
       String messageType,
+      String direction,
       String content,
       LocalDateTime receivedAt,
       String rawPayload) {

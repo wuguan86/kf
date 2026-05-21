@@ -90,4 +90,44 @@ class EnterpriseWeChatMessageServiceTest {
     assertEquals("text", message.messageType());
     assertEquals("你好", message.content());
   }
+
+  @Test
+  void parseSyncedMessagesKeepsServicerSentMessagesAsOutgoing() {
+    EnterpriseWeChatMessageService service = new EnterpriseWeChatMessageService(null, null, Clock.systemUTC());
+    String payload = """
+        {
+          "errcode": 0,
+          "errmsg": "ok",
+          "has_more": 0,
+          "msg_list": [
+            {
+              "msgid": "customer-msg",
+              "open_kfid": "wk123",
+              "external_userid": "external-user-1",
+              "servicer_userid": "WuGuanZhong",
+              "origin": 3,
+              "msgtype": "text",
+              "text": { "content": "客户消息" }
+            },
+            {
+              "msgid": "servicer-msg",
+              "open_kfid": "wk123",
+              "external_userid": "external-user-1",
+              "servicer_userid": "WuGuanZhong",
+              "origin": 4,
+              "msgtype": "text",
+              "text": { "content": "客服回复" }
+            }
+          ]
+        }
+        """;
+
+    EnterpriseWeChatMessageService.SyncedMessageBatch batch = service.parseSyncedMessages(payload);
+
+    assertEquals(2, batch.messages().size());
+    assertEquals("customer-msg", batch.messages().get(0).messageId());
+    assertEquals("IN", batch.messages().get(0).direction());
+    assertEquals("servicer-msg", batch.messages().get(1).messageId());
+    assertEquals("OUT", batch.messages().get(1).direction());
+  }
 }
