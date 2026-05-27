@@ -1,6 +1,7 @@
 package com.shijie.transit.userapi.enterprisewechat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -9,6 +10,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
@@ -94,8 +97,142 @@ public class EnterpriseWeChatClient {
       if (errCode != null && Integer.parseInt(String.valueOf(errCode)) != 0) {
         throw new IllegalStateException("企业微信消息发送失败: " + payload);
       }
+    } catch (IllegalStateException ex) {
+      throw ex;
     } catch (Exception ex) {
       throw new IllegalStateException("企业微信消息发送失败", ex);
+    }
+  }
+
+  public CustomerServiceState getCustomerServiceState(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig config,
+      String openKfid,
+      String externalUserId) {
+    if (!StringUtils.hasText(openKfid) || !StringUtils.hasText(externalUserId)) {
+      throw new IllegalArgumentException("企业微信会话状态查询参数不完整");
+    }
+    String accessToken = getAccessToken(config);
+    try {
+      String url = config.apiBaseUrl() + "/cgi-bin/kf/service_state/get?access_token="
+          + URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
+      String body = objectMapper.writeValueAsString(Map.of(
+          "open_kfid", openKfid.trim(),
+          "external_userid", externalUserId.trim()));
+      HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+          .header("Content-Type", "application/json")
+          .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+          .build();
+      HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      JsonNode root = objectMapper.readTree(response.body());
+      int errCode = root.path("errcode").asInt(0);
+      int serviceState = root.path("service_state").asInt(-1);
+      String servicerUserId = text(root, "servicer_userid");
+      log.info("企业微信会话状态查询响应，httpStatus={}，errcode={}，serviceState={}，openKfid={}，customerId={}，servicerUserId={}，bodyLength={}",
+          response.statusCode(), errCode, serviceState, maskMiddle(openKfid), maskMiddle(externalUserId), maskMiddle(servicerUserId), safeLength(response.body()));
+      if (errCode != 0) {
+        throw new IllegalStateException("企业微信会话状态查询失败: " + response.body());
+      }
+      return new CustomerServiceState(serviceState, servicerUserId);
+    } catch (IllegalStateException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new IllegalStateException("企业微信会话状态查询请求失败", ex);
+    }
+  }
+
+  public void transferCustomerServiceState(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig config,
+      String openKfid,
+      String externalUserId,
+      String servicerUserId) {
+    transferCustomerServiceState(config, openKfid, externalUserId, 3, servicerUserId);
+  }
+
+  public void transferCustomerServiceState(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig config,
+      String openKfid,
+      String externalUserId,
+      int serviceState,
+      String servicerUserId) {
+    transferCustomerServiceStateAndGetMessageCode(config, openKfid, externalUserId, serviceState, servicerUserId);
+  }
+
+  public String transferCustomerServiceStateAndGetMessageCode(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig config,
+      String openKfid,
+      String externalUserId,
+      int serviceState,
+      String servicerUserId) {
+    if (!StringUtils.hasText(openKfid) || !StringUtils.hasText(externalUserId)) {
+      throw new IllegalArgumentException("企业微信会话状态切换参数不完整");
+    }
+    if (serviceState == 3 && !StringUtils.hasText(servicerUserId)) {
+      throw new IllegalArgumentException("企业微信会话状态切换参数不完整");
+    }
+    String accessToken = getAccessToken(config);
+    try {
+      String url = config.apiBaseUrl() + "/cgi-bin/kf/service_state/trans?access_token="
+          + URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
+      Map<String, Object> requestBody = new LinkedHashMap<>();
+      requestBody.put("open_kfid", openKfid.trim());
+      requestBody.put("external_userid", externalUserId.trim());
+      requestBody.put("service_state", serviceState);
+      if (StringUtils.hasText(servicerUserId)) {
+        requestBody.put("servicer_userid", servicerUserId.trim());
+      }
+      String body = objectMapper.writeValueAsString(requestBody);
+      HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+          .header("Content-Type", "application/json")
+          .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+          .build();
+      HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      Map<?, ?> payload = objectMapper.readValue(response.body(), Map.class);
+      Object errCode = payload.get("errcode");
+      log.info("企业微信会话状态切换响应，httpStatus={}，errcode={}，serviceState={}，openKfid={}，customerId={}，servicerUserId={}，bodyLength={}",
+          response.statusCode(), errCode, serviceState, maskMiddle(openKfid), maskMiddle(externalUserId), maskMiddle(servicerUserId), safeLength(response.body()));
+      if (errCode != null && Integer.parseInt(String.valueOf(errCode)) != 0) {
+        throw new IllegalStateException("企业微信会话状态切换失败: " + payload);
+      }
+      Object messageCode = payload.get("msg_code");
+      return messageCode == null ? "" : String.valueOf(messageCode);
+    } catch (IllegalStateException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new IllegalStateException("企业微信会话状态切换请求失败", ex);
+    }
+  }
+
+  public void sendCustomerEventMessage(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig config,
+      String messageCode,
+      String text) {
+    if (!StringUtils.hasText(messageCode) || !StringUtils.hasText(text)) {
+      throw new IllegalArgumentException("企业微信事件响应消息发送参数不完整");
+    }
+    String accessToken = getAccessToken(config);
+    try {
+      String url = config.apiBaseUrl() + "/cgi-bin/kf/send_msg_on_event?access_token="
+          + URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
+      String body = objectMapper.writeValueAsString(Map.of(
+          "code", messageCode.trim(),
+          "msgtype", "text",
+          "text", Map.of("content", text.trim())));
+      HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+          .header("Content-Type", "application/json")
+          .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+          .build();
+      HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      Map<?, ?> payload = objectMapper.readValue(response.body(), Map.class);
+      Object errCode = payload.get("errcode");
+      log.info("企业微信事件响应消息发送响应，httpStatus={}，errcode={}，msgCodeConfigured={}，bodyLength={}",
+          response.statusCode(), errCode, StringUtils.hasText(messageCode), safeLength(response.body()));
+      if (errCode != null && Integer.parseInt(String.valueOf(errCode)) != 0) {
+        throw new IllegalStateException("企业微信事件响应消息发送失败: " + payload);
+      }
+    } catch (IllegalStateException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new IllegalStateException("企业微信事件响应消息发送请求失败", ex);
     }
   }
 
@@ -141,6 +278,52 @@ public class EnterpriseWeChatClient {
     }
   }
 
+  public Map<String, String> fetchCustomerDisplayNames(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig config,
+      List<String> externalUserIds) {
+    List<String> safeIds = externalUserIds == null ? List.of() : externalUserIds.stream()
+        .filter(StringUtils::hasText)
+        .map(String::trim)
+        .distinct()
+        .limit(100)
+        .toList();
+    if (safeIds.isEmpty()) {
+      return Map.of();
+    }
+    String accessToken = getAccessToken(config);
+    try {
+      String url = config.apiBaseUrl() + "/cgi-bin/kf/customer/batchget?access_token="
+          + URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
+      String body = objectMapper.writeValueAsString(Map.of("external_userid_list", safeIds));
+      HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+          .header("Content-Type", "application/json")
+          .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+          .build();
+      HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      JsonNode root = objectMapper.readTree(response.body());
+      int errCode = root.path("errcode").asInt(0);
+      log.info("企业微信客户基础信息响应，httpStatus={}，errcode={}，requestCount={}，bodyLength={}",
+          response.statusCode(), errCode, safeIds.size(), safeLength(response.body()));
+      if (errCode != 0) {
+        throw new IllegalStateException("企业微信客户基础信息查询失败: " + response.body());
+      }
+      Map<String, String> names = new java.util.HashMap<>();
+      JsonNode customerList = root.path("customer_list");
+      if (customerList.isArray()) {
+        for (JsonNode item : customerList) {
+          String externalUserId = text(item, "external_userid");
+          String name = firstText(text(item, "nickname"), text(item, "name"));
+          if (StringUtils.hasText(externalUserId) && StringUtils.hasText(name)) {
+            names.put(externalUserId.trim(), name.trim());
+          }
+        }
+      }
+      return names;
+    } catch (Exception ex) {
+      throw new IllegalStateException("企业微信客户基础信息请求失败", ex);
+    }
+  }
+
   private int safeLength(String value) {
     return value == null ? 0 : value.length();
   }
@@ -156,6 +339,26 @@ public class EnterpriseWeChatClient {
     return trimmed.substring(0, 4) + "***" + trimmed.substring(trimmed.length() - 4);
   }
 
+  private String text(JsonNode node, String field) {
+    JsonNode value = node == null ? null : node.get(field);
+    if (value == null || value.isNull()) {
+      return "";
+    }
+    return value.asText("");
+  }
+
+  private String firstText(String... values) {
+    for (String value : values) {
+      if (StringUtils.hasText(value)) {
+        return value.trim();
+      }
+    }
+    return "";
+  }
+
   private record CachedAccessToken(String accessToken, Instant expiresAt) {
+  }
+
+  public record CustomerServiceState(int serviceState, String servicerUserId) {
   }
 }

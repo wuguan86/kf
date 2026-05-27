@@ -2,10 +2,23 @@ package com.shijie.transit.userapi.enterprisewechat;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.shijie.transit.common.db.entity.EnterpriseWeChatMessageEntity;
+import com.shijie.transit.common.mapper.EnterpriseWeChatMessageMapper;
+import com.shijie.transit.common.mapper.EnterpriseWeChatUserBindingMapper;
 import java.time.Clock;
 import java.util.List;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.session.Configuration;
+import org.mockito.ArgumentCaptor;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 
 class EnterpriseWeChatMessageServiceTest {
   @Test
@@ -129,5 +142,23 @@ class EnterpriseWeChatMessageServiceTest {
     assertEquals("IN", batch.messages().get(0).direction());
     assertEquals("servicer-msg", batch.messages().get(1).messageId());
     assertEquals("OUT", batch.messages().get(1).direction());
+  }
+
+  @Test
+  void pollPendingAlsoQueriesProcessingInboundMessagesForRecovery() {
+    TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), EnterpriseWeChatMessageEntity.class);
+    EnterpriseWeChatMessageMapper messageMapper = mock(EnterpriseWeChatMessageMapper.class);
+    EnterpriseWeChatUserBindingMapper bindingMapper = mock(EnterpriseWeChatUserBindingMapper.class);
+    when(messageMapper.selectList(any())).thenReturn(List.of());
+    EnterpriseWeChatMessageService service = new EnterpriseWeChatMessageService(messageMapper, bindingMapper, Clock.systemUTC());
+
+    service.pollPending(1L, 7L, 20);
+
+    ArgumentCaptor<LambdaQueryWrapper<EnterpriseWeChatMessageEntity>> captor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+    verify(messageMapper).selectList(captor.capture());
+    String sqlSegment = captor.getValue().getSqlSegment();
+    String queryValues = captor.getValue().getParamNameValuePairs().values().toString();
+    Assertions.assertTrue(sqlSegment.contains(" OR "), sqlSegment);
+    Assertions.assertTrue(queryValues.contains("PROCESSING"), queryValues);
   }
 }

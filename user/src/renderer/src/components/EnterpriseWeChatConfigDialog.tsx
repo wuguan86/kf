@@ -9,6 +9,7 @@ export type WeChatChannelConfig = {
   secretConfigured: 'true' | 'false'
   tokenConfigured: 'true' | 'false'
   encodingAesKeyConfigured: 'true' | 'false'
+  managedMode?: 'full' | 'semi'
 }
 
 type EnterpriseWeChatBinding = {

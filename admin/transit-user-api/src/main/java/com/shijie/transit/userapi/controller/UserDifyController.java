@@ -202,7 +202,7 @@ public class UserDifyController {
 
                 RoleEntity role = roleService.getById(principal.subjectId(), request.roleId());
                 String question = request.message().length() > 20 ? request.message().substring(0, 20) + "..." : request.message();
-                String contactName = StringUtils.hasText(request.wechatContact()) ? request.wechatContact() : "未知客户";
+                String contactName = resolveContactDisplayName(request);
                 emitter.send(SseEmitter.event().data(new StepMsg("INTENT",
                         "正在分析微信聊天记录... 识别到客户 “" + contactName + "” 的消息： “" + question + "”，正在按【" + role.getName() + "】角色逻辑进行思考和回复。")));
 
@@ -662,6 +662,16 @@ public class UserDifyController {
         return "role-" + roleId;
     }
 
+    static String resolveContactDisplayName(MonitorChatRequest request) {
+        if (request != null && StringUtils.hasText(request.wechatContactDisplayName())) {
+            return request.wechatContactDisplayName().trim();
+        }
+        if (request != null && StringUtils.hasText(request.wechatContact())) {
+            return request.wechatContact().trim();
+        }
+        return "未知客户";
+    }
+
     private String normalizeStreamingAnswer(String raw) {
         if (!StringUtils.hasText(raw)) {
             return raw;
@@ -919,6 +929,7 @@ public class UserDifyController {
             String role,
             String conversationId,
             String wechatContact,
+            String wechatContactDisplayName,
             String roomType,
             String imageDataUrl) {
     }

@@ -3,7 +3,9 @@ package com.shijie.transit.userapi.enterprisewechat;
 import com.shijie.transit.common.db.entity.EnterpriseWeChatMessageEntity;
 import com.shijie.transit.common.db.entity.EnterpriseWeChatUserBindingEntity;
 import com.shijie.transit.common.security.TransitPrincipal;
+import com.shijie.transit.common.web.ErrorCode;
 import com.shijie.transit.common.web.Result;
+import com.shijie.transit.common.web.TransitException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -97,7 +99,8 @@ public class EnterpriseWeChatController {
         safeLength(message.content()));
     if (isWechatKfSyncEvent(message)) {
       try {
-        syncWechatKfMessages(tenantId, runtime, message);
+        List<EnterpriseWeChatMessageEntity> syncedMessages = syncWechatKfMessages(tenantId, runtime, message);
+        transferSessionsForSemiManagedMode(tenantId, configService.getManagedMode(tenantId), syncedMessages);
       } catch (RuntimeException ex) {
         log.error("企业微信客服消息同步异常，tenantId={}，openKfid={}，hasSyncToken={}，原因={}",
             tenantId, maskMiddle(message.openKfid()), StringUtils.hasText(message.syncToken()), ex.getMessage(), ex);
@@ -127,10 +130,13 @@ public class EnterpriseWeChatController {
   public Result<Map<String, Object>> poll(
       @RequestHeader("X-Tenant-Id") long tenantId,
       Authentication authentication,
-      @RequestParam(value = "limit", defaultValue = "20") int limit) {
+      @RequestParam(value = "limit", defaultValue = "20") int limit,
+      @RequestParam(value = "managedMode", defaultValue = "full") String managedMode) {
     TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
     log.info("企业微信前端轮询请求进入，tenantId={}，userId={}，limit={}", tenantId, principal.subjectId(), limit);
-    List<Map<String, Object>> messages = messageService.pollPending(tenantId, principal.subjectId(), limit).stream()
+    List<EnterpriseWeChatMessageEntity> pendingMessages = messageService.pollPending(tenantId, principal.subjectId(), limit);
+    transferSessionsForSemiManagedMode(tenantId, managedMode, pendingMessages);
+    List<Map<String, Object>> messages = pendingMessages.stream()
         .map(this::toBridgeMessage)
         .toList();
     log.info("企业微信前端轮询完成，tenantId={}，userId={}，count={}", tenantId, principal.subjectId(), messages.size());
@@ -138,6 +144,60 @@ public class EnterpriseWeChatController {
     payload.put("ok", true);
     payload.put("messages", messages);
     return Result.success(payload);
+  }
+
+  private void transferSessionsForSemiManagedMode(
+      long tenantId,
+      String managedMode,
+      List<EnterpriseWeChatMessageEntity> messages) {
+    if (!"semi".equalsIgnoreCase(managedMode) || messages == null || messages.isEmpty()) {
+      return;
+    }
+    for (EnterpriseWeChatMessageEntity message : messages) {
+      Long ownerUserId = message.getOwnerUserId();
+      if (ownerUserId == null) {
+        log.warn("企业微信半托管转人工跳过，tenantId={}，messageId={}，原因=消息未映射到当前客服用户",
+            tenantId, message.getMessageId());
+        continue;
+      }
+      transferSessionsForSemiManagedMode(tenantId, ownerUserId, managedMode, List.of(message));
+    }
+  }
+
+  private void transferSessionsForSemiManagedMode(
+      long tenantId,
+      long userId,
+      String managedMode,
+      List<EnterpriseWeChatMessageEntity> messages) {
+    if (!"semi".equalsIgnoreCase(managedMode) || messages == null || messages.isEmpty()) {
+      return;
+    }
+    EnterpriseWeChatUserBindingEntity binding = messageService.getMyBinding(tenantId, userId);
+    if (binding == null || !"ENABLED".equalsIgnoreCase(binding.getStatus()) || !StringUtils.hasText(binding.getEnterpriseUserId())) {
+      log.warn("企业微信半托管转人工跳过，tenantId={}，userId={}，原因=当前用户未配置启用的企业微信 userid", tenantId, userId);
+      return;
+    }
+    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig(tenantId);
+    for (EnterpriseWeChatMessageEntity message : messages) {
+      if (!"IN".equals(message.getDirection())) {
+        continue;
+      }
+      if (!StringUtils.hasText(message.getOpenKfid()) || !StringUtils.hasText(message.getCustomerId())) {
+        log.warn("企业微信半托管转人工跳过，tenantId={}，messageId={}，原因=openKfid或customerId为空",
+            tenantId, message.getMessageId());
+        continue;
+      }
+      try {
+        client.transferCustomerServiceState(
+            runtime,
+            message.getOpenKfid(),
+            message.getCustomerId(),
+            binding.getEnterpriseUserId());
+      } catch (RuntimeException ex) {
+        log.warn("企业微信半托管转人工失败，tenantId={}，messageId={}，openKfid={}，customerId={}，原因={}",
+            tenantId, message.getMessageId(), maskMiddle(message.getOpenKfid()), maskMiddle(message.getCustomerId()), ex.getMessage(), ex);
+      }
+    }
   }
 
   @PostMapping("/messages/send")
@@ -152,17 +212,136 @@ public class EnterpriseWeChatController {
       throw new IllegalArgumentException("企业微信待回复消息不存在或已处理");
     }
     try {
-      client.sendCustomerMessage(runtime, pendingMessage.getOpenKfid(), pendingMessage.getCustomerId(), request.content());
+      EnterpriseWeChatClient.CustomerServiceState state = client.getCustomerServiceState(
+          runtime,
+          pendingMessage.getOpenKfid(),
+          pendingMessage.getCustomerId());
+      log.info("企业微信全托管发送前会话状态已查询，tenantId={}，userId={}，messageId={}，serviceState={}，openKfid={}，customerId={}",
+          tenantId, principal.subjectId(), request.messageId(), state.serviceState(), maskMiddle(pendingMessage.getOpenKfid()), maskMiddle(pendingMessage.getCustomerId()));
+      sendCustomerMessageWithSessionRecovery(
+          runtime,
+          state,
+          pendingMessage,
+          request.content(),
+          tenantId,
+          principal.subjectId(),
+          request.messageId());
       messageService.markReplied(tenantId, principal.subjectId(), request.messageId(), null);
     } catch (RuntimeException ex) {
-      String reason = ex.getMessage();
+      String reason = resolveFailureReason(ex);
       messageService.markReplied(tenantId, principal.subjectId(), request.messageId(),
           StringUtils.hasText(reason) ? reason : "企业微信消息发送失败");
       log.warn("企业微信消息发送失败，messageId={}", request.messageId(), ex);
-      throw ex;
+      throw new TransitException(ErrorCode.BAD_REQUEST, StringUtils.hasText(reason) ? reason : "企业微信消息发送失败", ex);
     }
     Map<String, Object> payload = new HashMap<>();
     payload.put("ok", true);
+    return Result.success(payload);
+  }
+
+  private void sendCustomerMessageWithSessionRecovery(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime,
+      EnterpriseWeChatClient.CustomerServiceState state,
+      EnterpriseWeChatMessageEntity pendingMessage,
+      String content,
+      long tenantId,
+      long userId,
+      String messageId) {
+    try {
+      client.sendCustomerMessage(runtime, pendingMessage.getOpenKfid(), pendingMessage.getCustomerId(), content);
+      return;
+    } catch (RuntimeException ex) {
+      String reason = resolveFailureReason(ex);
+      if (!isSessionStatusInvalidFailure(reason)) {
+        throw ex;
+      }
+      if (state.serviceState() != 3) {
+        throw ex;
+      }
+      log.warn("企业微信发送遇到人工接待会话状态无效，准备结束人工接待并用事件响应发送，tenantId={}，userId={}，messageId={}，openKfid={}，customerId={}，reason={}",
+          tenantId, userId, messageId, maskMiddle(pendingMessage.getOpenKfid()), maskMiddle(pendingMessage.getCustomerId()), reason, ex);
+      String messageCode = client.transferCustomerServiceStateAndGetMessageCode(
+          runtime,
+          pendingMessage.getOpenKfid(),
+          pendingMessage.getCustomerId(),
+          4,
+          null);
+      if (!StringUtils.hasText(messageCode)) {
+        throw new IllegalStateException("企业微信会话状态切换失败: 未返回事件响应 msg_code", ex);
+      }
+      client.sendCustomerEventMessage(runtime, messageCode, content);
+    }
+  }
+
+  private String resolveFailureReason(Throwable throwable) {
+    Throwable current = throwable;
+    String fallback = "";
+    while (current != null) {
+      String message = current.getMessage();
+      if (StringUtils.hasText(message)) {
+        fallback = message;
+        if (message.contains("errcode") || message.contains("errmsg") || message.contains("企业微信")) {
+          return message;
+        }
+      }
+      current = current.getCause();
+    }
+    return fallback;
+  }
+
+  private boolean isSessionStatusInvalidFailure(String reason) {
+    if (!StringUtils.hasText(reason)) {
+      return false;
+    }
+    return reason.contains("95018") || reason.contains("send msg session status invalid");
+  }
+
+  @PostMapping("/sessions/release-manual")
+  public Result<Map<String, Object>> releaseManualSessions(
+      @RequestHeader("X-Tenant-Id") long tenantId,
+      Authentication authentication,
+      @RequestBody ReleaseManualSessionsRequest request) {
+    TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
+    EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime = configService.getRuntimeConfig(tenantId);
+    List<EnterpriseWeChatMessageEntity> sessions = messageService.listRecentSessionsForModeSwitch(
+        tenantId,
+        principal.subjectId(),
+        request == null ? List.of() : request.customerIds(),
+        50);
+    int releasedCount = 0;
+    int skippedCount = 0;
+    int failedCount = 0;
+    for (EnterpriseWeChatMessageEntity session : sessions) {
+      try {
+        EnterpriseWeChatClient.CustomerServiceState state = client.getCustomerServiceState(
+            runtime,
+            session.getOpenKfid(),
+            session.getCustomerId());
+        if (state.serviceState() == 3) {
+          client.transferCustomerServiceState(runtime, session.getOpenKfid(), session.getCustomerId(), 4, null);
+          releasedCount++;
+          log.info("企业微信全托管切换已结束人工接待，tenantId={}，userId={}，openKfid={}，customerId={}，servicerUserId={}",
+              tenantId, principal.subjectId(), maskMiddle(session.getOpenKfid()), maskMiddle(session.getCustomerId()), maskMiddle(state.servicerUserId()));
+        } else {
+          skippedCount++;
+          log.info("企业微信全托管切换跳过非人工接待会话，tenantId={}，userId={}，serviceState={}，openKfid={}，customerId={}",
+              tenantId, principal.subjectId(), state.serviceState(), maskMiddle(session.getOpenKfid()), maskMiddle(session.getCustomerId()));
+        }
+      } catch (RuntimeException ex) {
+        failedCount++;
+        log.warn("企业微信全托管切换释放人工接待失败，tenantId={}，userId={}，openKfid={}，customerId={}，原因={}",
+            tenantId, principal.subjectId(), maskMiddle(session.getOpenKfid()), maskMiddle(session.getCustomerId()), ex.getMessage(), ex);
+      }
+    }
+    Map<String, Object> payload = new HashMap<>();
+    payload.put("ok", failedCount == 0);
+    payload.put("totalCount", sessions.size());
+    payload.put("releasedCount", releasedCount);
+    payload.put("skippedCount", skippedCount);
+    payload.put("failedCount", failedCount);
+    if (failedCount > 0) {
+      throw new IllegalStateException("企业微信全托管切换失败，部分人工接待未能释放");
+    }
     return Result.success(payload);
   }
 
@@ -218,6 +397,9 @@ public class EnterpriseWeChatController {
   public record SendRequest(String messageId, String customerId, String content) {
   }
 
+  public record ReleaseManualSessionsRequest(List<String> customerIds) {
+  }
+
   private boolean isWechatKfSyncEvent(EnterpriseWeChatCallbackMessage message) {
     return "event".equalsIgnoreCase(message.messageType())
         && "kf_msg_or_event".equalsIgnoreCase(message.eventType())
@@ -225,18 +407,22 @@ public class EnterpriseWeChatController {
         && StringUtils.hasText(message.openKfid());
   }
 
-  private void syncWechatKfMessages(
+  private List<EnterpriseWeChatMessageEntity> syncWechatKfMessages(
       long tenantId,
       EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime,
       EnterpriseWeChatCallbackMessage message) {
     String cursor = "";
     int totalInserted = 0;
+    List<EnterpriseWeChatMessageEntity> allInserted = new java.util.ArrayList<>();
     for (int i = 0; i < 5; i++) {
       log.info("企业微信客服消息开始同步，tenantId={}，openKfid={}，page={}，cursorConfigured={}，syncTokenConfigured={}",
           tenantId, maskMiddle(message.openKfid()), i + 1, StringUtils.hasText(cursor), StringUtils.hasText(message.syncToken()));
       String payload = client.syncCustomerMessages(runtime, message.openKfid(), message.syncToken(), cursor, 100);
       EnterpriseWeChatMessageService.SyncedMessageBatch batch = messageService.parseSyncedMessages(payload);
-      List<EnterpriseWeChatMessageEntity> inserted = messageService.enqueueSyncedMessages(tenantId, batch.messages());
+      List<EnterpriseWeChatMessageService.SyncedCustomerMessage> enrichedMessages =
+          enrichCustomerNames(runtime, batch.messages());
+      List<EnterpriseWeChatMessageEntity> inserted = messageService.enqueueSyncedMessages(tenantId, enrichedMessages);
+      allInserted.addAll(inserted);
       totalInserted += inserted.size();
       log.info("企业微信客服消息同步页完成，tenantId={}，openKfid={}，page={}，parsedCount={}，insertedCount={}，hasMore={}，nextCursorConfigured={}",
           tenantId, maskMiddle(message.openKfid()), i + 1, batch.messages().size(), inserted.size(), batch.hasMore(), StringUtils.hasText(batch.nextCursor()));
@@ -247,6 +433,51 @@ public class EnterpriseWeChatController {
     }
     log.info("企业微信客服消息同步完成，tenantId={}，openKfid={}，新增消息数={}",
         tenantId, maskMiddle(message.openKfid()), totalInserted);
+    return allInserted;
+  }
+
+  private List<EnterpriseWeChatMessageService.SyncedCustomerMessage> enrichCustomerNames(
+      EnterpriseWeChatConfigService.EnterpriseWeChatRuntimeConfig runtime,
+      List<EnterpriseWeChatMessageService.SyncedCustomerMessage> messages) {
+    if (messages == null || messages.isEmpty()) {
+      return List.of();
+    }
+    try {
+      Map<String, String> displayNames = client.fetchCustomerDisplayNames(
+          runtime,
+          messages.stream()
+              .map(EnterpriseWeChatMessageService.SyncedCustomerMessage::customerId)
+              .toList());
+      if (displayNames.isEmpty()) {
+        return messages;
+      }
+      return messages.stream()
+          .map(message -> enrichCustomerName(message, displayNames))
+          .toList();
+    } catch (RuntimeException ex) {
+      log.warn("企业微信客户名称查询失败，继续使用客户ID展示，原因={}", ex.getMessage(), ex);
+      return messages;
+    }
+  }
+
+  private EnterpriseWeChatMessageService.SyncedCustomerMessage enrichCustomerName(
+      EnterpriseWeChatMessageService.SyncedCustomerMessage message,
+      Map<String, String> displayNames) {
+    String displayName = displayNames.get(message.customerId());
+    if (!StringUtils.hasText(displayName)) {
+      return message;
+    }
+    return new EnterpriseWeChatMessageService.SyncedCustomerMessage(
+        message.messageId(),
+        message.openKfid(),
+        message.enterpriseUserId(),
+        message.customerId(),
+        displayName,
+        message.messageType(),
+        message.direction(),
+        message.content(),
+        message.receivedAt(),
+        message.rawPayload());
   }
 
   private int safeLength(String value) {

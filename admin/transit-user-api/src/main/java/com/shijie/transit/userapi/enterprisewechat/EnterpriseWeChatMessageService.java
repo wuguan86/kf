@@ -182,14 +182,17 @@ public class EnterpriseWeChatMessageService {
     TenantContext.setTenantId(tenantId);
     try {
       int safeLimit = Math.max(1, Math.min(limit, 50));
+      LocalDateTime processingRecoveryTime = LocalDateTime.now(clock).minusMinutes(30);
       List<EnterpriseWeChatMessageEntity> list = messageMapper.selectList(
           new LambdaQueryWrapper<EnterpriseWeChatMessageEntity>()
               .eq(EnterpriseWeChatMessageEntity::getTenantId, tenantId)
               .eq(EnterpriseWeChatMessageEntity::getOwnerUserId, userId)
               .and(wrapper -> wrapper
-                  .eq(EnterpriseWeChatMessageEntity::getStatus, "PENDING")
-                  .or()
-                  .eq(EnterpriseWeChatMessageEntity::getStatus, "DISPLAY_ONLY"))
+                  .in(EnterpriseWeChatMessageEntity::getStatus, List.of("PENDING", "DISPLAY_ONLY"))
+                  .or(recovery -> recovery
+                      .eq(EnterpriseWeChatMessageEntity::getStatus, "PROCESSING")
+                      .eq(EnterpriseWeChatMessageEntity::getDirection, "IN")
+                      .ge(EnterpriseWeChatMessageEntity::getReceivedAt, processingRecoveryTime)))
               .orderByAsc(EnterpriseWeChatMessageEntity::getReceivedAt)
               .last("LIMIT " + safeLimit));
       log.info("企业微信待回复消息查询完成，tenantId={}，userId={}，limit={}，count={}",
@@ -286,6 +289,52 @@ public class EnterpriseWeChatMessageService {
           new LambdaQueryWrapper<EnterpriseWeChatUserBindingEntity>()
               .eq(EnterpriseWeChatUserBindingEntity::getTenantId, tenantId)
               .eq(EnterpriseWeChatUserBindingEntity::getUserId, userId));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  public List<EnterpriseWeChatMessageEntity> listRecentSessionsForModeSwitch(
+      long tenantId,
+      long userId,
+      List<String> customerIds,
+      int limit) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      int safeLimit = Math.max(1, Math.min(limit, 50));
+      List<String> safeCustomerIds = customerIds == null ? List.of() : customerIds.stream()
+          .filter(StringUtils::hasText)
+          .map(String::trim)
+          .distinct()
+          .limit(50)
+          .toList();
+      LambdaQueryWrapper<EnterpriseWeChatMessageEntity> wrapper = new LambdaQueryWrapper<EnterpriseWeChatMessageEntity>()
+          .eq(EnterpriseWeChatMessageEntity::getTenantId, tenantId)
+          .eq(EnterpriseWeChatMessageEntity::getOwnerUserId, userId)
+          .isNotNull(EnterpriseWeChatMessageEntity::getOpenKfid)
+          .isNotNull(EnterpriseWeChatMessageEntity::getCustomerId)
+          .orderByDesc(EnterpriseWeChatMessageEntity::getReceivedAt)
+          .last("LIMIT " + safeLimit);
+      if (!safeCustomerIds.isEmpty()) {
+        wrapper.in(EnterpriseWeChatMessageEntity::getCustomerId, safeCustomerIds);
+      }
+      List<EnterpriseWeChatMessageEntity> rows = messageMapper.selectList(wrapper);
+      if (rows == null || rows.isEmpty()) {
+        return List.of();
+      }
+      List<EnterpriseWeChatMessageEntity> sessions = new ArrayList<>();
+      List<String> seenKeys = new ArrayList<>();
+      for (EnterpriseWeChatMessageEntity row : rows) {
+        String key = row.getOpenKfid() + "\n" + row.getCustomerId();
+        if (seenKeys.contains(key)) {
+          continue;
+        }
+        seenKeys.add(key);
+        sessions.add(row);
+      }
+      log.info("企业微信托管模式切换会话查询完成，tenantId={}，userId={}，customerIdCount={}，sessionCount={}",
+          tenantId, userId, safeCustomerIds.size(), sessions.size());
+      return sessions;
     } finally {
       TenantContext.clear();
     }

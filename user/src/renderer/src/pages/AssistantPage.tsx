@@ -38,6 +38,7 @@ type MarketingCommentConfig = {
 }
 type ChatMessage = {
   id: string
+  sessionKey: string
   contact: string
   content: string
   isSelf: boolean
@@ -71,7 +72,8 @@ const defaultWechatChannelConfig: WeChatChannelConfig = {
   apiBaseUrl: '',
   secretConfigured: 'false',
   tokenConfigured: 'false',
-  encodingAesKeyConfigured: 'false'
+  encodingAesKeyConfigured: 'false',
+  managedMode: 'full'
 }
 
 const getNextMonitorDelay = (): number => {
@@ -533,19 +535,24 @@ function AssistantPage(props: Props): JSX.Element {
   const [wechatChannelConfig, setWechatChannelConfig] = useState<WeChatChannelConfig>(defaultWechatChannelConfig)
   const [showEnterpriseConfigDialog, setShowEnterpriseConfigDialog] = useState(false)
   const managedModeRef = useRef<'full' | 'semi'>('full')
+  const seenBridgeMessageIdsRef = useRef<Set<string>>(new Set())
 
   const syncManagedModeToBridge = async (mode: 'full' | 'semi') => {
     try {
       const api = (window as any).api
-      if (!api?.setWeChatManagedMode) {
-        return
-      }
-      const result = await api.setWeChatManagedMode(mode)
-      if (!result?.ok) {
-        console.warn('Failed to sync managed mode to bridge', result)
+      if (api?.setWeChatManagedMode) {
+        const result = await api.setWeChatManagedMode(mode)
+        if (!result?.ok) {
+          console.warn('Failed to sync managed mode to bridge', result)
+        }
       }
     } catch (e) {
       console.warn('Failed to sync managed mode to bridge', e)
+    }
+    try {
+      await http.post('/api/user/system-config/wechat-managed-mode', { mode })
+    } catch (e) {
+      console.warn('同步企业微信托管模式到后端失败', e)
     }
   }
 
@@ -555,6 +562,37 @@ function AssistantPage(props: Props): JSX.Element {
       syncManagedModeToBridge(managedMode)
     }
   }, [managedMode])
+
+  const releaseEnterpriseManualSessions = async () => {
+    const customerIds = Array.from(new Set(
+      messages
+        .filter((message) => message.source === 'enterprise' && message.customerId)
+        .map((message) => String(message.customerId).trim())
+        .filter(Boolean)
+    ))
+    const result = await http.post<any>('/api/user/enterprise-wechat/sessions/release-manual', { customerIds })
+    const releasedCount = Number(result?.releasedCount || 0)
+    if (releasedCount > 0) {
+      showToast(`已释放 ${releasedCount} 个企业微信人工接待会话，后续新消息将进入全托管`, 'success')
+    }
+  }
+
+  const handleManagedModeChange = async (mode: 'full' | 'semi') => {
+    if (mode === managedMode) {
+      return
+    }
+    if (wechatChannelRef.current === 'enterprise' && mode === 'full') {
+      try {
+        await releaseEnterpriseManualSessions()
+      } catch (error: any) {
+        const reason = error?.response?.data?.msg || error?.message || '未知原因'
+        console.error('企业微信切换全托管失败', error)
+        showToast(`切换全托管失败: ${reason}`, 'error')
+        return
+      }
+    }
+    setManagedMode(mode)
+  }
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatHistoryRef = useRef<HTMLDivElement>(null)
@@ -567,7 +605,7 @@ function AssistantPage(props: Props): JSX.Element {
   const contactQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const lastProcessedByContactRef = useRef<Map<string, { text: string; at: number }>>(new Map())
   const outputStoreContextRef = useRef<Map<string, { contactKey: string; customerMessage: string }>>(new Map())
-  const abortControllerRef = useRef<AbortController | null>(null)
+  const streamAbortControllersRef = useRef<Map<string, AbortController>>(new Map())
   const pollFailureCountRef = useRef(0)
   const wechatChannelRef = useRef<WeChatChannel>('personal')
 
@@ -577,7 +615,8 @@ function AssistantPage(props: Props): JSX.Element {
     apiBaseUrl: config?.apiBaseUrl || '',
     secretConfigured: config?.secretConfigured === 'true' ? 'true' : 'false',
     tokenConfigured: config?.tokenConfigured === 'true' ? 'true' : 'false',
-    encodingAesKeyConfigured: config?.encodingAesKeyConfigured === 'true' ? 'true' : 'false'
+    encodingAesKeyConfigured: config?.encodingAesKeyConfigured === 'true' ? 'true' : 'false',
+    managedMode: config?.managedMode === 'semi' ? 'semi' : 'full'
   })
 
   const fetchWechatChannelConfig = async (): Promise<WeChatChannelConfig> => {
@@ -713,7 +752,15 @@ function AssistantPage(props: Props): JSX.Element {
     const source: 'personal' | 'enterprise' = msg?.source === 'enterprise' ? 'enterprise' : 'personal'
     const messageId = String(msg?.messageId || msg?.id || '').trim()
     const customerId = String(msg?.customerId || '').trim()
+    const sessionKey = source === 'enterprise' && customerId ? `enterprise:${customerId}` : contact
     if (!contact || !text) return
+    if (source === 'enterprise' && messageId) {
+      const bridgeMessageKey = `${source}:${messageId}`
+      if (seenBridgeMessageIdsRef.current.has(bridgeMessageKey)) {
+        return
+      }
+      seenBridgeMessageIdsRef.current.add(bridgeMessageKey)
+    }
     const shouldWaitForImage = !isSelf && isImagePlaceholderMessage(text)
     const imageTask: Promise<{ imageDataUrl: string; imageNotice: string }> = shouldWaitForImage
       ? (async () => {
@@ -749,23 +796,24 @@ function AssistantPage(props: Props): JSX.Element {
           }
         })()
       : Promise.resolve({ imageDataUrl: '', imageNotice: '' })
-    const prev = contactQueueRef.current.get(contact) || Promise.resolve()
+    const prev = contactQueueRef.current.get(sessionKey) || Promise.resolve()
     const next = prev
       .then(async () => {
         const { imageDataUrl, imageNotice } = await imageTask
-        await handleIncoming(contact, text, isSelf, triggerReply, imageDataUrl, imageNotice, source, messageId, customerId)
+        await handleIncoming(sessionKey, contact, text, isSelf, triggerReply, imageDataUrl, imageNotice, source, messageId, customerId)
       })
       .catch(() => {
       })
       .finally(() => {
-        if (contactQueueRef.current.get(contact) === next) {
-          contactQueueRef.current.delete(contact)
+        if (contactQueueRef.current.get(sessionKey) === next) {
+          contactQueueRef.current.delete(sessionKey)
         }
       })
-    contactQueueRef.current.set(contact, next)
+    contactQueueRef.current.set(sessionKey, next)
   }
 
   const handleIncoming = async (
+    sessionKey: string,
     contact: string,
     text: string,
     isSelf: boolean,
@@ -782,7 +830,8 @@ function AssistantPage(props: Props): JSX.Element {
     const now = Date.now()
     
     const newMessage: ChatMessage = {
-      id: `${contact}-${now}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `${sessionKey}-${now}-${Math.random().toString(36).substr(2, 9)}`,
+      sessionKey,
       contact,
       content: normalizedText,
       isSelf,
@@ -802,7 +851,7 @@ function AssistantPage(props: Props): JSX.Element {
       return
     }
 
-    const last = lastProcessedByContactRef.current.get(contact)
+    const last = lastProcessedByContactRef.current.get(sessionKey)
     const isImageMessage = !!imageDataUrl
     if (!isImageMessage && last && last.text === normalizedText && now - last.at < 120000) {
       return
@@ -810,7 +859,7 @@ function AssistantPage(props: Props): JSX.Element {
     if (!isImageMessage && last && now - last.at < 8000) {
       return
     }
-    lastProcessedByContactRef.current.set(contact, { text: isImageMessage ? `${normalizedText}-${now}` : normalizedText, at: now })
+    lastProcessedByContactRef.current.set(sessionKey, { text: isImageMessage ? `${normalizedText}-${now}` : normalizedText, at: now })
 
     setIsSending(true)
     setDifyResponse('')
@@ -836,18 +885,16 @@ function AssistantPage(props: Props): JSX.Element {
       }]
 
       const runMonitorChatStream = async (requestImageDataUrl?: string) => {
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort()
-        }
+        streamAbortControllersRef.current.get(sessionKey)?.abort()
         const currentAbortController = new AbortController()
-        abortControllerRef.current = currentAbortController
+        streamAbortControllersRef.current.set(sessionKey, currentAbortController)
 
         const localItems = createInitialProcessItems()
         setProcessItems(localItems)
         const requestMessage = requestImageDataUrl ? '请识别这张图片并结合上下文回复。' : normalizedText
         const effectiveChunkTimeoutMs = requestImageDataUrl ? IMAGE_STREAM_CHUNK_TIMEOUT_MS : STREAM_CHUNK_TIMEOUT_MS
         const effectiveTotalTimeoutMs = requestImageDataUrl ? IMAGE_STREAM_TOTAL_TIMEOUT_MS : STREAM_TOTAL_TIMEOUT_MS
-        const streamTraceId = `${contact}-${now}-${requestImageDataUrl ? 'image' : 'text'}`
+        const streamTraceId = `${sessionKey}-${now}-${requestImageDataUrl ? 'image' : 'text'}`
 
         console.log('流式回复开始请求', {
           streamTraceId,
@@ -870,7 +917,8 @@ function AssistantPage(props: Props): JSX.Element {
             roleId: role.id,
             message: requestMessage,
             role: role.content || '',
-            wechatContact: contact,
+            wechatContact: sessionKey,
+            wechatContactDisplayName: contact,
             ...(requestImageDataUrl ? { imageDataUrl: requestImageDataUrl } : {})
           }),
           signal: currentAbortController.signal
@@ -979,56 +1027,82 @@ function AssistantPage(props: Props): JSX.Element {
                 item.status = 'completed'
                 item.content = cleanOutput
                 outputStoreContextRef.current.set(item.id, {
-                  contactKey: contact,
+                  contactKey: sessionKey,
                   customerMessage: normalizedText
                 })
               }
 
               const reply = cleanOutput
               if (reply && managedModeRef.current === 'full') {
-                 const config = sessionConfigRef.current?.sceneConfig
-                 if (config) {
-                   const min = (config.replyIntervalStartSec || 0) * 1000
-                   const max = (config.replyIntervalEndSec || 0) * 1000
-                   if (max >= min && min >= 0) {
-                     const delayMs = Math.floor(min + Math.random() * (max - min))
-                     const elapsed = Date.now() - now
-                     if (delayMs > elapsed) {
-                       const waitTime = delayMs - elapsed
-                       await new Promise(resolve => setTimeout(resolve, waitTime))
-                     }
-                   }
-                 }
+                const showAutoSendFailure = (reason: string) => {
+                  const failureText = `${reply}\n\n自动发送失败: ${reason}`
+                  const outputItem = localItems.find(i => i.step === 'OUTPUT')
+                  if (outputItem) {
+                    outputItem.status = 'error'
+                    outputItem.content = failureText
+                  }
+                  setDifyResponse(failureText)
+                }
+                const config = sessionConfigRef.current?.sceneConfig
+                if (config) {
+                  const min = (config.replyIntervalStartSec || 0) * 1000
+                  const max = (config.replyIntervalEndSec || 0) * 1000
+                  if (max >= min && min >= 0) {
+                    const delayMs = Math.floor(min + Math.random() * (max - min))
+                    const elapsed = Date.now() - now
+                    if (delayMs > elapsed) {
+                      const waitTime = delayMs - elapsed
+                      await new Promise(resolve => setTimeout(resolve, waitTime))
+                    }
+                  }
+                }
 
-                 let sendRes: any
-                 if (source === 'enterprise') {
-                   if (!customerId) {
-                     throw new Error('企业微信客户ID为空，无法发送回复')
-                   }
-                   sendRes = await http.post('/api/user/enterprise-wechat/messages/send', {
-                     messageId,
-                     customerId,
-                     content: reply
-                   })
-                 } else {
-                   const api = (window as any).api
-                   sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
-                 }
-                 if (!sendRes?.ok || sendRes?.success === false) {
-                   setDifyResponse(reply + '\n\n(自动发送失败)')
-                 } else {
-                   setMessages((prev) => [...prev, {
-                     id: `${contact}-${Date.now()}-reply-${Math.random().toString(36).substr(2, 9)}`,
-                     contact,
-                     content: reply,
-                     isSelf: true,
-                     timestamp: Date.now(),
-                     source,
-                     messageId,
-                     customerId
-                   }])
-                   setLastReplied({ contact, text: reply, at: Date.now() })
-                 }
+                const sendContext = { source, managedMode: managedModeRef.current, messageId, customerId, sessionKey }
+                console.info('全托管自动发送开始', sendContext)
+                let sendRes: any
+                let sendFailed = false
+                try {
+                  if (source === 'enterprise') {
+                    if (!customerId) {
+                      throw new Error('企业微信客户ID为空，无法发送回复')
+                    }
+                    sendRes = await http.post('/api/user/enterprise-wechat/messages/send', {
+                      messageId,
+                      customerId,
+                      content: reply
+                    })
+                  } else {
+                    const api = (window as any).api
+                    sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
+                  }
+                } catch (sendError) {
+                  const responseData = (sendError as any)?.response?.data
+                  const reason = responseData?.msg || responseData?.message || (sendError instanceof Error ? sendError.message : String(sendError || '未知原因'))
+                  console.error('全托管自动发送失败', { ...sendContext, reason, error: sendError })
+                  showAutoSendFailure(reason)
+                  sendFailed = true
+                }
+                if (!sendFailed) {
+                  if (!sendRes?.ok || sendRes?.success === false) {
+                    const reason = sendRes?.msg || sendRes?.message || '接口返回失败'
+                    console.error('全托管自动发送失败', { ...sendContext, reason, response: sendRes })
+                    showAutoSendFailure(reason)
+                  } else {
+                    console.info('全托管自动发送成功', sendContext)
+                    setMessages((prev) => [...prev, {
+                      id: `${contact}-${Date.now()}-reply-${Math.random().toString(36).substr(2, 9)}`,
+                      sessionKey,
+                      contact,
+                      content: reply,
+                      isSelf: true,
+                      timestamp: Date.now(),
+                      source,
+                      messageId,
+                      customerId
+                    }])
+                    setLastReplied({ contact, text: reply, at: Date.now() })
+                  }
+                }
               }
             }
 
@@ -1119,7 +1193,7 @@ function AssistantPage(props: Props): JSX.Element {
       setProcessItems(prev => prev.map(i => i.status === 'running' ? { ...i, status: 'completed', content: '发生错误: ' + err.message } : i))
     } finally {
       setIsSending(false)
-      abortControllerRef.current = null
+      streamAbortControllersRef.current.delete(sessionKey)
       eventBus.emit('points-updated')
     }
   }
@@ -1150,7 +1224,9 @@ function AssistantPage(props: Props): JSX.Element {
       try {
         const api = (window as any).api
         const res = wechatChannelRef.current === 'enterprise'
-          ? await http.get<any>('/api/user/enterprise-wechat/messages/poll')
+          ? await http.get<any>('/api/user/enterprise-wechat/messages/poll', {
+              params: { managedMode: managedModeRef.current }
+            })
           : await api.pollWeChatMessages()
         if (res?.ok && Array.isArray(res.messages)) {
           pollFailureCountRef.current = 0
@@ -1367,6 +1443,7 @@ function AssistantPage(props: Props): JSX.Element {
       setIsRunning(false)
       pollFailureCountRef.current = 0
       try {
+        await syncManagedModeToBridge('full')
         await api.stopWeChatBridge()
       } catch (e) {
       }
@@ -1406,8 +1483,8 @@ function AssistantPage(props: Props): JSX.Element {
         if (!startRes?.ok) {
           throw new Error(startRes?.message || startRes?.error || '启动失败')
         }
-        await syncManagedModeToBridge(managedModeRef.current)
       }
+      await syncManagedModeToBridge(managedModeRef.current)
       pollFailureCountRef.current = 0
       setIsRunning(true)
     } catch (e: any) {
@@ -1448,6 +1525,21 @@ function AssistantPage(props: Props): JSX.Element {
     )
   }
 
+  const groupedChatSessions = messages.reduce<Array<{ sessionKey: string; contact: string; messages: ChatMessage[] }>>((groups, message) => {
+    const existing = groups.find((group) => group.sessionKey === message.sessionKey)
+    if (existing) {
+      existing.messages.push(message)
+      existing.contact = message.contact || existing.contact
+      return groups
+    }
+    groups.push({
+      sessionKey: message.sessionKey,
+      contact: message.contact,
+      messages: [message]
+    })
+    return groups
+  }, [])
+
   return (
     <div className={styles.assistantPage}>
       <header className={styles.pageHeader}>
@@ -1467,7 +1559,7 @@ function AssistantPage(props: Props): JSX.Element {
           startButtonClassName={btnClass}
           startButtonContent={btnContent}
           onWechatChannelChange={saveWechatChannel}
-          onManagedModeChange={setManagedMode}
+          onManagedModeChange={handleManagedModeChange}
           onOpenEnterpriseConfig={() => setShowEnterpriseConfigDialog(true)}
           onToggleRunning={toggleRunning}
         />
@@ -1503,46 +1595,54 @@ function AssistantPage(props: Props): JSX.Element {
                       )}
                     </div>
                   )}
-                  {messages.map((msg, index) => {
-                    const isLatest = index === messages.length - 1
-                    return (
-                      <div
-                        key={msg.id}
-                        className={styles.messageItem}
-                        style={{
-                          alignItems: msg.isSelf ? 'flex-end' : 'flex-start',
-                        }}
-                      >
-                        <div className={styles.messageMeta}>
-                          {!msg.isSelf && isLatest && (
-                            <span className={styles.newBadge}>
-                              NEW
-                            </span>
-                          )}
-                          <span>{msg.isSelf ? '我' : msg.contact}</span>
-                          <span style={{ marginLeft: '8px' }}>{new Date(msg.timestamp).toLocaleTimeString()}</span>
-                        </div>
-                        <div
-                          className={`${styles.messageBubble} ${msg.isSelf ? styles.messageBubbleSelf : styles.messageBubbleOther}`}
-                        >
-                          {msg.imageDataUrl ? (
-                            <img
-                              className={styles.messageImage}
-                              src={msg.imageDataUrl}
-                              alt="微信图片"
-                            />
-                          ) : (
-                            msg.content
-                          )}
-                          {msg.imageNotice && (
-                            <div className={styles.messageNotice}>
-                              {msg.imageNotice}
-                            </div>
-                          )}
-                        </div>
+                   {groupedChatSessions.map((session) => (
+                    <div key={session.sessionKey} className={styles.chatSessionGroup}>
+                      <div className={styles.chatSessionHeader}>
+                        <span>{session.contact || '未知客户'}</span>
+                        <span>{session.messages.length} 条消息</span>
                       </div>
-                    )
-                  })}
+                      {session.messages.map((msg) => {
+                        const isLatest = msg.id === messages[messages.length - 1]?.id
+                        return (
+                          <div
+                            key={msg.id}
+                            className={styles.messageItem}
+                            style={{
+                              alignItems: msg.isSelf ? 'flex-end' : 'flex-start',
+                            }}
+                          >
+                            <div className={styles.messageMeta}>
+                              {!msg.isSelf && isLatest && (
+                                <span className={styles.newBadge}>
+                                  NEW
+                                </span>
+                              )}
+                              <span>{msg.isSelf ? '我' : msg.contact}</span>
+                              <span style={{ marginLeft: '8px' }}>{new Date(msg.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                            <div
+                              className={`${styles.messageBubble} ${msg.isSelf ? styles.messageBubbleSelf : styles.messageBubbleOther}`}
+                            >
+                              {msg.imageDataUrl ? (
+                                <img
+                                  className={styles.messageImage}
+                                  src={msg.imageDataUrl}
+                                  alt="微信图片"
+                                />
+                              ) : (
+                                msg.content
+                              )}
+                              {msg.imageNotice && (
+                                <div className={styles.messageNotice}>
+                                  {msg.imageNotice}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ))}
                   <div ref={messagesEndRef} />
                </div>
             </div>

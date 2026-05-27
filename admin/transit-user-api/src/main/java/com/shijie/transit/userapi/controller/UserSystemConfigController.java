@@ -60,7 +60,8 @@ public class UserSystemConfigController {
     }
 
     @GetMapping("/wechat-channel")
-    public Result<Map<String, String>> getWechatChannel() {
+    public Result<Map<String, String>> getWechatChannel(Authentication authentication) {
+        TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
         Map<String, String> config = new HashMap<>();
         String channel = readConfig("wechat_channel");
         config.put("channel", "enterprise".equalsIgnoreCase(channel) ? "enterprise" : "personal");
@@ -69,6 +70,7 @@ public class UserSystemConfigController {
         config.put("secretConfigured", StringUtils.hasText(readConfig("enterprise_wechat_secret")) ? "true" : "false");
         config.put("tokenConfigured", StringUtils.hasText(readConfig("enterprise_wechat_token")) ? "true" : "false");
         config.put("encodingAesKeyConfigured", StringUtils.hasText(readConfig("enterprise_wechat_encoding_aes_key")) ? "true" : "false");
+        config.put("managedMode", enterpriseWeChatConfigService.getManagedMode(principal.tenantId()));
         return Result.success(config);
     }
 
@@ -77,6 +79,14 @@ public class UserSystemConfigController {
                                             Authentication authentication) {
         TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
         enterpriseWeChatConfigService.saveTenantConfig(principal.tenantId(), command);
+        return Result.success(null);
+    }
+
+    @PostMapping("/wechat-managed-mode")
+    public Result<Void> updateWechatManagedMode(@RequestBody ManagedModeRequest request,
+                                                Authentication authentication) {
+        TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
+        enterpriseWeChatConfigService.saveManagedMode(principal.tenantId(), request.mode());
         return Result.success(null);
     }
 
@@ -110,5 +120,8 @@ public class UserSystemConfigController {
 
     private String defaultString(String value) {
         return value == null ? "" : value;
+    }
+
+    public record ManagedModeRequest(String mode) {
     }
 }

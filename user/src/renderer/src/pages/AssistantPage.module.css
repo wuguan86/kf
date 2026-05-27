@@ -133,6 +133,27 @@
   overflow-y: auto;
 }
 
+.chatSessionGroup {
+  margin-bottom: 16px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.chatSessionGroup:last-of-type {
+  border-bottom: none;
+}
+
+.chatSessionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .messageItem {
   display: flex;
   flex-direction: column;

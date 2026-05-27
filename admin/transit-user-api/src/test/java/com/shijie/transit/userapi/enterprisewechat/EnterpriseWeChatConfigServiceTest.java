@@ -85,4 +85,32 @@ class EnterpriseWeChatConfigServiceTest {
     assertEquals("corp-1", config.corpId());
     assertNull(TenantContext.getTenantId());
   }
+
+  @Test
+  void saveManagedModeStoresSemiForCallbackTransferTiming() {
+    SystemConfigMapper mapper = mock(SystemConfigMapper.class);
+    EnterpriseWeChatConfigService service = new EnterpriseWeChatConfigService(mapper, new EnterpriseWeChatProperties());
+
+    when(mapper.selectOne(any())).thenReturn(null);
+
+    service.saveManagedMode(8L, "semi");
+
+    ArgumentCaptor<SystemConfigEntity> captor = ArgumentCaptor.forClass(SystemConfigEntity.class);
+    verify(mapper).insert(captor.capture());
+    assertEquals(8L, captor.getValue().getTenantId());
+    assertEquals("enterprise_wechat_managed_mode", captor.getValue().getConfigKey());
+    assertEquals("semi", captor.getValue().getConfigValue());
+    assertNull(TenantContext.getTenantId());
+  }
+
+  @Test
+  void getManagedModeDefaultsToFullWhenConfigIsMissing() {
+    SystemConfigMapper mapper = mock(SystemConfigMapper.class);
+    EnterpriseWeChatConfigService service = new EnterpriseWeChatConfigService(mapper, new EnterpriseWeChatProperties());
+
+    when(mapper.selectOne(any())).thenReturn(null);
+
+    assertEquals("full", service.getManagedMode(8L));
+    assertNull(TenantContext.getTenantId());
+  }
 }

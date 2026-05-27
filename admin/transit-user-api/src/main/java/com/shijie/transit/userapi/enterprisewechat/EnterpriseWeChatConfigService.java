@@ -34,6 +34,25 @@ public class EnterpriseWeChatConfigService {
     }
   }
 
+  public String getManagedMode(long tenantId) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      return normalizeManagedMode(readConfig("enterprise_wechat_managed_mode"));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Transactional
+  public void saveManagedMode(long tenantId, String mode) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      saveConfig("enterprise_wechat_managed_mode", normalizeManagedMode(mode), "企业微信托管模式", true);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
   public EnterpriseWeChatRuntimeConfig getRuntimeConfig() {
     String corpId = firstText(System.getenv("ENTERPRISE_WECHAT_CORP_ID"), readConfig("enterprise_wechat_corp_id"), properties.getCorpId());
     String secret = firstText(System.getenv("ENTERPRISE_WECHAT_SECRET"), readConfig("enterprise_wechat_secret"), properties.getSecret());
@@ -103,6 +122,10 @@ public class EnterpriseWeChatConfigService {
       return CHANNEL_PERSONAL;
     }
     return CHANNEL_ENTERPRISE;
+  }
+
+  private String normalizeManagedMode(String value) {
+    return "semi".equalsIgnoreCase(StringUtils.hasText(value) ? value.trim() : "") ? "semi" : "full";
   }
 
   private String firstText(String... values) {
