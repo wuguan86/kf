@@ -1683,6 +1683,9 @@ class WeChatUI:
         right_green = 0
         left_green = 0
         total_green = 0
+        min_green_x = None
+        max_green_x = None
+        sum_green_x = 0
         self._last_direction_pixel_stats = {"left": 0, "right": 0, "total": 0}
         sample_step = 2
 
@@ -1695,6 +1698,9 @@ class WeChatUI:
                         continue
                     total_green += 1
                     absolute_x = item_bbox[0] + x
+                    sum_green_x += absolute_x
+                    min_green_x = absolute_x if min_green_x is None else min(min_green_x, absolute_x)
+                    max_green_x = absolute_x if max_green_x is None else max(max_green_x, absolute_x)
                     if absolute_x >= list_center_x:
                         right_green += 1
                     else:
@@ -1702,10 +1708,26 @@ class WeChatUI:
         except Exception:
             return "unknown"
 
-        self._last_direction_pixel_stats = {"left": left_green, "right": right_green, "total": total_green}
+        green_center_x = (sum_green_x / total_green) if total_green else 0
+        self._last_direction_pixel_stats = {
+            "left": left_green,
+            "right": right_green,
+            "total": total_green,
+            "min_x": int(min_green_x or 0),
+            "max_x": int(max_green_x or 0),
+            "center_x": int(green_center_x),
+        }
         if total_green < 20:
             return "unknown"
         if right_green >= 100 and right_green > left_green * 1.15:
+            return "self"
+        # 长文本的自己气泡会从右侧向左延展并跨过列表中线，不能只按左右绿色像素数量判定。
+        if (
+            right_green >= 100
+            and max_green_x is not None
+            and max_green_x >= list_center_x + 20
+            and green_center_x >= list_center_x - 120
+        ):
             return "self"
         if left_green >= 100 and left_green > right_green * 1.15:
             return "other"

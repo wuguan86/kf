@@ -1089,17 +1089,19 @@ function AssistantPage(props: Props): JSX.Element {
                     showAutoSendFailure(reason)
                   } else {
                     console.info('全托管自动发送成功', sendContext)
-                    setMessages((prev) => [...prev, {
-                      id: `${contact}-${Date.now()}-reply-${Math.random().toString(36).substr(2, 9)}`,
-                      sessionKey,
-                      contact,
-                      content: reply,
-                      isSelf: true,
-                      timestamp: Date.now(),
-                      source,
-                      messageId,
-                      customerId
-                    }])
+                    if (source === 'enterprise') {
+                      setMessages((prev) => [...prev, {
+                        id: `${contact}-${Date.now()}-reply-${Math.random().toString(36).substr(2, 9)}`,
+                        sessionKey,
+                        contact,
+                        content: reply,
+                        isSelf: true,
+                        timestamp: Date.now(),
+                        source,
+                        messageId,
+                        customerId
+                      }])
+                    }
                     setLastReplied({ contact, text: reply, at: Date.now() })
                   }
                 }

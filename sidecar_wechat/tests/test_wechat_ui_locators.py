@@ -64,6 +64,20 @@ class WeChatUiLocatorTests(unittest.TestCase):
 
         self.assertEqual(direction, "self")
 
+    def test_wide_green_bubble_reaching_right_half_is_self_message(self):
+        image = Image.new("RGB", (575, 74), (245, 245, 245))
+        for x in range(65, 415):
+            for y in range(12, 58):
+                image.putpixel((x, y), (149, 236, 105))
+
+        direction = self.ui._classify_message_direction_by_bubble_pixels(
+            image=image,
+            item_bbox=(394, 799, 969, 873),
+            list_bbox=(394, 479, 969, 893),
+        )
+
+        self.assertEqual(direction, "self")
+
     def test_green_bubble_on_left_is_not_self_message(self):
         image = Image.new("RGB", (200, 60), (245, 245, 245))
         for x in range(10, 70):

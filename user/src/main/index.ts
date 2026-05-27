@@ -12,6 +12,7 @@ let captureWindow: BrowserWindow | null = null
 let wechatBridgeProcess: ReturnType<typeof spawn> | null = null
 let wechatImageExtractor: WeChatImageExtractor | null = null
 const WECHAT_BRIDGE_REQUEST_TIMEOUT_MS = 5000
+const WECHAT_BRIDGE_SEND_TIMEOUT_MS = 30000
 const WECHAT_BRIDGE_STARTUP_TIMEOUT_MS = 20000
 
 const killProcessTree = (pid: number): void => {
@@ -67,10 +68,11 @@ const waitForWeChatBridgeReady = async (timeoutMs: number): Promise<void> => {
 
 const requestWeChatBridge = async (
   endpoint: string,
-  init: RequestInit
+  init: RequestInit,
+  timeoutMs: number = WECHAT_BRIDGE_REQUEST_TIMEOUT_MS
 ): Promise<Record<string, any>> => {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), WECHAT_BRIDGE_REQUEST_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(`${getWeChatBridgeBaseUrl()}${endpoint}`, {
       ...init,
@@ -537,7 +539,7 @@ ipcMain.handle('wechat-bridge-send', async (_, payload: { target: string; conten
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
-  })
+  }, WECHAT_BRIDGE_SEND_TIMEOUT_MS)
 })
 
 ipcMain.handle('wechat-bridge-command', async (_, payload: Record<string, any>) => {

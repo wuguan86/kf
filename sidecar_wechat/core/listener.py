@@ -151,8 +151,7 @@ class Listener:
 
             current_fingerprints = [self._message_fingerprint(msg) for msg in messages]
             previous_fingerprints = self._last_fingerprints_by_contact.get(contact, [])
-            overlap = self._calculate_overlap(previous_fingerprints, current_fingerprints)
-            new_messages = messages[overlap:]
+            new_messages = self._select_new_messages(previous_fingerprints, current_fingerprints, messages)
 
             self._last_fingerprints_by_contact[contact] = current_fingerprints
             if len(self._last_fingerprints_by_contact) > 300:
@@ -175,28 +174,28 @@ class Listener:
             self._logger.warning(f"上报异常: {e}")
 
     def _message_fingerprint(self, msg: dict) -> str:
-        raw_ui_id = msg.get("ui_id")
-        if isinstance(raw_ui_id, (list, tuple)):
-            ui_id = "-".join(str(part) for part in raw_ui_id)
-        else:
-            ui_id = str(raw_ui_id or "").strip()
         content = str(msg.get("content") or "").strip()
         is_self = bool(msg.get("is_self", False))
         msg_type = str(msg.get("type") or "").strip()
-        if ui_id:
-            base = f"ui|{ui_id}|{msg_type}|{is_self}|{content}"
-        else:
-            base = f"text|{msg_type}|{is_self}|{content}"
+        base = f"text|{msg_type}|{is_self}|{content}"
         return utils.sha1_text(base)
 
-    def _calculate_overlap(self, previous: List[str], current: List[str]) -> int:
+    def _select_new_messages(self, previous: List[str], current: List[str], messages: List[dict]) -> List[dict]:
+        start, size = self._find_previous_tail_in_current(previous, current)
+        if size <= 0:
+            return messages
+        return messages[start + size:]
+
+    def _find_previous_tail_in_current(self, previous: List[str], current: List[str]) -> tuple[int, int]:
         if not previous or not current:
-            return 0
+            return (0, 0)
         max_overlap = min(len(previous), len(current))
         for size in range(max_overlap, 0, -1):
-            if previous[-size:] == current[:size]:
-                return size
-        return 0
+            tail = previous[-size:]
+            for start in range(0, len(current) - size + 1):
+                if current[start:start + size] == tail:
+                    return (start, size)
+        return (0, 0)
 
     def _snapshot_contact(self, contact: str) -> bool:
         normalized_contact = self._ui._normalize_contact_name(contact)
