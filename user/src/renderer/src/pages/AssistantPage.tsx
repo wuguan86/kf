@@ -6,7 +6,7 @@ import StoreToKnowledgeBaseDialog, { SelectableKnowledgeBase } from '../componen
 import { RechargeDialog } from '../components/RechargeDialog'
 import { NoRoleDialog } from '../components/NoRoleDialog'
 import AssistantRunToolbar from '../components/AssistantRunToolbar'
-import EnterpriseWeChatConfigDialog, { WeChatChannelConfig } from '../components/EnterpriseWeChatConfigDialog'
+import { WeChatChannelConfig } from '../components/EnterpriseWeChatConfigDialog'
 import { Toast, useToast } from '../components/Toast'
 import { eventBus } from '../utils/eventBus'
 import styles from './AssistantPage.module.css'
@@ -533,7 +533,6 @@ function AssistantPage(props: Props): JSX.Element {
   const [showRechargeDialog, setShowRechargeDialog] = useState(false)
   const [showNoRoleDialog, setShowNoRoleDialog] = useState(false)
   const [wechatChannelConfig, setWechatChannelConfig] = useState<WeChatChannelConfig>(defaultWechatChannelConfig)
-  const [showEnterpriseConfigDialog, setShowEnterpriseConfigDialog] = useState(false)
   const managedModeRef = useRef<'full' | 'semi'>('full')
   const seenBridgeMessageIdsRef = useRef<Set<string>>(new Set())
 
@@ -647,7 +646,7 @@ function AssistantPage(props: Props): JSX.Element {
         apiBaseUrl: previous.apiBaseUrl
       })
       if (channel === 'enterprise') {
-        setShowEnterpriseConfigDialog(true)
+        showToast('企业微信配置已移到系统设置，可在那里维护 CorpID、Secret 和客服映射', 'info')
       }
     } catch (error) {
       console.error('保存微信消息通道失败', error)
@@ -1557,12 +1556,10 @@ function AssistantPage(props: Props): JSX.Element {
           wechatChannel={wechatChannelConfig.channel}
           managedMode={managedMode}
           disabled={isSending || isConnecting}
-          showEnterpriseConfig={wechatChannelConfig.channel === 'enterprise'}
           startButtonClassName={btnClass}
           startButtonContent={btnContent}
           onWechatChannelChange={saveWechatChannel}
           onManagedModeChange={handleManagedModeChange}
-          onOpenEnterpriseConfig={() => setShowEnterpriseConfigDialog(true)}
           onToggleRunning={toggleRunning}
         />
       </header>
@@ -1719,16 +1716,6 @@ function AssistantPage(props: Props): JSX.Element {
           }
         }}
         onCancel={() => setShowNoRoleDialog(false)}
-      />
-      <EnterpriseWeChatConfigDialog
-        open={showEnterpriseConfigDialog}
-        config={wechatChannelConfig}
-        onClose={() => setShowEnterpriseConfigDialog(false)}
-        onSaved={(config) => {
-          setWechatChannelConfig(config)
-          wechatChannelRef.current = config.channel
-        }}
-        showToast={showToast}
       />
       {toast && <Toast message={toast.message} type={toast.type} />}
     </div>

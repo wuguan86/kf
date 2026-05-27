@@ -93,6 +93,75 @@
   border-color: #d1d5db;
 }
 
+.enterpriseWechatCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.enterpriseWechatInfo {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.enterpriseWechatIcon {
+  flex: 0 0 auto;
+  background: #eefbf3;
+  color: #07c160;
+}
+
+.enterpriseWechatText {
+  min-width: 0;
+}
+
+.enterpriseWechatText h4 {
+  margin: 0 0 8px;
+  color: #1f2937;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.enterpriseWechatMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.enterpriseWechatMeta span {
+  max-width: 220px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #f6f8fb;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.enterpriseWechatBtn {
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid #1677ff;
+  border-radius: 8px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.enterpriseWechatBtn:hover {
+  background: #0958d9;
+  border-color: #0958d9;
+}
+
 /* Contact Card */
 .contactGrid {
   display: grid;
@@ -212,4 +281,19 @@
 
 .logoutBtn:hover {
   background: #f3f4f6; /* Gray-100 */
+}
+
+@media (max-width: 720px) {
+  .enterpriseWechatCard {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .enterpriseWechatBtn {
+    width: 100%;
+  }
+
+  .contactGrid {
+    grid-template-columns: 1fr;
+  }
 }

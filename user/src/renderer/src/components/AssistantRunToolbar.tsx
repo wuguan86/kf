@@ -8,12 +8,10 @@ type Props = {
   wechatChannel: WeChatChannel
   managedMode: ManagedMode
   disabled: boolean
-  showEnterpriseConfig: boolean
   startButtonClassName: string
   startButtonContent: React.ReactNode
   onWechatChannelChange: (value: WeChatChannel) => void
   onManagedModeChange: (value: ManagedMode) => void
-  onOpenEnterpriseConfig: () => void
   onToggleRunning: () => void
 }
 
@@ -22,12 +20,10 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
     wechatChannel,
     managedMode,
     disabled,
-    showEnterpriseConfig,
     startButtonClassName,
     startButtonContent,
     onWechatChannelChange,
     onManagedModeChange,
-    onOpenEnterpriseConfig,
     onToggleRunning
   } = props
 
@@ -58,12 +54,6 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
           <option value="semi">半托管</option>
         </select>
       </label>
-
-      {showEnterpriseConfig && (
-        <button className={styles.configBtn} type="button" onClick={onOpenEnterpriseConfig} disabled={disabled}>
-          配置
-        </button>
-      )}
 
       <button
         className={startButtonClassName}
