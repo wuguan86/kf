@@ -577,6 +577,10 @@ function AssistantPage(props: Props): JSX.Element {
   }
 
   const handleManagedModeChange = async (mode: 'full' | 'semi') => {
+    if (isRunningRef.current || isConnecting) {
+      showToast('运行中不能切换托管模式，请先停止运行', 'info')
+      return
+    }
     if (mode === managedMode) {
       return
     }
@@ -635,6 +639,10 @@ function AssistantPage(props: Props): JSX.Element {
   }
 
   const saveWechatChannel = async (channel: WeChatChannel) => {
+    if (isRunningRef.current || isConnecting) {
+      showToast('运行中不能切换微信通道，请先停止运行', 'info')
+      return
+    }
     const previous = wechatChannelConfig
     const nextConfig = { ...previous, channel }
     setWechatChannelConfig(nextConfig)
@@ -1526,6 +1534,8 @@ function AssistantPage(props: Props): JSX.Element {
     )
   }
 
+  const configurationDisabled = isRunning || isConnecting
+
   const groupedChatSessions = messages.reduce<Array<{ sessionKey: string; contact: string; messages: ChatMessage[] }>>((groups, message) => {
     const existing = groups.find((group) => group.sessionKey === message.sessionKey)
     if (existing) {
@@ -1555,7 +1565,8 @@ function AssistantPage(props: Props): JSX.Element {
         <AssistantRunToolbar
           wechatChannel={wechatChannelConfig.channel}
           managedMode={managedMode}
-          disabled={isSending || isConnecting}
+          configurationDisabled={configurationDisabled}
+          startButtonDisabled={isSending || isConnecting}
           startButtonClassName={btnClass}
           startButtonContent={btnContent}
           onWechatChannelChange={saveWechatChannel}

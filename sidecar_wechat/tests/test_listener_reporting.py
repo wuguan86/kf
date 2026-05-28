@@ -84,6 +84,28 @@ class ListenerReportingTests(unittest.TestCase):
         self.assertFalse(poller.messages[0].get("trigger_reply", False))
         self.assertTrue(poller.messages[1]["trigger_reply"])
 
+    def test_customer_messages_before_self_reply_are_reported_for_display_only(self):
+        baseline = [
+            {"content": "前一轮客户消息", "is_self": False, "trigger_reply": True, "ui_id": "old-other"},
+        ]
+        next_batch = [
+            {"content": "前一轮客户消息", "is_self": False, "ui_id": "old-other"},
+            {"content": "好吧", "is_self": False, "ui_id": "other-1"},
+            {"content": "自动回复", "is_self": True, "ui_id": "self-1"},
+        ]
+        poller = FakePoller()
+        listener = Listener(BridgeConfig(), SequenceUI([baseline, next_batch]), logging.getLogger("test_listener_reporting"), poller)
+
+        listener._fetch_and_report("summer")
+        poller.messages.clear()
+        listener._fetch_and_report("summer")
+
+        self.assertEqual([msg["content"] for msg in poller.messages], ["好吧", "自动回复"])
+        self.assertFalse(poller.messages[0]["is_self"])
+        self.assertFalse(poller.messages[0].get("trigger_reply", False))
+        self.assertTrue(poller.messages[1]["is_self"])
+        self.assertFalse(poller.messages[1].get("trigger_reply", False))
+
     def test_prepended_visible_history_does_not_replay_existing_messages(self):
         first_batch = [
             {"content": "customer-1", "is_self": False, "ui_id": "old-a"},

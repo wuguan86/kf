@@ -152,6 +152,7 @@ class Listener:
             current_fingerprints = [self._message_fingerprint(msg) for msg in messages]
             previous_fingerprints = self._last_fingerprints_by_contact.get(contact, [])
             new_messages = self._select_new_messages(previous_fingerprints, current_fingerprints, messages)
+            has_previous_baseline = bool(previous_fingerprints)
 
             self._last_fingerprints_by_contact[contact] = current_fingerprints
             if len(self._last_fingerprints_by_contact) > 300:
@@ -165,6 +166,11 @@ class Listener:
                         self._poller.enqueue(msg)
                     continue
                 if not msg.get("trigger_reply", False):
+                    if has_previous_baseline and self._poller is not None:
+                        msg["trigger_reply"] = False
+                        self._logger.info("推送新增客户消息到界面显示，不触发 AI: %s", str(msg.get("content") or "")[:40])
+                        self._poller.enqueue(msg)
+                        continue
                     self._logger.info("跳过非最新触发消息，不上报 AI 助手: %s", str(msg.get("content") or "")[:40])
                     continue
                 if self._poller is not None:

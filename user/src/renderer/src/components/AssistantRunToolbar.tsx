@@ -7,7 +7,8 @@ type ManagedMode = 'full' | 'semi'
 type Props = {
   wechatChannel: WeChatChannel
   managedMode: ManagedMode
-  disabled: boolean
+  configurationDisabled: boolean
+  startButtonDisabled: boolean
   startButtonClassName: string
   startButtonContent: React.ReactNode
   onWechatChannelChange: (value: WeChatChannel) => void
@@ -19,7 +20,8 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
   const {
     wechatChannel,
     managedMode,
-    disabled,
+    configurationDisabled,
+    startButtonDisabled,
     startButtonClassName,
     startButtonContent,
     onWechatChannelChange,
@@ -29,12 +31,15 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
 
   return (
     <div className={styles.pageHeaderActions}>
-      <label className={styles.toolbarSelectWrap} title="选择微信消息通道">
+      <label
+        className={`${styles.toolbarSelectWrap} ${configurationDisabled ? styles.toolbarSelectWrapDisabled : ''}`}
+        title={configurationDisabled ? '运行中请先停止运行，再切换微信消息通道' : '选择微信消息通道'}
+      >
         <span className={styles.selectIcon}>{wechatChannel === 'enterprise' ? '企' : '微'}</span>
         <select
           className={styles.toolbarSelect}
           value={wechatChannel}
-          disabled={disabled}
+          disabled={configurationDisabled}
           onChange={(event) => onWechatChannelChange(event.target.value as WeChatChannel)}
         >
           <option value="personal">个人微信</option>
@@ -42,12 +47,15 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
         </select>
       </label>
 
-      <label className={styles.toolbarSelectWrap} title="选择托管模式">
+      <label
+        className={`${styles.toolbarSelectWrap} ${configurationDisabled ? styles.toolbarSelectWrapDisabled : ''}`}
+        title={configurationDisabled ? '运行中请先停止运行，再切换托管模式' : '选择托管模式'}
+      >
         <span className={styles.selectIcon}>{managedMode === 'full' ? '全' : '半'}</span>
         <select
           className={styles.toolbarSelect}
           value={managedMode}
-          disabled={disabled}
+          disabled={configurationDisabled}
           onChange={(event) => onManagedModeChange(event.target.value as ManagedMode)}
         >
           <option value="full">全托管</option>
@@ -58,8 +66,8 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
       <button
         className={startButtonClassName}
         onClick={onToggleRunning}
-        disabled={disabled}
-        title={!disabled ? '点击接管微信聊天窗口' : undefined}
+        disabled={startButtonDisabled}
+        title={!startButtonDisabled ? '点击接管微信聊天窗口' : undefined}
         type="button"
       >
         {startButtonContent}

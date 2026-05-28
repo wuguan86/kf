@@ -310,6 +310,18 @@
   color: #1f2937;
 }
 
+.toolbarSelectWrapDisabled {
+  border-color: #e5e7eb;
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.toolbarSelectWrapDisabled .selectIcon {
+  background: #cbd5e1;
+  color: #fff;
+}
+
 .selectIcon {
   width: 20px;
   height: 20px;
