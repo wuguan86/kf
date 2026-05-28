@@ -756,11 +756,15 @@ function AssistantPage(props: Props): JSX.Element {
     const isSelf = !!msg?.is_self
     const triggerReply = !!msg?.trigger_reply
     const messageTimestamp = resolveMessageTimestamp(msg?.timestamp)
+    const messageUiId = msg?.ui_id || msg?.uiId
     const source: 'personal' | 'enterprise' = msg?.source === 'enterprise' ? 'enterprise' : 'personal'
     const messageId = String(msg?.messageId || msg?.id || '').trim()
     const customerId = String(msg?.customerId || '').trim()
     const sessionKey = source === 'enterprise' && customerId ? `enterprise:${customerId}` : contact
-    if (!contact || !text) return
+    if (!contact || !text) {
+      console.log('[图片链路-DEBUG] 跳过空消息', { contact, text, raw: msg })
+      return
+    }
     if (source === 'enterprise' && messageId) {
       const bridgeMessageKey = `${source}:${messageId}`
       if (seenBridgeMessageIdsRef.current.has(bridgeMessageKey)) {
@@ -769,6 +773,15 @@ function AssistantPage(props: Props): JSX.Element {
       seenBridgeMessageIdsRef.current.add(bridgeMessageKey)
     }
     const shouldWaitForImage = !isSelf && isImagePlaceholderMessage(text)
+    console.log('[图片链路-DEBUG] 收到轮询消息', {
+      contact,
+      text,
+      isSelf,
+      triggerReply,
+      messageUiId,
+      shouldWaitForImage,
+      source
+    })
     const imageTask: Promise<{ imageDataUrl: string; imageNotice: string }> = shouldWaitForImage
       ? (async () => {
           console.log('图片链路：识别到图片占位消息，开始等待图片文件', { contact, messageTimestamp })
@@ -777,6 +790,7 @@ function AssistantPage(props: Props): JSX.Element {
             const api = (window as any).api
             const imageResult = await api.waitForWeChatImage({
               senderId: contact,
+              messageUiId,
               timestamp: messageTimestamp,
               timeout: 5000
             })
@@ -788,12 +802,6 @@ function AssistantPage(props: Props): JSX.Element {
             }
 
             console.warn('图片链路：图片匹配失败，降级为文本处理', imageResult)
-            const imageErrorCode = String(imageResult?.error || '')
-            if (imageErrorCode === 'image_listener_not_started' || imageErrorCode === 'image_message_before_listener_start') {
-              showToast('这张图片发生在监听启动前，已按普通文本处理', 'info')
-              return { imageDataUrl: '', imageNotice: '历史图片，未做识别' }
-            }
-
             showToast('图片获取失败，已降级为文本', 'error')
             return { imageDataUrl: '', imageNotice: '' }
           } catch (error: any) {
@@ -1239,6 +1247,19 @@ function AssistantPage(props: Props): JSX.Element {
           : await api.pollWeChatMessages()
         if (res?.ok && Array.isArray(res.messages)) {
           pollFailureCountRef.current = 0
+          if (res.messages.length > 0) {
+            console.log('[微信轮询-DEBUG] 收到消息', {
+              count: res.messages.length,
+              samples: res.messages.slice(0, 5).map((item: any) => ({
+                contact: item?.contact,
+                type: item?.type,
+                content: item?.content,
+                isSelf: item?.is_self,
+                triggerReply: item?.trigger_reply,
+                uiId: item?.ui_id || item?.uiId
+              }))
+            })
+          }
           setDifyResponse((prev) => {
             if (prev.startsWith('轮询失败: ') || prev.startsWith('启动失败: ')) {
               return ''

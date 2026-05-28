@@ -15,14 +15,19 @@ from core.ui import WeChatUI
 
 
 class FakeControl:
-    def __init__(self, automation_id="", class_name="", name="", children=None):
+    def __init__(self, automation_id="", class_name="", name="", children=None, runtime_id=None, control_type_name=""):
         self.AutomationId = automation_id
         self.ClassName = class_name
         self.Name = name
         self._children = children or []
+        self._runtime_id = runtime_id
+        self.ControlTypeName = control_type_name
 
     def GetChildren(self):
         return self._children
+
+    def GetRuntimeId(self):
+        return self._runtime_id
 
 
 class WeChatUiLocatorTests(unittest.TestCase):
@@ -107,6 +112,17 @@ class WeChatUiLocatorTests(unittest.TestCase):
         )
 
         self.assertTrue(visible)
+
+    def test_image_copy_targets_prefer_image_descendant_before_whole_item(self):
+        image_child = FakeControl(name="图片", control_type_name="ImageControl")
+        button_child = FakeControl(name="图片", control_type_name="ButtonControl")
+        item = FakeControl(name="[图片]", children=[FakeControl(name="头像", control_type_name="ButtonControl"), image_child, button_child])
+
+        targets = self.ui._build_image_copy_targets(item)
+
+        self.assertGreaterEqual(len(targets), 2)
+        self.assertIs(targets[0], image_child)
+        self.assertIs(targets[-1], item)
 
 
 if __name__ == "__main__":

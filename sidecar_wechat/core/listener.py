@@ -147,12 +147,24 @@ class Listener:
                 return
             messages = self._ui.extract_latest_messages(contact)
             if not messages:
+                self._logger.info("会话未提取到有效消息，跳过上报 contact=%s", contact)
                 return
 
             current_fingerprints = [self._message_fingerprint(msg) for msg in messages]
             previous_fingerprints = self._last_fingerprints_by_contact.get(contact, [])
             new_messages = self._select_new_messages(previous_fingerprints, current_fingerprints, messages)
             has_previous_baseline = bool(previous_fingerprints)
+            self._logger.info(
+                "会话消息扫描结果 contact=%s total=%d previous=%d new=%d latest=%s trigger=%s isSelf=%s uiId=%s",
+                contact,
+                len(messages),
+                len(previous_fingerprints),
+                len(new_messages),
+                str(messages[-1].get("content") or "")[:40],
+                messages[-1].get("trigger_reply"),
+                messages[-1].get("is_self"),
+                messages[-1].get("ui_id"),
+            )
 
             self._last_fingerprints_by_contact[contact] = current_fingerprints
             if len(self._last_fingerprints_by_contact) > 300:
@@ -183,8 +195,15 @@ class Listener:
         content = str(msg.get("content") or "").strip()
         is_self = bool(msg.get("is_self", False))
         msg_type = str(msg.get("type") or "").strip()
-        base = f"text|{msg_type}|{is_self}|{content}"
+        ui_id = str(msg.get("ui_id") or "").strip() if self._is_image_placeholder(content) else ""
+        base = f"text|{msg_type}|{is_self}|{content}|{ui_id}"
         return utils.sha1_text(base)
+
+    def _is_image_placeholder(self, content: str) -> bool:
+        normalized = str(content or "").strip().replace(" ", "")
+        if not normalized:
+            return False
+        return normalized in ("图片", "[图片]", "Image", "[Image]", "Photo", "[Photo]")
 
     def _select_new_messages(self, previous: List[str], current: List[str], messages: List[dict]) -> List[dict]:
         start, size = self._find_previous_tail_in_current(previous, current)

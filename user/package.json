@@ -6,6 +6,7 @@
   "author": "Trae",
   "scripts": {
     "dev": "chcp 65001 > nul && electron-vite dev",
+    "test:clipboard-image": "node scripts/test-clipboard-image-extractor.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "pack": "electron-builder --dir",
@@ -50,8 +51,6 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "axios": "^1.6.7",
-    "chokidar": "^4.0.3",
-    "iconv-lite": "^0.6.3",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

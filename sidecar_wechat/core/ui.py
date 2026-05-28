@@ -1,6 +1,8 @@
 from __future__ import annotations
+import base64
 import ctypes
 import logging
+import os
 import random
 import re
 import threading
@@ -1924,6 +1926,374 @@ class WeChatUI:
              return {"contact": contact_hint, "type": "text", "content": text_content, "timestamp": utils.now_iso(), "ui_id": ui_id}
         
         return None
+
+    def copy_image_message(self, target: str, message_ui_id: Any = None, timestamp: Any = None) -> Dict[str, Any]:
+        if auto is None:
+            return {"ok": False, "error": "uia_unavailable", "message": "UIA 未加载，无法复制微信图片"}
+
+        with self._uia_lock:
+            if not self.ensure_chat_target(target):
+                self._logger.warning("复制微信图片失败：无法切换到目标会话 %s", target)
+                return {"ok": False, "error": "target_not_found", "message": "无法切换到目标会话"}
+
+            window = self.get_main_window()
+            if window is None:
+                return {"ok": False, "error": "wechat_window_not_found", "message": "未找到微信窗口"}
+
+            message_list = self._locate_message_list(window)
+            if message_list is None:
+                return {"ok": False, "error": "message_list_not_found", "message": "未找到微信消息列表"}
+
+            image_item = self._find_image_message_item(message_list, message_ui_id)
+            if image_item is None:
+                self._logger.warning("复制微信图片失败：未找到图片消息 target=%s ui_id=%s timestamp=%s", target, message_ui_id, timestamp)
+                return {"ok": False, "error": "image_message_not_found", "message": "未找到图片消息"}
+
+            self._logger.info(
+                "准备复制微信图片消息 target=%s ui_id=%s item=%s children=%s",
+                target,
+                message_ui_id,
+                self._brief_control(image_item),
+                self._summarize_control_children(image_item),
+            )
+            # 先在任何复制/右键动作前截取可见图片，避免微信控件刷新后边界变成 0。
+            fallback_data_url = self._capture_visible_image_message(image_item)
+            if fallback_data_url:
+                self._logger.info("已预先截取微信图片可见区域 dataUrlLength=%d", len(fallback_data_url))
+            copy_result = self._copy_control_to_clipboard(image_item)
+            if copy_result.get("ok"):
+                self._logger.info(
+                    "复制微信图片消息成功 target=%s ui_id=%s strategy=%s",
+                    target,
+                    message_ui_id,
+                    copy_result.get("strategy"),
+                )
+                result = {"ok": True, "strategy": copy_result.get("strategy"), "attempts": copy_result.get("attempts", [])}
+                if copy_result.get("dataUrl"):
+                    result["dataUrl"] = copy_result.get("dataUrl")
+                return result
+
+            self._logger.warning(
+                "复制微信图片失败：所有复制策略均未在剪贴板检测到图片 target=%s ui_id=%s attempts=%s",
+                target,
+                message_ui_id,
+                copy_result.get("attempts", []),
+            )
+            if fallback_data_url:
+                self._logger.info(
+                    "复制微信图片失败后启用截图兜底 target=%s ui_id=%s dataUrlLength=%d",
+                    target,
+                    message_ui_id,
+                    len(fallback_data_url),
+                )
+                return {
+                    "ok": True,
+                    "strategy": "screenshot_fallback",
+                    "attempts": [
+                        {"strategy": "pre_capture_visible_message", "clipboard": "screenshot_ready"},
+                        *copy_result.get("attempts", []),
+                    ],
+                    "dataUrl": fallback_data_url,
+                }
+            return {
+                "ok": False,
+                "error": "copy_failed",
+                "message": "图片气泡复制后剪贴板未出现图片",
+                "attempts": copy_result.get("attempts", []),
+            }
+
+    def _find_image_message_item(self, message_list: Any, message_ui_id: Any = None) -> Optional[Any]:
+        try:
+            children = message_list.GetChildren() or []
+        except Exception:
+            return None
+
+        expected_runtime_id = self._normalize_runtime_id(message_ui_id)
+        if expected_runtime_id:
+            for item in reversed(children):
+                try:
+                    if self._normalize_runtime_id(item.GetRuntimeId()) == expected_runtime_id:
+                        return item
+                except Exception:
+                    continue
+
+        for item in reversed(children[-30:]):
+            raw_name = (getattr(item, "Name", "") or "").strip()
+            if self._is_image_placeholder_text(raw_name):
+                return item
+        return None
+
+    def _normalize_runtime_id(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple)):
+            return "|".join(str(item) for item in value)
+        return str(value).strip()
+
+    def _is_image_placeholder_text(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", "", text or "").strip()
+        if not normalized:
+            return False
+        image_words = ("图片", "Image", "Photo")
+        if normalized in image_words:
+            return True
+        if normalized.startswith("[") and normalized.endswith("]"):
+            return any(word in normalized for word in image_words)
+        return False
+
+    def _build_image_copy_targets(self, item: Any) -> List[Any]:
+        targets: List[Any] = []
+        for ctrl in _iter_descendants(item, max_depth=8):
+            if self._is_image_copy_candidate(ctrl):
+                targets.append(ctrl)
+        targets.append(item)
+        deduped: List[Any] = []
+        seen = set()
+        for target in targets:
+            marker = id(target)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduped.append(target)
+        return deduped
+
+    def _is_image_copy_candidate(self, ctrl: Any) -> bool:
+        control_type = _control_type_name(ctrl)
+        name = (getattr(ctrl, "Name", "") or "").strip()
+        if control_type in ("ImageControl", "ButtonControl") and self._is_image_placeholder_text(name):
+            return True
+        if control_type == "ImageControl":
+            return True
+        if control_type == "ButtonControl" and name in ("查看图片", "打开图片", "图片", "Image", "Photo"):
+            return True
+        return False
+
+    def _copy_control_to_clipboard(self, item: Any) -> Dict[str, Any]:
+        attempts: List[Dict[str, str]] = []
+        targets = self._build_image_copy_targets(item)
+        self._logger.info("微信图片复制候选控件数量=%d candidates=%s", len(targets), [self._brief_control(target) for target in targets[:8]])
+
+        for index, target in enumerate(targets):
+            strategy = f"ctrl_c_candidate_{index}"
+            try:
+                self._focus_control_for_copy(target)
+                time.sleep(0.15)
+                auto.SendKeys("{Ctrl}c", waitTime=0.2)
+                time.sleep(0.35)
+                clipboard_image = self._read_clipboard_image_data_url()
+                attempts.append({"strategy": strategy, "clipboard": clipboard_image["kind"], "target": self._brief_control(target)})
+                if clipboard_image.get("dataUrl"):
+                    self._close_image_preview_if_needed()
+                    return {
+                        "ok": True,
+                        "strategy": strategy,
+                        "attempts": attempts,
+                        "dataUrl": clipboard_image.get("dataUrl"),
+                    }
+            except Exception as e:
+                attempts.append({"strategy": strategy, "error": str(e), "target": self._brief_control(target)})
+                self._logger.warning("快捷键复制微信图片失败 strategy=%s target=%s error=%s", strategy, self._brief_control(target), e)
+
+            context_strategy = f"context_menu_candidate_{index}"
+            try:
+                if self._copy_with_context_menu(target):
+                    time.sleep(0.35)
+                    clipboard_image = self._read_clipboard_image_data_url()
+                    attempts.append({"strategy": context_strategy, "clipboard": clipboard_image["kind"], "target": self._brief_control(target)})
+                    if clipboard_image.get("dataUrl"):
+                        self._close_image_preview_if_needed()
+                        return {
+                            "ok": True,
+                            "strategy": context_strategy,
+                            "attempts": attempts,
+                            "dataUrl": clipboard_image.get("dataUrl"),
+                        }
+                else:
+                    attempts.append({"strategy": context_strategy, "clipboard": "menu_not_found", "target": self._brief_control(target)})
+            except Exception as e:
+                attempts.append({"strategy": context_strategy, "error": str(e), "target": self._brief_control(target)})
+                self._logger.warning("右键菜单复制微信图片失败 strategy=%s target=%s error=%s", context_strategy, self._brief_control(target), e)
+                try:
+                    auto.SendKeys("{Esc}", waitTime=0.1)
+                except Exception:
+                    pass
+
+        return {"ok": False, "attempts": attempts}
+
+    def _focus_control_for_copy(self, target: Any) -> None:
+        try:
+            target.SetFocus()
+            return
+        except Exception:
+            pass
+        try:
+            parent = target.GetParentControl()
+            if parent is not None:
+                parent.SetFocus()
+                return
+        except Exception:
+            pass
+        self._logger.info("图片复制未能通过 SetFocus 聚焦控件，将直接发送复制快捷键 target=%s", self._brief_control(target))
+
+    def _copy_with_context_menu(self, target: Any) -> bool:
+        rect = getattr(target, "BoundingRectangle", None)
+        bbox = utils.rect_to_bbox(rect)
+        if not bbox:
+            return False
+        x = (bbox[0] + bbox[2]) // 2
+        y = (bbox[1] + bbox[3]) // 2
+        auto.RightClick(x, y)
+        time.sleep(0.25)
+        menu_item = None
+        for name in ("复制", "Copy"):
+            try:
+                candidate = auto.MenuItemControl(Name=name)
+                if candidate and candidate.Exists(0.5, 0.1):
+                    menu_item = candidate
+                    break
+            except Exception:
+                pass
+        if menu_item is None:
+            menu_item = self._find_named_clickable(self.get_main_window(), ["复制", "Copy"], search_depth=8)
+        if menu_item is None:
+            try:
+                auto.SendKeys("{Esc}", waitTime=0.1)
+            except Exception:
+                pass
+            return False
+        self._click_control(menu_item)
+        return True
+
+    def _read_clipboard_image_data_url(self) -> Dict[str, Any]:
+        if ImageGrab is None:
+            return {"kind": "unknown_no_pillow"}
+        try:
+            content = ImageGrab.grabclipboard()
+            if content is None:
+                return {"kind": "empty"}
+            if hasattr(content, "size") and hasattr(content, "mode"):
+                return {"kind": "image", "dataUrl": self._pil_image_to_data_url(content)}
+            if isinstance(content, list):
+                image_path = self._pick_clipboard_image_file(content)
+                if image_path:
+                    return {"kind": "image_file", "dataUrl": self._image_file_to_data_url(image_path), "filePath": image_path}
+                return {"kind": "file_list", "files": [str(item) for item in content[:5]]}
+            return {"kind": type(content).__name__}
+        except Exception as e:
+            return {"kind": f"clipboard_error:{e}"}
+
+    def _pick_clipboard_image_file(self, files: List[Any]) -> Optional[str]:
+        for item in files:
+            path = str(item)
+            if not path.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")):
+                continue
+            if os.path.exists(path) and os.path.isfile(path):
+                return path
+        return None
+
+    def _image_file_to_data_url(self, image_path: str) -> Optional[str]:
+        try:
+            with open(image_path, "rb") as file:
+                raw = file.read()
+            if not raw:
+                return None
+            suffix = os.path.splitext(image_path)[1].lower()
+            mime_type = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".gif": "image/gif",
+                ".bmp": "image/bmp",
+                ".webp": "image/webp",
+            }.get(suffix, "image/png")
+            data_url = f"data:{mime_type};base64," + base64.b64encode(raw).decode("ascii")
+            self._logger.info("已从剪贴板图片文件读取图片 imagePath=%s dataUrlLength=%d", image_path, len(data_url))
+            return data_url
+        except Exception as e:
+            self._logger.warning("读取剪贴板图片文件失败 imagePath=%s error=%s", image_path, e)
+            return None
+
+    def _pil_image_to_data_url(self, image: Any) -> Optional[str]:
+        try:
+            output = io.BytesIO()
+            image.save(output, format="PNG")
+            return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+        except Exception as e:
+            self._logger.warning("剪贴板图片转换失败: %s", e)
+            return None
+
+    def _close_image_preview_if_needed(self) -> None:
+        try:
+            auto.SendKeys("{Esc}", waitTime=0.05)
+        except Exception:
+            pass
+
+    def _summarize_control_children(self, item: Any) -> List[str]:
+        summary: List[str] = []
+        for index, ctrl in enumerate(_iter_descendants(item, max_depth=4)):
+            if index >= 20:
+                summary.append("...")
+                break
+            summary.append(self._brief_control(ctrl))
+        return summary
+
+    def _capture_visible_image_message(self, item: Any) -> Optional[str]:
+        if ImageGrab is None:
+            self._logger.warning("截图兜底失败：Pillow ImageGrab 未加载")
+            return None
+        try:
+            bbox = utils.rect_to_bbox(getattr(item, "BoundingRectangle", None))
+            if not bbox:
+                self._logger.warning("截图兜底失败：图片消息没有有效边界 item=%s", self._brief_control(item))
+                return None
+            left, top, right, bottom = bbox
+            width = right - left
+            height = bottom - top
+            if width < 20 or height < 20:
+                self._logger.warning("截图兜底失败：图片消息边界过小 bbox=%s item=%s", bbox, self._brief_control(item))
+                return None
+            image = ImageGrab.grab(bbox=bbox)
+            cropped = self._crop_visible_message_image(image)
+            output = io.BytesIO()
+            cropped.save(output, format="PNG")
+            data_url = "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+            self._logger.info("截图兜底成功 bbox=%s cropSize=%s dataUrlLength=%d", bbox, getattr(cropped, "size", None), len(data_url))
+            return data_url
+        except Exception as e:
+            self._logger.warning("截图兜底失败：%s", e)
+            return None
+
+    def _crop_visible_message_image(self, image: Any) -> Any:
+        try:
+            rgb_image = image.convert("RGB")
+            width, height = rgb_image.size
+            min_x, min_y = width, height
+            max_x, max_y = -1, -1
+            for y in range(height):
+                for x in range(width):
+                    red, green, blue = rgb_image.getpixel((x, y))
+                    # 过滤微信聊天区常见的白色/浅灰背景，只保留图片、头像和气泡主体。
+                    if red >= 238 and green >= 238 and blue >= 238:
+                        continue
+                    min_x = min(min_x, x)
+                    min_y = min(min_y, y)
+                    max_x = max(max_x, x)
+                    max_y = max(max_y, y)
+            if max_x < 0 or max_y < 0:
+                return image
+            padding = 6
+            crop_box = (
+                max(0, min_x - padding),
+                max(0, min_y - padding),
+                min(width, max_x + padding + 1),
+                min(height, max_y + padding + 1),
+            )
+            cropped = image.crop(crop_box)
+            if cropped.size[0] < 20 or cropped.size[1] < 20:
+                return image
+            return cropped
+        except Exception:
+            return image
 
     def _is_new_message_divider(self, text: str) -> bool:
         normalized = re.sub(r"\s+", "", text or "")

@@ -211,6 +211,18 @@ class CommandHandler(BaseHTTPRequestHandler):
                     self._json_response(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "set_mode_failed"})
                 return
 
+            if action == "copy_image_message":
+                if not target:
+                    self._json_response(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "target_required"})
+                    return
+                try:
+                    result = ui.copy_image_message(target, data.get("messageUiId"), data.get("timestamp"))
+                    self._json_response(HTTPStatus.OK, result if isinstance(result, dict) else {"ok": bool(result)})
+                except Exception as e:
+                    logger.warning("复制微信图片指令执行失败: %s", e)
+                    self._json_response(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "copy_image_failed"})
+                return
+
             if not target:
                 self._json_response(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "target_required"})
                 return
