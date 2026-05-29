@@ -1,5 +1,5 @@
 window:
-  class_name: "WeChatMainWndForPC"
+  class_name: "mmui::MainWindow"
   name: "微信"
 
 listener:

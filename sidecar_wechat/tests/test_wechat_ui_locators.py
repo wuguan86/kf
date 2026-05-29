@@ -11,7 +11,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from core.config import BridgeConfig
+from core.config import BridgeConfig, load_config
 from core import ui as ui_module
 from core.ui import WeChatUI
 
@@ -99,6 +99,15 @@ class WeChatUiLocatorTests(unittest.TestCase):
 
     def test_config_default_targets_latest_mmui_main_window(self):
         self.assertEqual(BridgeConfig.window_class_name, "mmui::MainWindow")
+
+    def test_packaged_environment_configs_target_latest_mmui_main_window(self):
+        for config_name in ("config_dev.yaml", "config_prod.yaml"):
+            config_path = os.path.join(ROOT_DIR, config_name)
+
+            with self.subTest(config=config_name):
+                cfg = load_config(config_path)
+
+                self.assertEqual(cfg.window_class_name, "mmui::MainWindow")
 
     def test_date_time_separator_is_not_reported_as_message(self):
         self.assertTrue(self.ui._is_time_separator_text("3月12日 16:43"))
