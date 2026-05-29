@@ -1,17 +1,14 @@
 import React from 'react'
 import styles from '../pages/AssistantPage.module.css'
 
-type WeChatChannel = 'personal' | 'enterprise'
 type ManagedMode = 'full' | 'semi'
 
 type Props = {
-  wechatChannel: WeChatChannel
   managedMode: ManagedMode
   configurationDisabled: boolean
   startButtonDisabled: boolean
   startButtonClassName: string
   startButtonContent: React.ReactNode
-  onWechatChannelChange: (value: WeChatChannel) => void
   onManagedModeChange: (value: ManagedMode) => void
   onToggleRunning: () => void
 }
@@ -21,13 +18,6 @@ type DropdownOption<T extends string> = {
   label: string
   icon: React.ReactNode
 }
-
-const personalWeChatIconUrl = new URL('../assets/微信.svg', import.meta.url).href
-const enterpriseWeChatIconUrl = new URL('../assets/企业微信.svg', import.meta.url).href
-
-const AssetIcon = ({ src }: { src: string }): JSX.Element => (
-  <img src={src} alt="" aria-hidden="true" />
-)
 
 const ChevronDownIcon = (): JSX.Element => (
   <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -138,36 +128,14 @@ function ToolbarDropdown<T extends string>(props: {
 
 export default function AssistantRunToolbar(props: Props): JSX.Element {
   const {
-    wechatChannel,
     managedMode,
     configurationDisabled,
     startButtonDisabled,
     startButtonClassName,
     startButtonContent,
-    onWechatChannelChange,
     onManagedModeChange,
     onToggleRunning
   } = props
-  const wechatChannelOptions: DropdownOption<WeChatChannel>[] = [
-    {
-      value: 'personal',
-      label: '个人微信',
-      icon: (
-        <span className={styles.selectIcon}>
-          <AssetIcon src={personalWeChatIconUrl} />
-        </span>
-      )
-    },
-    {
-      value: 'enterprise',
-      label: '企业微信',
-      icon: (
-        <span className={`${styles.selectIcon} ${styles.selectIconEnterprise}`}>
-          <AssetIcon src={enterpriseWeChatIconUrl} />
-        </span>
-      )
-    }
-  ]
   const managedModeOptions: DropdownOption<ManagedMode>[] = [
     {
       value: 'full',
@@ -191,15 +159,6 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
 
   return (
     <div className={styles.pageHeaderActions}>
-      <ToolbarDropdown
-        title="选择微信消息通道"
-        disabledTitle="运行中请先停止运行，再切换微信消息通道"
-        value={wechatChannel}
-        disabled={configurationDisabled}
-        options={wechatChannelOptions}
-        onChange={onWechatChannelChange}
-      />
-
       <ToolbarDropdown
         title="选择托管模式"
         disabledTitle="运行中请先停止运行，再切换托管模式"

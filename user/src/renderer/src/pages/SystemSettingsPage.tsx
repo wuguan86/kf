@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import styles from './SystemSettingsPage.module.css';
 import http from '../utils/http';
 import { AppConfig } from '../config';
-import EnterpriseWeChatConfigDialog, { WeChatChannelConfig } from '../components/EnterpriseWeChatConfigDialog';
-import { Toast, useToast } from '../components/Toast';
 
 interface SystemSettingsPageProps {
   onLogout: () => void;
@@ -15,25 +13,12 @@ interface ContactConfig {
   email: string;
 }
 
-const defaultWechatChannelConfig: WeChatChannelConfig = {
-  channel: 'enterprise',
-  corpId: '',
-  apiBaseUrl: '',
-  secretConfigured: 'false',
-  tokenConfigured: 'false',
-  encodingAesKeyConfigured: 'false',
-  managedMode: 'full'
-};
-
 const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => {
-  const { toast, showToast } = useToast();
   const [contactConfig, setContactConfig] = useState<ContactConfig>({
     wechat: 'VisionTech_Support',
     wechat_qrcode: '',
     email: 'support@vision.ai'
   });
-  const [wechatChannelConfig, setWechatChannelConfig] = useState<WeChatChannelConfig>(defaultWechatChannelConfig);
-  const [showEnterpriseConfigDialog, setShowEnterpriseConfigDialog] = useState(false);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -53,27 +38,6 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
     fetchConfig();
   }, []);
 
-  useEffect(() => {
-    const fetchWechatChannelConfig = async () => {
-      try {
-        const res = await http.get<WeChatChannelConfig>('/api/user/system-config/wechat-channel');
-        setWechatChannelConfig({
-          channel: res?.channel === 'personal' ? 'personal' : 'enterprise',
-          corpId: res?.corpId || '',
-          apiBaseUrl: res?.apiBaseUrl || '',
-          secretConfigured: res?.secretConfigured === 'true' ? 'true' : 'false',
-          tokenConfigured: res?.tokenConfigured === 'true' ? 'true' : 'false',
-          encodingAesKeyConfigured: res?.encodingAesKeyConfigured === 'true' ? 'true' : 'false',
-          managedMode: res?.managedMode === 'semi' ? 'semi' : 'full'
-        });
-      } catch (error) {
-        console.error('加载企业微信配置失败', error);
-        showToast('加载企业微信配置失败', 'error');
-      }
-    };
-    fetchWechatChannelConfig();
-  }, []);
-
   const getImageUrl = (path: string) => {
     if (!path) return '';
     if (path.startsWith('http')) return path;
@@ -81,8 +45,6 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     return `${baseUrl}${cleanPath}`;
   };
-
-  const getConfiguredText = (configured: 'true' | 'false') => configured === 'true' ? '已配置' : '未配置';
 
   return (
     <div className={styles.container}>
@@ -109,33 +71,6 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
           <button className={styles.checkUpdateBtn}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>
             检查更新
-          </button>
-        </div>
-      </section>
-
-      <section className={styles.section}>
-        <div className={styles.sectionTitle}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M7 8H6a4 4 0 0 0 0 8h1"/><path d="M8 12h8"/></svg>
-          企业微信集成
-        </div>
-        <div className={`${styles.card} ${styles.enterpriseWechatCard}`}>
-          <div className={styles.enterpriseWechatInfo}>
-            <div className={`${styles.contactIcon} ${styles.enterpriseWechatIcon}`}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h7v18"/><path d="M14 8h3a2 2 0 0 1 2 2v11"/><path d="M9 9h1"/><path d="M9 13h1"/></svg>
-            </div>
-            <div className={styles.enterpriseWechatText}>
-              <h4>企业微信配置</h4>
-              <div className={styles.enterpriseWechatMeta}>
-                <span>当前通道：{wechatChannelConfig.channel === 'enterprise' ? '企业微信' : '个人微信'}</span>
-                <span>CorpID：{wechatChannelConfig.corpId || '未填写'}</span>
-                <span>Secret：{getConfiguredText(wechatChannelConfig.secretConfigured)}</span>
-                <span>回调 Token：{getConfiguredText(wechatChannelConfig.tokenConfigured)}</span>
-                <span>EncodingAESKey：{getConfiguredText(wechatChannelConfig.encodingAesKeyConfigured)}</span>
-              </div>
-            </div>
-          </div>
-          <button className={styles.enterpriseWechatBtn} type="button" onClick={() => setShowEnterpriseConfigDialog(true)}>
-            配置企业微信
           </button>
         </div>
       </section>
@@ -184,14 +119,6 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
           退出登录
         </button>
       </section>
-      <EnterpriseWeChatConfigDialog
-        open={showEnterpriseConfigDialog}
-        config={wechatChannelConfig}
-        onClose={() => setShowEnterpriseConfigDialog(false)}
-        onSaved={setWechatChannelConfig}
-        showToast={showToast}
-      />
-      {toast && <Toast message={toast.message} type={toast.type} />}
     </div>
   );
 };
