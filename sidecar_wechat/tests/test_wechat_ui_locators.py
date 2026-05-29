@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -11,6 +12,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from core.config import BridgeConfig
+from core import ui as ui_module
 from core.ui import WeChatUI
 
 
@@ -28,6 +30,52 @@ class FakeControl:
 
     def GetRuntimeId(self):
         return self._runtime_id
+
+
+class FakeAutoWithoutPreview:
+    def __init__(self):
+        self.sent_keys = []
+        self.SW = type("SW", (), {"Restore": "restore"})()
+
+    def SendKeys(self, keys, waitTime=None):
+        self.sent_keys.append(keys)
+
+    def WindowControl(self, **kwargs):
+        return None
+
+
+class FakeWindow:
+    def __init__(self):
+        self.show_calls = []
+        self.active_calls = 0
+
+    def ShowWindow(self, action):
+        self.show_calls.append(action)
+
+    def SetActive(self):
+        self.active_calls += 1
+
+
+class ImageCopyShortCircuitUI(WeChatUI):
+    def __init__(self):
+        super().__init__(BridgeConfig(), logging.getLogger("test_wechat_ui_locators"))
+        self.copy_attempts = 0
+
+    def ensure_chat_target(self, target):
+        return True
+
+    def get_main_window(self):
+        return FakeWindow()
+
+    def _locate_message_list(self, window):
+        return FakeControl(children=[FakeControl(name="[图片]", runtime_id=["image-1"])])
+
+    def _capture_visible_image_message(self, item):
+        return "data:image/png;base64,abc"
+
+    def _copy_control_to_clipboard(self, item):
+        self.copy_attempts += 1
+        return {"ok": False, "attempts": []}
 
 
 class WeChatUiLocatorTests(unittest.TestCase):
@@ -123,6 +171,36 @@ class WeChatUiLocatorTests(unittest.TestCase):
         self.assertGreaterEqual(len(targets), 2)
         self.assertIs(targets[0], image_child)
         self.assertIs(targets[-1], item)
+
+    def test_close_image_preview_does_not_send_escape_without_preview_window(self):
+        fake_auto = FakeAutoWithoutPreview()
+
+        with patch.object(ui_module, "auto", fake_auto):
+            self.ui._close_image_preview_if_needed()
+
+        self.assertEqual(fake_auto.sent_keys, [])
+
+    def test_restore_window_for_command_restores_before_activating(self):
+        fake_auto = FakeAutoWithoutPreview()
+        window = FakeWindow()
+
+        with patch.object(ui_module, "auto", fake_auto):
+            self.ui._restore_window_for_command(window)
+
+        self.assertEqual(window.show_calls, ["restore"])
+        self.assertEqual(window.active_calls, 1)
+
+    def test_copy_image_returns_screenshot_without_risky_clipboard_copy(self):
+        ui = ImageCopyShortCircuitUI()
+        fake_auto = FakeAutoWithoutPreview()
+
+        with patch.object(ui_module, "auto", fake_auto):
+            result = ui.copy_image_message("夏天", ["image-1"])
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["strategy"], "screenshot_fallback")
+        self.assertEqual(result["dataUrl"], "data:image/png;base64,abc")
+        self.assertEqual(ui.copy_attempts, 0)
 
 
 if __name__ == "__main__":

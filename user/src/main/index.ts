@@ -10,9 +10,29 @@ import { WeChatClipboardImageExtractor } from './services/WeChatClipboardImageEx
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let wechatBridgeProcess: ReturnType<typeof spawn> | null = null
+let wechatBridgeStartPromise: Promise<Record<string, any>> | null = null
+let wechatBridgeDesiredRunning = false
+let wechatBridgeRestartTimer: NodeJS.Timeout | null = null
 const WECHAT_BRIDGE_REQUEST_TIMEOUT_MS = 5000
-const WECHAT_BRIDGE_SEND_TIMEOUT_MS = 30000
+const WECHAT_BRIDGE_SEND_TIMEOUT_MS = 90000
 const WECHAT_BRIDGE_STARTUP_TIMEOUT_MS = 20000
+
+const scheduleWeChatBridgeRestart = (reason: string): void => {
+  if (!wechatBridgeDesiredRunning || wechatBridgeRestartTimer) {
+    return
+  }
+  console.warn('微信桥接服务异常退出，准备自动重启', { reason })
+  wechatBridgeRestartTimer = setTimeout(() => {
+    wechatBridgeRestartTimer = null
+    if (!wechatBridgeDesiredRunning) {
+      return
+    }
+    startWeChatBridgeProcess().catch((error) => {
+      console.error('微信桥接服务自动重启失败', error)
+      scheduleWeChatBridgeRestart('restart_failed')
+    })
+  }, 1000)
+}
 
 const killProcessTree = (pid: number): void => {
   try {
@@ -94,9 +114,89 @@ const requestWeChatBridge = async (
     }
     return payload
   } catch (e: any) {
+    if (e?.name === 'AbortError') {
+      const isSendCommand = timeoutMs >= WECHAT_BRIDGE_SEND_TIMEOUT_MS
+      const message = isSendCommand
+        ? '微信自动发送等待超时，请确认微信窗口未卡住后重试'
+        : '微信桥接服务请求超时，请稍后重试'
+      console.warn('微信桥接请求超时', { endpoint, timeoutMs, message })
+      return { ok: false, error: 'bridge_timeout', message }
+    }
     return { ok: false, error: 'bridge_unreachable', message: e?.message || String(e) }
   } finally {
     clearTimeout(timeout)
+  }
+}
+
+const startWeChatBridgeProcess = async (): Promise<Record<string, any>> => {
+  wechatBridgeDesiredRunning = true
+  if (wechatBridgeStartPromise) {
+    return wechatBridgeStartPromise
+  }
+
+  wechatBridgeStartPromise = (async () => {
+    if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
+      try {
+        await waitForWeChatBridgeReady(3000)
+        return { ok: true }
+      } catch (e: any) {
+        console.info('微信桥接服务仍在启动中', { message: e?.message || String(e) })
+        return { ok: true, warmingUp: true, message: 'bridge_starting' }
+      }
+    }
+
+    const execPath = getWeChatBridgeExecutable()
+    const configPath = getWeChatBridgeConfig()
+
+    if (!existsSync(execPath)) {
+      return { ok: false, error: `WeChat bridge executable not found: ${execPath}` }
+    }
+    if (!existsSync(configPath)) {
+      return { ok: false, error: `config.yaml not found: ${configPath}` }
+    }
+
+    console.info('正在启动微信桥接服务', { execPath, configPath, packaged: app.isPackaged })
+    if (app.isPackaged) {
+      wechatBridgeProcess = spawn(execPath, ['--config', configPath], {
+        cwd: getSidecarWeChatDir(),
+        windowsHide: true
+      })
+    } else {
+      wechatBridgeProcess = spawn('python', [execPath, '--config', configPath], {
+        cwd: getSidecarWeChatDir(),
+        windowsHide: true
+      })
+    }
+
+    wechatBridgeProcess.on('exit', (code, signal) => {
+      console.warn('微信桥接进程已退出', { code, signal })
+      wechatBridgeProcess = null
+      scheduleWeChatBridgeRestart(`exit:${code ?? 'null'}:${signal ?? 'null'}`)
+    })
+    wechatBridgeProcess.on('error', (error) => {
+      console.error('微信桥接进程异常', error)
+      wechatBridgeProcess = null
+      scheduleWeChatBridgeRestart('process_error')
+    })
+    // sidecar 会把大量中文扫描日志写到控制台；主进程必须消费管道，避免运行一段时间后阻塞。
+    wechatBridgeProcess.stdout?.on('data', () => {})
+    wechatBridgeProcess.stderr?.on('data', () => {})
+
+    try {
+      await waitForWeChatBridgeReady(WECHAT_BRIDGE_STARTUP_TIMEOUT_MS)
+      return { ok: true }
+    } catch (e: any) {
+      if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
+        return { ok: true, warmingUp: true, message: 'bridge_starting' }
+      }
+      return { ok: false, error: 'bridge_not_ready', message: e?.message || String(e) }
+    }
+  })()
+
+  try {
+    return await wechatBridgeStartPromise
+  } finally {
+    wechatBridgeStartPromise = null
   }
 }
 
@@ -431,54 +531,15 @@ ipcMain.handle('simulate-reply', async (_, { text, focusCoords, sendCoords }) =>
 })
 
 ipcMain.handle('wechat-bridge-start', async () => {
-  if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
-    try {
-      await waitForWeChatBridgeReady(3000)
-      return { ok: true }
-    } catch (e: any) {
-      return { ok: true, warmingUp: true, message: 'bridge_starting' }
-    }
-  }
-  const execPath = getWeChatBridgeExecutable()
-  const configPath = getWeChatBridgeConfig()
-
-  if (!existsSync(execPath)) {
-    return { ok: false, error: `WeChat bridge executable not found: ${execPath}` }
-  }
-  if (!existsSync(configPath)) {
-    return { ok: false, error: `config.yaml not found: ${configPath}` }
-  }
-
-  if (app.isPackaged) {
-    wechatBridgeProcess = spawn(execPath, ['--config', configPath], {
-      cwd: getSidecarWeChatDir(),
-      windowsHide: true
-    })
-  } else {
-    wechatBridgeProcess = spawn('python', [execPath, '--config', configPath], {
-      cwd: getSidecarWeChatDir(),
-      windowsHide: true
-    })
-  }
-
-  wechatBridgeProcess.on('exit', () => {
-    wechatBridgeProcess = null
-  })
-  wechatBridgeProcess.on('error', () => {
-    wechatBridgeProcess = null
-  })
-  try {
-    await waitForWeChatBridgeReady(WECHAT_BRIDGE_STARTUP_TIMEOUT_MS)
-    return { ok: true }
-  } catch (e: any) {
-    if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
-      return { ok: true, warmingUp: true, message: 'bridge_starting' }
-    }
-    return { ok: false, error: 'bridge_not_ready', message: e?.message || String(e) }
-  }
+  return startWeChatBridgeProcess()
 })
 
 ipcMain.handle('wechat-bridge-stop', async () => {
+  wechatBridgeDesiredRunning = false
+  if (wechatBridgeRestartTimer) {
+    clearTimeout(wechatBridgeRestartTimer)
+    wechatBridgeRestartTimer = null
+  }
   if (wechatBridgeProcess && wechatBridgeProcess.pid) {
     try {
       console.log('Stopping WeChat Bridge Process:', wechatBridgeProcess.pid)
@@ -498,8 +559,20 @@ ipcMain.handle('wechat-bridge-poll', async () => {
       await waitForWeChatBridgeReady(1500)
       result = await requestWeChatBridge('/poll', { method: 'GET' })
     } catch (e: any) {
-      return { ok: false, error: 'bridge_unreachable', message: e?.message || String(e) }
+      result = { ok: false, error: 'bridge_unreachable', message: e?.message || String(e) }
     }
+  }
+  if (!result.ok && result.error === 'bridge_unreachable') {
+    console.warn('微信桥接服务不可用，尝试自动恢复')
+    const startResult = await startWeChatBridgeProcess()
+    if (!startResult?.ok || startResult?.warmingUp) {
+      return {
+        ok: false,
+        error: startResult?.error || 'bridge_starting',
+        message: startResult?.message || 'bridge_starting'
+      }
+    }
+    result = await requestWeChatBridge('/poll', { method: 'GET' })
   }
   return result
 })
@@ -602,6 +675,11 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  wechatBridgeDesiredRunning = false
+  if (wechatBridgeRestartTimer) {
+    clearTimeout(wechatBridgeRestartTimer)
+    wechatBridgeRestartTimer = null
+  }
   if (wechatBridgeProcess && wechatBridgeProcess.pid) {
     try {
       console.log('Killing WeChat Bridge before quit...')

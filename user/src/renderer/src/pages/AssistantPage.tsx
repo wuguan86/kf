@@ -67,7 +67,7 @@ const IMAGE_STREAM_CHUNK_TIMEOUT_MS = 90000
 const IMAGE_STREAM_TOTAL_TIMEOUT_MS = 240000
 type WeChatChannel = 'personal' | 'enterprise'
 const defaultWechatChannelConfig: WeChatChannelConfig = {
-  channel: 'personal',
+  channel: 'enterprise',
   corpId: '',
   apiBaseUrl: '',
   secretConfigured: 'false',
@@ -610,10 +610,10 @@ function AssistantPage(props: Props): JSX.Element {
   const outputStoreContextRef = useRef<Map<string, { contactKey: string; customerMessage: string }>>(new Map())
   const streamAbortControllersRef = useRef<Map<string, AbortController>>(new Map())
   const pollFailureCountRef = useRef(0)
-  const wechatChannelRef = useRef<WeChatChannel>('personal')
+  const wechatChannelRef = useRef<WeChatChannel>('enterprise')
 
   const normalizeWechatChannelConfig = (config?: Partial<WeChatChannelConfig> | null): WeChatChannelConfig => ({
-    channel: config?.channel === 'enterprise' ? 'enterprise' : 'personal',
+    channel: config?.channel === 'personal' ? 'personal' : 'enterprise',
     corpId: config?.corpId || '',
     apiBaseUrl: config?.apiBaseUrl || '',
     secretConfigured: config?.secretConfigured === 'true' ? 'true' : 'false',
@@ -630,10 +630,10 @@ function AssistantPage(props: Props): JSX.Element {
       wechatChannelRef.current = nextConfig.channel
       return nextConfig
     } catch (error) {
-      console.warn('获取微信消息通道失败，默认使用个人微信通道', error)
-      showToast('获取微信消息通道失败，已默认使用个人微信', 'error')
+      console.warn('获取微信消息通道失败，默认使用企业微信通道', error)
+      showToast('获取微信消息通道失败，已默认使用企业微信', 'error')
       setWechatChannelConfig(defaultWechatChannelConfig)
-      wechatChannelRef.current = 'personal'
+      wechatChannelRef.current = 'enterprise'
       return defaultWechatChannelConfig
     }
   }
@@ -653,9 +653,6 @@ function AssistantPage(props: Props): JSX.Element {
         corpId: previous.corpId,
         apiBaseUrl: previous.apiBaseUrl
       })
-      if (channel === 'enterprise') {
-        showToast('企业微信配置已移到系统设置，可在那里维护 CorpID、Secret 和客服映射', 'info')
-      }
     } catch (error) {
       console.error('保存微信消息通道失败', error)
       setWechatChannelConfig(previous)

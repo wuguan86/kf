@@ -300,10 +300,8 @@
 .toolbarSelectWrap {
   height: 36px;
   min-width: 116px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 10px;
+  position: relative;
+  display: inline-block;
   border-radius: 9px;
   border: 1px solid #dce5f3;
   background: #fff;
@@ -318,26 +316,76 @@
 }
 
 .toolbarSelectWrapDisabled .selectIcon {
-  background: #cbd5e1;
-  color: #fff;
+  background: #e5e7eb;
+  color: #9ca3af;
+  box-shadow: none;
+}
+
+.toolbarSelectWrapDisabled .selectIconEnterprise {
+  background: #fff;
+  color: #9ca3af;
+  box-shadow: inset 0 0 0 1px #e5e7eb;
 }
 
 .selectIcon {
-  width: 20px;
-  height: 20px;
-  flex: 0 0 20px;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  background: #1677ff;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
+  border-radius: 7px;
+  background: #ecfdf3;
+  color: #07c160;
+  box-shadow: inset 0 0 0 1px rgba(7, 193, 96, 0.12);
 }
 
-.toolbarSelect {
-  min-width: 0;
+.selectIconEnterprise {
+  background: #fff;
+  color: #1677ff;
+  box-shadow: inset 0 0 0 1px rgba(22, 119, 255, 0.18);
+}
+
+.selectIcon svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+  fill: currentColor;
+}
+
+.selectIcon img {
+  width: 17px;
+  height: 17px;
+  display: block;
+  object-fit: contain;
+}
+
+.toolbarSelectChevron svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.selectIcon .iconStroke {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.toolbarSelectButton {
+  width: 100%;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px 0 9px;
   border: none;
   outline: none;
   background: transparent;
@@ -347,9 +395,63 @@
   cursor: pointer;
 }
 
-.toolbarSelect:disabled {
+.toolbarSelectButton:disabled {
   cursor: not-allowed;
   color: #9ca3af;
+}
+
+.toolbarSelectText {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.toolbarSelectChevron {
+  flex: 0 0 auto;
+  color: #111827;
+}
+
+.toolbarSelectButton:disabled .toolbarSelectChevron {
+  color: #9ca3af;
+}
+
+.toolbarSelectMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 100%;
+  padding: 4px;
+  border: 1px solid #dce5f3;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
+.toolbarSelectOption {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.toolbarSelectOption:hover {
+  background: #f3f7ff;
+}
+
+.toolbarSelectOptionActive {
+  background: #eaf2ff;
+  color: #0958d9;
 }
 
 /* Start Button Styles */

@@ -16,7 +16,7 @@ interface ContactConfig {
 }
 
 const defaultWechatChannelConfig: WeChatChannelConfig = {
-  channel: 'personal',
+  channel: 'enterprise',
   corpId: '',
   apiBaseUrl: '',
   secretConfigured: 'false',
@@ -58,7 +58,7 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
       try {
         const res = await http.get<WeChatChannelConfig>('/api/user/system-config/wechat-channel');
         setWechatChannelConfig({
-          channel: res?.channel === 'enterprise' ? 'enterprise' : 'personal',
+          channel: res?.channel === 'personal' ? 'personal' : 'enterprise',
           corpId: res?.corpId || '',
           apiBaseUrl: res?.apiBaseUrl || '',
           secretConfigured: res?.secretConfigured === 'true' ? 'true' : 'false',

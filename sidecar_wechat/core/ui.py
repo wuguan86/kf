@@ -142,7 +142,26 @@ class WeChatUI:
         self._cached_message_list = None
         self._cached_input_box = None
         self._cached_chat_title_ctrl = None
+        self._command_state_lock = threading.Lock()
+        self._active_user_command_count = 0
         self._last_direction_pixel_stats: Dict[str, int] = {"left": 0, "right": 0, "total": 0}
+
+    def is_user_command_active(self) -> bool:
+        with self._command_state_lock:
+            return self._active_user_command_count > 0
+
+    def _begin_user_command(self, action: str, target: str) -> float:
+        with self._command_state_lock:
+            self._active_user_command_count += 1
+        started_at = time.time()
+        self._logger.info("微信指令开始: action=%s target=%s", action, target)
+        return started_at
+
+    def _end_user_command(self, action: str, target: str, started_at: float, success: bool) -> None:
+        elapsed_ms = int((time.time() - started_at) * 1000)
+        with self._command_state_lock:
+            self._active_user_command_count = max(0, self._active_user_command_count - 1)
+        self._logger.info("微信指令结束: action=%s target=%s success=%s elapsedMs=%s", action, target, success, elapsed_ms)
 
     def _normalize_contact_name(self, name: str) -> str:
         if not name:
@@ -225,6 +244,19 @@ class WeChatUI:
             return True
         except Exception:
             return False
+
+    def _restore_window_for_command(self, window: Any) -> None:
+        if window is None:
+            return
+        try:
+            if auto is not None and hasattr(auto, "SW"):
+                window.ShowWindow(auto.SW.Restore)
+        except Exception:
+            pass
+        try:
+            window.SetActive()
+        except Exception:
+            pass
 
     def _find_named_clickable(self, root: Any, names: List[str], search_depth: int = 18) -> Optional[Any]:
         if auto is None or root is None:
@@ -1939,6 +1971,7 @@ class WeChatUI:
             window = self.get_main_window()
             if window is None:
                 return {"ok": False, "error": "wechat_window_not_found", "message": "未找到微信窗口"}
+            self._restore_window_for_command(window)
 
             message_list = self._locate_message_list(window)
             if message_list is None:
@@ -1960,6 +1993,14 @@ class WeChatUI:
             fallback_data_url = self._capture_visible_image_message(image_item)
             if fallback_data_url:
                 self._logger.info("已预先截取微信图片可见区域 dataUrlLength=%d", len(fallback_data_url))
+                return {
+                    "ok": True,
+                    "strategy": "screenshot_fallback",
+                    "attempts": [
+                        {"strategy": "pre_capture_visible_message", "clipboard": "screenshot_ready"},
+                    ],
+                    "dataUrl": fallback_data_url,
+                }
             copy_result = self._copy_control_to_clipboard(image_item)
             if copy_result.get("ok"):
                 self._logger.info(
@@ -2222,8 +2263,39 @@ class WeChatUI:
             self._logger.warning("剪贴板图片转换失败: %s", e)
             return None
 
+    def _find_image_preview_window(self) -> Optional[Any]:
+        if auto is None:
+            return None
+        preview_class_names = (
+            "mmui::ImagePreviewWindow",
+            "ImagePreviewWindow",
+            "PhotoPreviewWnd",
+            "ChatImageWnd",
+        )
+        for class_name in preview_class_names:
+            try:
+                candidate = auto.WindowControl(searchDepth=1, ClassName=class_name)
+                if candidate is not None and candidate.Exists(0, 0):
+                    return candidate
+            except Exception:
+                pass
+        preview_names = ("图片查看器", "图片预览", "查看图片", "Image Viewer", "Image Preview", "Photo")
+        for name in preview_names:
+            try:
+                candidate = auto.WindowControl(searchDepth=1, Name=name)
+                if candidate is not None and candidate.Exists(0, 0):
+                    return candidate
+            except Exception:
+                pass
+        return None
+
     def _close_image_preview_if_needed(self) -> None:
+        preview_window = self._find_image_preview_window()
+        if preview_window is None:
+            self._logger.info("未检测到图片预览窗口，跳过 Esc，避免误关微信主窗口")
+            return
         try:
+            self._restore_window_for_command(preview_window)
             auto.SendKeys("{Esc}", waitTime=0.05)
         except Exception:
             pass
@@ -2322,55 +2394,58 @@ class WeChatUI:
         if auto is None:
             return False
         
+        started_at = self._begin_user_command("send_text", target)
+        success = False
         time.sleep(random.uniform(0.2, 0.6))
 
-        with self._uia_lock:
-            window = self.get_main_window()
-            if window is None:
-                return False
-            
-            try:
-                window.SetActive()
-            except:
-                pass
+        try:
+            with self._uia_lock:
+                window = self.get_main_window()
+                if window is None:
+                    return False
+                self._restore_window_for_command(window)
 
-            if not self.ensure_chat_target(target):
-                self._logger.warning(f"无法切换到目标会话: {target}")
-                return False
+                if not self.ensure_chat_target(target):
+                    self._logger.warning(f"无法切换到目标会话: {target}")
+                    return False
 
-            edit = self.find_input_box(window)
-            if edit is None:
-                self._logger.warning("未找到输入框，无法发送消息")
-                return False
+                edit = self.find_input_box(window)
+                if edit is None:
+                    self._logger.warning("未找到输入框，无法发送消息")
+                    return False
 
-            ok = self._set_edit_value(edit, text)
-            if not ok:
-                self._logger.warning("无法在输入框中粘贴文本")
-                return False
+                ok = self._set_edit_value(edit, text)
+                if not ok:
+                    self._logger.warning("无法在输入框中粘贴文本")
+                    return False
 
-            time.sleep(random.uniform(0.3, 0.8))
+                time.sleep(random.uniform(0.3, 0.8))
 
-            send_btn = self.find_send_button(window)
-            if send_btn is not None:
+                send_btn = self.find_send_button(window)
+                if send_btn is not None:
+                    try:
+                        send_btn.Click(simulateMove=True)
+                        success = True
+                        return True
+                    except Exception:
+                        pass
+
+                # 发送按钮偶发定位失败时，优先尝试微信常用快捷键。
                 try:
-                    send_btn.Click(simulateMove=True)
+                    auto.SendKeys("{Alt}s")
+                    success = True
                     return True
-                except Exception:
+                except:
                     pass
 
-            # Fallback 1: Alt+S (Common shortcut for Send)
-            try:
-                auto.SendKeys("{Alt}s")
-                return True
-            except:
-                pass
-
-            # Fallback 2: Enter
-            try:
-                auto.SendKeys("{Enter}")
-                return True
-            except Exception:
-                return False
+                try:
+                    auto.SendKeys("{Enter}")
+                    success = True
+                    return True
+                except Exception:
+                    return False
+        finally:
+            self._end_user_command("send_text", target, started_at, success)
 
     def _set_edit_value(self, edit: Any, text: str) -> bool:
         if pyperclip is None:

@@ -1,6 +1,7 @@
 import logging
 import random
 import time
+from collections import Counter
 from typing import Any, Dict, List, TYPE_CHECKING
 
 from .config import BridgeConfig
@@ -69,6 +70,11 @@ class Listener:
 
     def process_cycle(self) -> None:
         try:
+            is_command_active = getattr(self._ui, "is_user_command_active", None)
+            if callable(is_command_active) and is_command_active():
+                self._logger.info("检测到微信指令正在执行，暂停本轮监听扫描")
+                return
+
             # self._logger.debug("进入处理循环 (process_cycle)")
             
             now = time.time()
@@ -173,9 +179,11 @@ class Listener:
             for msg in new_messages:
                 if msg.get("is_self", False):
                     msg["trigger_reply"] = False
-                    if self._poller is not None:
+                    if has_previous_baseline and self._poller is not None:
                         self._logger.info("推送自己发送的消息到界面显示，不触发 AI: %s", str(msg.get("content") or "")[:40])
                         self._poller.enqueue(msg)
+                    else:
+                        self._logger.info("跳过首次扫描中的历史自己消息，避免旧消息显示到界面: %s", str(msg.get("content") or "")[:40])
                     continue
                 if not msg.get("trigger_reply", False):
                     if has_previous_baseline and self._poller is not None:
@@ -208,7 +216,14 @@ class Listener:
     def _select_new_messages(self, previous: List[str], current: List[str], messages: List[dict]) -> List[dict]:
         start, size = self._find_previous_tail_in_current(previous, current)
         if size <= 0:
-            return messages
+            previous_counts = Counter(previous)
+            deduped_messages = []
+            for fingerprint, msg in zip(current, messages):
+                if previous_counts[fingerprint] > 0:
+                    previous_counts[fingerprint] -= 1
+                    continue
+                deduped_messages.append(msg)
+            return deduped_messages
         return messages[start + size:]
 
     def _find_previous_tail_in_current(self, previous: List[str], current: List[str]) -> tuple[int, int]:
