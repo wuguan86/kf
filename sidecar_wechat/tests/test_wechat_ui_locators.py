@@ -108,6 +108,26 @@ class WeChatUiLocatorTests(unittest.TestCase):
                 cfg = load_config(config_path)
 
                 self.assertEqual(cfg.window_class_name, "mmui::MainWindow")
+                self.assertGreaterEqual(cfg.unread_scan_interval_min_seconds, 2.0)
+                self.assertGreaterEqual(cfg.send_delay_min_seconds, 2.0)
+                self.assertGreaterEqual(cfg.global_send_interval_min_seconds, 4.0)
+
+    def test_global_send_slot_waits_until_next_allowed_time(self):
+        ui = WeChatUI(BridgeConfig(global_send_interval_min_seconds=4.0, global_send_interval_max_seconds=4.0), logging.getLogger("test_wechat_ui_locators"))
+        ui._next_send_allowed_at = 12.5
+
+        with patch.object(ui_module.time, "time", return_value=10.0), patch.object(ui_module.time, "sleep") as sleep_mock:
+            ui._wait_for_global_send_slot("澶忓ぉ")
+
+        sleep_mock.assert_called_once_with(2.5)
+
+    def test_successful_send_schedules_next_global_slot(self):
+        ui = WeChatUI(BridgeConfig(global_send_interval_min_seconds=4.0, global_send_interval_max_seconds=4.0), logging.getLogger("test_wechat_ui_locators"))
+
+        with patch.object(ui_module.time, "time", return_value=10.0):
+            ui._schedule_next_global_send_slot("澶忓ぉ")
+
+        self.assertEqual(ui._next_send_allowed_at, 14.0)
 
     def test_date_time_separator_is_not_reported_as_message(self):
         self.assertTrue(self.ui._is_time_separator_text("3月12日 16:43"))

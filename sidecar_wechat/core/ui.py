@@ -144,6 +144,9 @@ class WeChatUI:
         self._cached_chat_title_ctrl = None
         self._command_state_lock = threading.Lock()
         self._active_user_command_count = 0
+        # 发送节奏独立于 UIA 操作锁，按“上一条成功发送后”控制下一次发送入口。
+        self._send_timing_lock = threading.Lock()
+        self._next_send_allowed_at = 0.0
         self._last_direction_pixel_stats: Dict[str, int] = {"left": 0, "right": 0, "total": 0}
 
     def is_user_command_active(self) -> bool:
@@ -2390,16 +2393,54 @@ class WeChatUI:
             return True
         return False
 
+    def _normalize_delay_range(self, min_seconds: float, max_seconds: float) -> Tuple[float, float]:
+        min_value = max(0.0, float(min_seconds or 0))
+        max_value = max(0.0, float(max_seconds or 0))
+        if max_value < min_value:
+            return max_value, min_value
+        return min_value, max_value
+
+    def _random_delay(self, min_seconds: float, max_seconds: float) -> float:
+        min_value, max_value = self._normalize_delay_range(min_seconds, max_seconds)
+        return random.uniform(min_value, max_value)
+
+    def _wait_for_global_send_slot(self, target: str) -> None:
+        """等待上一条成功发送后的全局冷却结束，避免多个联系人回复连续切窗。"""
+        with self._send_timing_lock:
+            now = time.time()
+            wait_seconds = max(0.0, self._next_send_allowed_at - now)
+        if wait_seconds > 0:
+            self._logger.info("发送节奏保护生效 target=%s waitSeconds=%.2f", target, wait_seconds)
+            time.sleep(wait_seconds)
+
+    def _schedule_next_global_send_slot(self, target: str) -> None:
+        """仅在发送成功后更新下一次可发送时间，失败时不额外阻塞人工重试。"""
+        interval_seconds = self._random_delay(
+            self._cfg.global_send_interval_min_seconds,
+            self._cfg.global_send_interval_max_seconds,
+        )
+        with self._send_timing_lock:
+            self._next_send_allowed_at = time.time() + interval_seconds
+        self._logger.info("发送节奏保护已更新 target=%s intervalSeconds=%.2f", target, interval_seconds)
+
     def set_text_and_send(self, target: str, text: str) -> bool:
         if auto is None:
             return False
         
         started_at = self._begin_user_command("send_text", target)
         success = False
-        time.sleep(random.uniform(0.2, 0.6))
 
         try:
             with self._uia_lock:
+                # 先通过全局节奏保护，再进入真实窗口切换与输入流程，避免并发回复堆叠成连续操作。
+                self._wait_for_global_send_slot(target)
+                send_delay_seconds = self._random_delay(
+                    self._cfg.send_delay_min_seconds,
+                    self._cfg.send_delay_max_seconds,
+                )
+                self._logger.info("发送前等待 target=%s delaySeconds=%.2f", target, send_delay_seconds)
+                time.sleep(send_delay_seconds)
+
                 window = self.get_main_window()
                 if window is None:
                     return False
@@ -2419,7 +2460,7 @@ class WeChatUI:
                     self._logger.warning("无法在输入框中粘贴文本")
                     return False
 
-                time.sleep(random.uniform(0.3, 0.8))
+                time.sleep(self._random_delay(0.6, 1.4))
 
                 send_btn = self.find_send_button(window)
                 if send_btn is not None:
@@ -2445,6 +2486,8 @@ class WeChatUI:
                 except Exception:
                     return False
         finally:
+            if success:
+                self._schedule_next_global_send_slot(target)
             self._end_user_command("send_text", target, started_at, success)
 
     def _set_edit_value(self, edit: Any, text: str) -> bool:
@@ -2453,14 +2496,16 @@ class WeChatUI:
             return False
 
         try:
-            # Use _click_control for more robust clicking (center point)
+            # 点击、清空、粘贴之间保留短暂停顿，避免输入框焦点未稳定时误删或漏粘。
             self._click_control(edit)
-            time.sleep(0.2)
+            time.sleep(self._random_delay(0.25, 0.7))
             edit.SendKeys("{Ctrl}a", waitTime=0.1) 
+            time.sleep(self._random_delay(0.08, 0.2))
             edit.SendKeys("{Delete}", waitTime=0.1)
             pyperclip.copy(text)
+            time.sleep(self._random_delay(0.2, 0.6))
             edit.SendKeys("{Ctrl}v", waitTime=0.2)
-            time.sleep(0.1)
+            time.sleep(self._random_delay(0.2, 0.5))
             return True
         except Exception as e:
             self._logger.error(f"输入文本异常: {e}")

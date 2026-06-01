@@ -614,6 +614,8 @@ function AssistantPage(props: Props): JSX.Element {
   const activeRoleRef = useRef<Role | null>(null)
   const sessionConfigRef = useRef<SessionConfig | null>(null)
   const contactQueueRef = useRef<Map<string, Promise<void>>>(new Map())
+  // 个人微信共用一个真实客户端窗口，不同联系人也必须全局串行发送。
+  const personalSendQueueRef = useRef<Promise<void>>(Promise.resolve())
   const lastProcessedByContactRef = useRef<Map<string, { text: string; at: number }>>(new Map())
   const outputStoreContextRef = useRef<Map<string, { contactKey: string; customerMessage: string }>>(new Map())
   const streamAbortControllersRef = useRef<Map<string, AbortController>>(new Map())
@@ -692,6 +694,15 @@ function AssistantPage(props: Props): JSX.Element {
     const list = Array.isArray(res) ? res : []
     setKnowledgeBaseOptions(list)
     return list
+  }
+
+  const enqueuePersonalWeChatSend = <T,>(task: () => Promise<T>): Promise<T> => {
+    // 上一个发送失败也不能卡住后续队列；失败仍由当前任务自己的 catch 分支展示。
+    const runTask = personalSendQueueRef.current
+      .catch(() => undefined)
+      .then(task)
+    personalSendQueueRef.current = runTask.then(() => undefined, () => undefined)
+    return runTask
   }
 
   useEffect(() => {
@@ -1042,15 +1053,13 @@ function AssistantPage(props: Props): JSX.Element {
                 }
                 const config = sessionConfigRef.current?.sceneConfig
                 if (config) {
-                  const min = (config.replyIntervalStartSec || 0) * 1000
-                  const max = (config.replyIntervalEndSec || 0) * 1000
+                  // 回复间隔从 AI 输出完成后开始计算，避免 Dify 耗时抵消等待时间。
+                  const min = Math.max(0, config.replyIntervalStartSec || 0) * 1000
+                  const max = Math.max(min, (config.replyIntervalEndSec || 0) * 1000)
                   if (max >= min && min >= 0) {
                     const delayMs = Math.floor(min + Math.random() * (max - min))
-                    const elapsed = Date.now() - now
-                    if (delayMs > elapsed) {
-                      const waitTime = delayMs - elapsed
-                      await new Promise(resolve => setTimeout(resolve, waitTime))
-                    }
+                    console.info('AI 回复生成后等待发送', { sessionKey, delayMs })
+                    await new Promise(resolve => setTimeout(resolve, delayMs))
                   }
                 }
 
@@ -1070,7 +1079,10 @@ function AssistantPage(props: Props): JSX.Element {
                     })
                   } else {
                     const api = (window as any).api
-                    sendRes = await api.sendWeChatMessage({ target: contact, content: reply })
+                    // 个人微信发送会切换真实聊天窗口，统一进队列，避免不同联系人同时触发切窗。
+                    sendRes = await enqueuePersonalWeChatSend(() =>
+                      api.sendWeChatMessage({ target: contact, content: reply })
+                    )
                   }
                 } catch (sendError) {
                   const responseData = (sendError as any)?.response?.data

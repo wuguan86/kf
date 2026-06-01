@@ -12,18 +12,24 @@ class BridgeConfig:
     window_class_name: str = "mmui::MainWindow"
     window_name: str = "微信"
 
-    scan_interval_seconds: float = 0.6
-    scan_jitter_seconds: float = 0.3
+    # 监听循环只做消息发现，保留基础间隔，避免高频读取 UIA 控件树。
+    scan_interval_seconds: float = 0.8
+    scan_jitter_seconds: float = 0.5
     unread_max_per_round: int = 5
     message_scan_limit: int = 10
 
-    send_delay_min_seconds: float = 0.5
-    send_delay_max_seconds: float = 2.0
+    # AI 生成回复后到真实写入微信前的等待窗口，用于降低“接口返回即发送”的机械感。
+    send_delay_min_seconds: float = 2.0
+    send_delay_max_seconds: float = 5.0
     click_move_min_seconds: float = 0.18
     click_move_max_seconds: float = 0.55
+    # 全局发送冷却从上一条发送成功后开始计算，防止多联系人回复连续切窗发送。
+    global_send_interval_min_seconds: float = 4.0
+    global_send_interval_max_seconds: float = 9.0
 
-    unread_scan_interval_min_seconds: float = 1.5
-    unread_scan_interval_max_seconds: float = 4.0
+    # 未读会话扫描会触发窗口切换，默认保持秒级间隔。
+    unread_scan_interval_min_seconds: float = 2.0
+    unread_scan_interval_max_seconds: float = 5.0
 
     server_host: str = "127.0.0.1"
     server_port: int = 51234
@@ -107,6 +113,12 @@ def load_config(config_path: str) -> BridgeConfig:
         send_delay_max_seconds=float(_deep_get(parsed, ["executor", "send_delay_max_seconds"], BridgeConfig.send_delay_max_seconds)),
         click_move_min_seconds=float(_deep_get(parsed, ["executor", "click_move_min_seconds"], BridgeConfig.click_move_min_seconds)),
         click_move_max_seconds=float(_deep_get(parsed, ["executor", "click_move_max_seconds"], BridgeConfig.click_move_max_seconds)),
+        global_send_interval_min_seconds=float(
+            _deep_get(parsed, ["executor", "global_send_interval_min_seconds"], BridgeConfig.global_send_interval_min_seconds)
+        ),
+        global_send_interval_max_seconds=float(
+            _deep_get(parsed, ["executor", "global_send_interval_max_seconds"], BridgeConfig.global_send_interval_max_seconds)
+        ),
         unread_scan_interval_min_seconds=float(
             _deep_get(parsed, ["listener", "unread_scan_interval_min_seconds"], BridgeConfig.unread_scan_interval_min_seconds)
         ),
