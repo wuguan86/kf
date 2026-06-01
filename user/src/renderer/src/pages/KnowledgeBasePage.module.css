@@ -683,14 +683,14 @@
 .reviewTableWrapper {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
   flex: 1;
 }
 
 .reviewTable {
   width: 100%;
-  min-width: 860px;
   border-collapse: collapse;
   table-layout: fixed;
   font-size: 13px;
@@ -715,7 +715,7 @@
 }
 
 .reviewTable th:nth-child(1) {
-  width: 86px;
+  width: 64px;
 }
 
 .reviewTable th:nth-child(2),
@@ -724,11 +724,11 @@
 }
 
 .reviewTable th:nth-child(4) {
-  width: 28%;
+  width: auto;
 }
 
 .reviewTable th:nth-child(5) {
-  width: 64px;
+  width: 104px;
 }
 
 .reviewRowWARNING td,
@@ -744,7 +744,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 58px;
+  min-width: 48px;
   padding: 3px 6px;
   border-radius: 4px;
   font-size: 12px;
@@ -805,9 +805,7 @@
 }
 
 .reviewLayout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 16px;
+  display: flex;
   min-height: 0;
   flex: 1;
 }
@@ -823,22 +821,19 @@
   -webkit-line-clamp: 3;
 }
 
-.reviewEditor {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  padding: 14px;
-  background: #fff;
-}
-
 .reviewEditorHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.reviewEditorActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .reviewEditorTitle {
@@ -848,7 +843,7 @@
 }
 
 .reviewEditorLabel {
-  margin: 10px 0 6px;
+  margin-bottom: 6px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -857,7 +852,9 @@
 .reviewEditorTextarea {
   width: 100%;
   min-height: 110px;
-  resize: vertical;
+  max-height: 180px;
+  resize: none;
+  overflow-y: auto;
   border: 1px solid var(--border-default);
   border-radius: 8px;
   padding: 10px;
@@ -871,6 +868,108 @@
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.08);
+}
+
+.reviewReadonlyHint {
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fffbeb;
+}
+
+.reviewReadonlyTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400e;
+  margin-bottom: 6px;
+}
+
+.reviewReadonlyText {
+  max-height: 120px;
+  overflow-y: auto;
+  color: #78350f;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.reviewDeleteButton {
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 6px;
+  background: #fff;
+  color: #dc2626;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.reviewDeleteButton:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.reviewRowActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-start;
+}
+
+.reviewActionButton {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reviewActionButton:hover {
+  color: var(--color-primary);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.reviewActionDanger {
+  color: var(--text-secondary);
+}
+
+.reviewActionDanger:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.reviewExpandedRow td {
+  padding: 0;
+  background: #fff;
+}
+
+.reviewInlineEditor {
+  margin: 0;
+  padding: 16px;
+  border-top: 1px solid rgba(22, 119, 255, 0.18);
+  border-bottom: 1px solid rgba(22, 119, 255, 0.18);
+  background: #f8fbff;
+}
+
+.reviewInlineGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.reviewInlineGrid .reviewReadonlyHint {
+  grid-column: 1 / -1;
+}
+
+.reviewInlineField {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .reviewEmpty {
