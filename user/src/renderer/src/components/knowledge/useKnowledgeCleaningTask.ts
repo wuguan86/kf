@@ -24,6 +24,12 @@ export type CleaningTask = {
 }
 
 const RUNNING_STATUS: CleaningStatus[] = ['PENDING', 'PARSING', 'EXTRACTING', 'INDEXING']
+const DIRECT_UPLOAD_DATA = JSON.stringify({
+  indexing_technique: 'high_quality',
+  process_rule: {
+    mode: 'automatic'
+  }
+})
 
 export function useKnowledgeCleaningTask(knowledgeBaseId: string | null) {
   const [task, setTask] = useState<CleaningTask | null>(null)
@@ -38,9 +44,12 @@ export function useKnowledgeCleaningTask(knowledgeBaseId: string | null) {
     }
   }
 
-  const pollTask = async (taskId: string) => {
-    if (!knowledgeBaseId) return
-    const latest = await http.get<CleaningTask>(`/api/user/knowledge-bases/${knowledgeBaseId}/cleaning-tasks/${taskId}`)
+  const resolveKnowledgeBaseId = (overrideKnowledgeBaseId?: string) => overrideKnowledgeBaseId || knowledgeBaseId
+
+  const pollTask = async (taskId: string, overrideKnowledgeBaseId?: string) => {
+    const targetKnowledgeBaseId = resolveKnowledgeBaseId(overrideKnowledgeBaseId)
+    if (!targetKnowledgeBaseId) return
+    const latest = await http.get<CleaningTask>(`/api/user/knowledge-bases/${targetKnowledgeBaseId}/cleaning-tasks/${taskId}`)
     setTask(latest)
     if (!RUNNING_STATUS.includes(latest.taskStatus)) {
       clearPolling()
@@ -48,10 +57,10 @@ export function useKnowledgeCleaningTask(knowledgeBaseId: string | null) {
     }
   }
 
-  const startPolling = (taskId: string) => {
+  const startPolling = (taskId: string, overrideKnowledgeBaseId?: string) => {
     clearPolling()
     timerRef.current = window.setInterval(() => {
-      pollTask(taskId).catch((err) => {
+      pollTask(taskId, overrideKnowledgeBaseId).catch((err) => {
         console.error('轮询知识库清洗任务失败', err)
         setError(err?.message || '获取清洗进度失败')
         clearPolling()
@@ -60,17 +69,38 @@ export function useKnowledgeCleaningTask(knowledgeBaseId: string | null) {
     }, 1500)
   }
 
-  const uploadForCleaning = async (file: File) => {
-    if (!knowledgeBaseId) {
+  const uploadForCleaning = async (file: File, overrideKnowledgeBaseId?: string) => {
+    const targetKnowledgeBaseId = resolveKnowledgeBaseId(overrideKnowledgeBaseId)
+    if (!targetKnowledgeBaseId) {
       throw new Error('请先保存知识库后再上传文件')
     }
     setError('')
     setLoading(true)
     const payload = new FormData()
     payload.append('file', file)
-    const created = await http.postForm<CleaningTask>(`/api/user/knowledge-bases/${knowledgeBaseId}/cleaning-tasks`, payload)
+    const created = await http.postForm<CleaningTask>(`/api/user/knowledge-bases/${targetKnowledgeBaseId}/cleaning-tasks`, payload)
     setTask(created)
-    startPolling(created.taskId)
+    startPolling(created.taskId, targetKnowledgeBaseId)
+  }
+
+  const uploadDirectly = async (file: File, overrideKnowledgeBaseId?: string) => {
+    const targetKnowledgeBaseId = resolveKnowledgeBaseId(overrideKnowledgeBaseId)
+    if (!targetKnowledgeBaseId) {
+      throw new Error('请先保存知识库后再上传文件')
+    }
+    setError('')
+    setLoading(true)
+    const payload = new FormData()
+    payload.append('data', DIRECT_UPLOAD_DATA)
+    payload.append('file', file)
+    try {
+      await http.postForm(`/api/user/knowledge-bases/${targetKnowledgeBaseId}/files`, payload)
+    } catch (err: any) {
+      setError(err?.message || '文件直接上传失败')
+      throw err
+    } finally {
+      setLoading(false)
+    }
   }
 
   const saveItems = async (items: CleaningQaItem[]) => {
@@ -112,6 +142,7 @@ export function useKnowledgeCleaningTask(knowledgeBaseId: string | null) {
     error,
     setTask,
     uploadForCleaning,
+    uploadDirectly,
     saveItems,
     confirmItems,
     resetTask

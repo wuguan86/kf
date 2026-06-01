@@ -78,6 +78,7 @@ export default function KnowledgeFileDropzone({ disabled, selectedFile, onSelect
         <div className={styles.dropzoneText}>
           {disabled ? '清洗处理中，请稍候' : '点击或拖拽文件到此处'}
         </div>
+        <div className={styles.dropzoneMeta}>支持 PDF、Word、TXT、MD、Excel（单个 &lt; 10MB）</div>
       </label>
 
       {selectedFile && (

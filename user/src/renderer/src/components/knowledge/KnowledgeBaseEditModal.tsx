@@ -33,6 +33,7 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string | null>(editingKnowledgeBase?.id || null)
   const [saving, setSaving] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [aiCleaningEnabled, setAiCleaningEnabled] = useState(true)
   const [reviewItems, setReviewItems] = useState<CleaningQaItem[]>([])
   const cleaning = useKnowledgeCleaningTask(knowledgeBaseId)
 
@@ -45,14 +46,17 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
   const isRunning = useMemo(() => {
     return cleaning.loading || ['PENDING', 'PARSING', 'EXTRACTING', 'INDEXING'].includes(cleaning.task?.taskStatus || '')
   }, [cleaning.loading, cleaning.task?.taskStatus])
+  const isReviewing = cleaning.task?.taskStatus === 'REVIEWING'
 
   const footerHint = useMemo(() => {
-    if (!knowledgeBaseId) return '创建知识库后即可上传文件进行 AI 清洗'
+    if (!knowledgeBaseId) return aiCleaningEnabled ? '创建知识库后即可上传文件进行 AI 清洗' : '创建知识库后将直接上传原文件'
     if (cleaning.task?.taskStatus === 'REVIEWING') return '请确认或修改 AI 提取的问答后入库'
     if (cleaning.task?.taskStatus === 'COMPLETED') return '已保存为清洗后的知识库文档'
     if (cleaning.task?.taskStatus === 'FAILED') return '清洗失败，可重新选择文件清洗'
+    if (selectedFile && aiCleaningEnabled) return '将先生成 AI 提炼预览，确认后再入库'
+    if (selectedFile && !aiCleaningEnabled) return '将按原文件直接上传，不做 AI 问答提炼'
     return editingKnowledgeBase ? '修改现有知识库' : '创建一个新的知识库'
-  }, [cleaning.task?.taskStatus, editingKnowledgeBase, knowledgeBaseId])
+  }, [aiCleaningEnabled, cleaning.task?.taskStatus, editingKnowledgeBase, knowledgeBaseId, selectedFile])
 
   const saveBaseInfo = async (): Promise<string> => {
     if (!formData.name.trim()) {
@@ -79,7 +83,14 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
         return
       }
       if (selectedFile) {
-        await cleaning.uploadForCleaning(selectedFile)
+        if (aiCleaningEnabled) {
+          await cleaning.uploadForCleaning(selectedFile, kbId)
+          return
+        }
+        await cleaning.uploadDirectly(selectedFile, kbId)
+        await onRefreshFiles(kbId)
+        setSelectedFile(null)
+        onSaved()
         return
       }
       onSaved()
@@ -94,6 +105,7 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
     if (isRunning || saving) return '处理中...'
     if (cleaning.task?.taskStatus === 'REVIEWING') return '确认无误，保存至知识库'
     if (cleaning.task?.taskStatus === 'FAILED') return '重新清洗'
+    if (selectedFile && aiCleaningEnabled) return '下一步：AI 提炼预览'
     return '保存'
   }
 
@@ -101,14 +113,21 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
 
   return (
     <div className={styles.modalOverlay}>
-      <div className={styles.modalWide}>
+      <div className={`${styles.modalWide} ${isReviewing ? styles.modalReview : ''}`}>
         <div className={styles.modalHeader}>
-          <h3 className={styles.modalTitle}>{editingKnowledgeBase ? '编辑知识库' : '添加知识库'}</h3>
+          <h3 className={styles.modalTitle}>{isReviewing ? 'AI 清洗审核' : (editingKnowledgeBase ? '编辑知识库' : '添加知识库')}</h3>
           <button onClick={onClose} className={styles.closeBtn} disabled={isRunning}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
           </button>
         </div>
-        <div className={styles.modalBody}>
+        <div className={`${styles.modalBody} ${isReviewing ? styles.reviewModalBody : ''}`}>
+          {isReviewing ? (
+            <div className={styles.reviewWorkspace}>
+              <div className={styles.reviewBanner}>AI 清洗完成，请人工确认后入库</div>
+              <KnowledgeCleaningReviewTable items={reviewItems} onChange={setReviewItems} />
+            </div>
+          ) : (
+            <>
           <div className={styles.formGroup}>
             <label className={styles.label}>名称 <span style={{ color: '#ef4444' }}>*</span></label>
             <input
@@ -133,12 +152,27 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
           <div className={styles.formDivider} />
 
           <div className={styles.formGroup}>
-            <label className={styles.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>知识文件</span>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
-                支持 PDF、Word、TXT、MD、Excel（单个 &lt; 10MB）
-              </span>
-            </label>
+            <div className={styles.knowledgeFileHeader}>
+              <span className={styles.label}>知识文件</span>
+              <button
+                type="button"
+                className={styles.aiCleaningInlineToggle}
+                onClick={() => {
+                  cleaning.resetTask()
+                  setReviewItems([])
+                  setAiCleaningEnabled(prev => !prev)
+                }}
+                disabled={isRunning}
+                title={aiCleaningEnabled ? '开启后先生成 AI 提炼预览，确认后再入库。' : '关闭后将按原文件直接上传。'}
+                aria-pressed={aiCleaningEnabled}
+                aria-label="切换 AI 清洗"
+              >
+                <span>AI 清洗</span>
+                <span className={`${styles.switchComponent} ${aiCleaningEnabled ? styles.switchComponentActive : ''}`}>
+                  <span className={styles.switchKnob} />
+                </span>
+              </button>
+            </div>
             <KnowledgeFileDropzone
               disabled={isRunning}
               selectedFile={selectedFile}
@@ -179,11 +213,7 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
             {cleaning.error && <div className={`${styles.uploadStatus} ${styles.uploadStatusError}`}>{cleaning.error}</div>}
           </div>
 
-          {cleaning.task?.taskStatus === 'REVIEWING' && (
-            <div className={styles.formGroup}>
-              <label className={styles.label}>AI 清洗审核</label>
-              <KnowledgeCleaningReviewTable items={reviewItems} onChange={setReviewItems} />
-            </div>
+            </>
           )}
         </div>
         <div className={styles.modalFooter}>
