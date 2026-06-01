@@ -272,6 +272,16 @@
   max-height: 85vh;
 }
 
+.modalWide {
+  background: white;
+  border-radius: var(--radius-lg);
+  width: min(920px, 92vw);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;
+}
+
 .modalHeader {
   padding: 20px 24px;
   border-bottom: 1px solid var(--border-subtle);
@@ -297,6 +307,12 @@
 .modalBody {
   padding: 24px;
   overflow-y: auto;
+}
+
+.formDivider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 20px 0;
 }
 
 .formGroup {
@@ -529,6 +545,11 @@
   border-color: var(--color-primary);
 }
 
+.dropzoneDisabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .dropzoneIcon {
   color: var(--color-primary);
   margin-bottom: 12px;
@@ -596,6 +617,115 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.uploadStatusError {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.reviewTableWrapper {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 320px;
+}
+
+.reviewTable {
+  width: 100%;
+  min-width: 780px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.reviewTable th {
+  text-align: left;
+  padding: 10px;
+  color: #111827;
+  font-weight: 600;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.reviewTable td {
+  padding: 8px;
+  border-bottom: 1px solid #edf0f3;
+  vertical-align: top;
+}
+
+.reviewTable th:nth-child(1) {
+  width: 86px;
+}
+
+.reviewTable th:nth-child(2),
+.reviewTable th:nth-child(3) {
+  width: 25%;
+}
+
+.reviewTable th:nth-child(5) {
+  width: 64px;
+}
+
+.reviewRowWARNING td,
+.reviewRowINCOMPLETE td {
+  background: #fffbeb;
+}
+
+.reviewStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.reviewStatusNORMAL {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.reviewStatusWARNING {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.reviewStatusINCOMPLETE {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.reviewTextarea {
+  width: 100%;
+  min-height: 54px;
+  border: 1px solid transparent;
+  background: transparent;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-main);
+  box-sizing: border-box;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.reviewTextarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.08);
+}
+
+.reviewEmpty {
+  padding: 16px;
+  border: 1px dashed var(--border-default);
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: #f9fafb;
+  font-size: 13px;
 }
 
 .spinner {

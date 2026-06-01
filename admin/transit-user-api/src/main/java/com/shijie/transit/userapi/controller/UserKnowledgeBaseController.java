@@ -5,6 +5,8 @@ import com.shijie.transit.common.db.entity.KnowledgeBaseFileEntity;
 import com.shijie.transit.common.db.entity.ManualKbSyncRecordEntity;
 import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.web.Result;
+import com.shijie.transit.userapi.service.KnowledgeBaseCleaningService;
+import com.shijie.transit.userapi.service.KnowledgeBaseQaExtractionService;
 import com.shijie.transit.userapi.service.KnowledgeBaseService;
 import com.shijie.transit.userapi.service.ManualKbSyncService;
 import org.springframework.http.MediaType;
@@ -21,10 +23,15 @@ import java.util.List;
 public class UserKnowledgeBaseController {
   private final KnowledgeBaseService knowledgeBaseService;
   private final ManualKbSyncService manualKbSyncService;
+  private final KnowledgeBaseCleaningService cleaningService;
 
-  public UserKnowledgeBaseController(KnowledgeBaseService knowledgeBaseService, ManualKbSyncService manualKbSyncService) {
+  public UserKnowledgeBaseController(
+      KnowledgeBaseService knowledgeBaseService,
+      ManualKbSyncService manualKbSyncService,
+      KnowledgeBaseCleaningService cleaningService) {
     this.knowledgeBaseService = knowledgeBaseService;
     this.manualKbSyncService = manualKbSyncService;
+    this.cleaningService = cleaningService;
   }
 
   private Long currentUserId() {
@@ -73,6 +80,37 @@ public class UserKnowledgeBaseController {
     return Result.success(null);
   }
 
+  @PostMapping(value = "/{id}/cleaning-tasks", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public Result<KnowledgeBaseCleaningService.CleaningTaskResult> createCleaningTask(
+      @PathVariable("id") Long id,
+      @RequestPart("file") MultipartFile file) {
+    return Result.success(cleaningService.toResult(cleaningService.createTask(currentUserId(), id, file)));
+  }
+
+  @GetMapping("/{id}/cleaning-tasks/{taskId}")
+  public Result<KnowledgeBaseCleaningService.CleaningTaskResult> getCleaningTask(
+      @PathVariable("id") Long id,
+      @PathVariable("taskId") Long taskId) {
+    return Result.success(cleaningService.toResult(cleaningService.getTask(currentUserId(), id, taskId)));
+  }
+
+  @PutMapping("/{id}/cleaning-tasks/{taskId}/items")
+  public Result<KnowledgeBaseCleaningService.CleaningTaskResult> updateCleaningItems(
+      @PathVariable("id") Long id,
+      @PathVariable("taskId") Long taskId,
+      @RequestBody CleaningItemsRequest request) throws Exception {
+    return Result.success(cleaningService.toResult(cleaningService.updateItems(currentUserId(), id, taskId, request.items())));
+  }
+
+  @PostMapping("/{id}/cleaning-tasks/{taskId}/confirm")
+  public Result<KnowledgeBaseCleaningService.CleaningTaskResult> confirmCleaningTask(
+      @PathVariable("id") Long id,
+      @PathVariable("taskId") Long taskId,
+      @RequestBody(required = false) CleaningItemsRequest request) throws Exception {
+    List<KnowledgeBaseQaExtractionService.CleaningQaItem> items = request == null ? List.of() : request.items();
+    return Result.success(cleaningService.toResult(cleaningService.confirm(currentUserId(), id, taskId, items)));
+  }
+
   @PostMapping("/manual-store")
   public Result<ManualKbSyncService.ManualStoreResult> manualStore(@RequestBody ManualStoreRequest request) {
     ManualKbSyncRecordEntity record = manualKbSyncService.createPendingRecord(
@@ -89,5 +127,8 @@ public class UserKnowledgeBaseController {
       String contactKey,
       String customerMessage,
       String aiReplyMessage) {
+  }
+
+  public record CleaningItemsRequest(List<KnowledgeBaseQaExtractionService.CleaningQaItem> items) {
   }
 }

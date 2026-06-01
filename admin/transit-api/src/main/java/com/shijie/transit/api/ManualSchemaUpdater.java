@@ -18,6 +18,7 @@ public class ManualSchemaUpdater implements ApplicationRunner {
     public void run(ApplicationArguments args) throws Exception {
         ensureUserAccountInitColumn();
         ensureUserIntentDailySummaryColumn();
+        ensureKnowledgeBaseCleaningTaskTable();
         ensureEnterpriseWechatTables();
         ensureEnterpriseWechatMessageOpenKfidColumn();
         jdbcTemplate.execute("""
@@ -145,6 +146,32 @@ public class ManualSchemaUpdater implements ApplicationRunner {
         jdbcTemplate.execute("""
             ALTER TABLE user_intent
             ADD COLUMN daily_summary TEXT COMMENT '当日对话总结';
+        """);
+    }
+
+    private void ensureKnowledgeBaseCleaningTaskTable() {
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_base_cleaning_task (
+              id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
+              tenant_id BIGINT NOT NULL COMMENT '租户ID',
+              user_id BIGINT NOT NULL COMMENT '用户ID',
+              kb_id BIGINT NOT NULL COMMENT '知识库ID',
+              dify_dataset_id VARCHAR(128) NOT NULL COMMENT 'Dify知识库ID',
+              original_file_name VARCHAR(255) NOT NULL COMMENT '原始文件名',
+              file_size BIGINT NOT NULL DEFAULT 0 COMMENT '文件大小',
+              extension VARCHAR(32) NOT NULL DEFAULT '' COMMENT '文件扩展名',
+              task_status VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT '清洗任务状态',
+              progress_message VARCHAR(255) NOT NULL DEFAULT '' COMMENT '进度提示',
+              raw_text_summary TEXT COMMENT '解析文本摘要',
+              qa_items_json MEDIUMTEXT COMMENT 'AI清洗后的问答JSON',
+              failed_reason TEXT COMMENT '失败原因',
+              dify_document_id VARCHAR(128) NOT NULL DEFAULT '' COMMENT '确认入库后的Dify文档ID',
+              confirmed_at DATETIME(3) COMMENT '确认入库时间',
+              created_at DATETIME(3) NOT NULL COMMENT '创建时间',
+              updated_at DATETIME(3) NOT NULL COMMENT '更新时间',
+              KEY idx_kb_cleaning_user_kb_time (tenant_id, user_id, kb_id, created_at) COMMENT '索引:租户+用户+知识库+时间',
+              KEY idx_kb_cleaning_user_status_time (tenant_id, user_id, task_status, created_at) COMMENT '索引:租户+用户+状态+时间'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库文件AI清洗任务表';
         """);
     }
 
