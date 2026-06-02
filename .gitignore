@@ -96,4 +96,4 @@ lerna-debug.log*
 
 
 # --- TypeScript ---
-*.tsbuildinfo
+*.tsbuildinfo!/shiflow-agent/
