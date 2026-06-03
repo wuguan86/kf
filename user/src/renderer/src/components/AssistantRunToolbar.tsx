@@ -1,14 +1,19 @@
 import React from 'react'
 import styles from '../pages/AssistantPage.module.css'
+import enterpriseWechatIconUrl from '../assets/企业微信.svg'
+import personalWechatIconUrl from '../assets/微信.svg'
 
 type ManagedMode = 'full' | 'semi'
+type WeChatChannel = 'personal' | 'enterprise'
 
 type Props = {
+  wechatChannel: WeChatChannel
   managedMode: ManagedMode
   configurationDisabled: boolean
   startButtonDisabled: boolean
   startButtonClassName: string
   startButtonContent: React.ReactNode
+  onWechatChannelChange: (value: WeChatChannel) => void
   onManagedModeChange: (value: ManagedMode) => void
   onToggleRunning: () => void
 }
@@ -128,14 +133,36 @@ function ToolbarDropdown<T extends string>(props: {
 
 export default function AssistantRunToolbar(props: Props): JSX.Element {
   const {
+    wechatChannel,
     managedMode,
     configurationDisabled,
     startButtonDisabled,
     startButtonClassName,
     startButtonContent,
+    onWechatChannelChange,
     onManagedModeChange,
     onToggleRunning
   } = props
+  const wechatChannelOptions: DropdownOption<WeChatChannel>[] = [
+    {
+      value: 'personal',
+      label: '个人微信',
+      icon: (
+        <span className={styles.selectIcon}>
+          <img src={personalWechatIconUrl} alt="" aria-hidden="true" />
+        </span>
+      )
+    },
+    {
+      value: 'enterprise',
+      label: '企业微信',
+      icon: (
+        <span className={`${styles.selectIcon} ${styles.selectIconEnterprise}`}>
+          <img src={enterpriseWechatIconUrl} alt="" aria-hidden="true" />
+        </span>
+      )
+    }
+  ]
   const managedModeOptions: DropdownOption<ManagedMode>[] = [
     {
       value: 'full',
@@ -159,6 +186,15 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
 
   return (
     <div className={styles.pageHeaderActions}>
+      <ToolbarDropdown
+        title="选择微信类型"
+        disabledTitle="运行中请先停止运行，再切换微信类型"
+        value={wechatChannel}
+        disabled={configurationDisabled}
+        options={wechatChannelOptions}
+        onChange={onWechatChannelChange}
+      />
+
       <ToolbarDropdown
         title="选择托管模式"
         disabledTitle="运行中请先停止运行，再切换托管模式"

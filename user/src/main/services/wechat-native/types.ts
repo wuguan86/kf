@@ -1,4 +1,5 @@
 export type ManagedMode = 'full' | 'semi'
+export type WeChatChannel = 'personal' | 'enterprise'
 
 export type NativeDriverMessage = {
   id: string
@@ -9,9 +10,21 @@ export type NativeDriverMessage = {
   is_self: boolean
   trigger_reply: boolean
   ui_id?: string
+  source?: WeChatChannel
 }
 
 export type NativeDriverResult = Record<string, any>
+
+export type UnreadConversationCandidate = {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  centerX: number
+  centerY: number
+  score: number
+}
 
 export type ParsedWeChatMessage = {
   content: string
@@ -48,4 +61,5 @@ export type WeChatVisionRuntimeConfig = {
   backendBaseUrl: string
   token: string
   tenantId: string
+  channel: WeChatChannel
 }

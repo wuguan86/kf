@@ -8,6 +8,7 @@ import { NoRoleDialog } from '../components/NoRoleDialog'
 import AssistantRunToolbar from '../components/AssistantRunToolbar'
 import { Toast, useToast } from '../components/Toast'
 import { eventBus } from '../utils/eventBus'
+import { calculateHumanReplyDelayMs } from '../utils/replyTiming'
 import styles from './AssistantPage.module.css'
 import { AppConfig } from '../config'
 
@@ -56,16 +57,10 @@ type StoreContext = {
 }
 type WeChatChannelConfig = {
   channel: 'personal' | 'enterprise'
-  corpId: string
-  apiBaseUrl: string
-  secretConfigured: 'true' | 'false'
-  tokenConfigured: 'true' | 'false'
-  encodingAesKeyConfigured: 'true' | 'false'
   managedMode?: 'full' | 'semi'
 }
 
-const MONITOR_INTERVAL_MIN = 500
-const MONITOR_INTERVAL_MAX = 1000
+const WECHAT_POLL_INTERVAL_MS = 1500
 const PIXEL_DIFF_THRESHOLD = 30
 const CHANGE_RATIO_THRESHOLD = 0.015
 const SAMPLE_STEP = 4
@@ -77,16 +72,7 @@ type WeChatChannel = 'personal' | 'enterprise'
 
 const defaultWechatChannelConfig: WeChatChannelConfig = {
   channel: 'personal',
-  corpId: '',
-  apiBaseUrl: '',
-  secretConfigured: 'false',
-  tokenConfigured: 'false',
-  encodingAesKeyConfigured: 'false',
   managedMode: 'full'
-}
-
-const getNextMonitorDelay = (): number => {
-  return Math.floor(MONITOR_INTERVAL_MIN + Math.random() * (MONITOR_INTERVAL_MAX - MONITOR_INTERVAL_MIN))
 }
 
 const getItemCenterY = (item: any): number => {
@@ -571,20 +557,6 @@ function AssistantPage(props: Props): JSX.Element {
     }
   }, [managedMode])
 
-  const releaseEnterpriseManualSessions = async () => {
-    const customerIds = Array.from(new Set(
-      messages
-        .filter((message) => message.source === 'enterprise' && message.customerId)
-        .map((message) => String(message.customerId).trim())
-        .filter(Boolean)
-    ))
-    const result = await http.post<any>('/api/user/enterprise-wechat/sessions/release-manual', { customerIds })
-    const releasedCount = Number(result?.releasedCount || 0)
-    if (releasedCount > 0) {
-      showToast(`已释放 ${releasedCount} 个企业微信人工接待会话，后续新消息将进入全托管`, 'success')
-    }
-  }
-
   const handleManagedModeChange = async (mode: 'full' | 'semi') => {
     if (isRunningRef.current || isConnecting) {
       showToast('运行中不能切换托管模式，请先停止运行', 'info')
@@ -593,17 +565,30 @@ function AssistantPage(props: Props): JSX.Element {
     if (mode === managedMode) {
       return
     }
-    if (wechatChannelRef.current === 'enterprise' && mode === 'full') {
-      try {
-        await releaseEnterpriseManualSessions()
-      } catch (error: any) {
-        const reason = error?.response?.data?.msg || error?.message || '未知原因'
-        console.error('企业微信切换全托管失败', error)
-        showToast(`切换全托管失败: ${reason}`, 'error')
-        return
-      }
-    }
     setManagedMode(mode)
+  }
+
+  const handleWechatChannelChange = async (channel: WeChatChannel) => {
+    if (isRunningRef.current || isConnecting) {
+      showToast('运行中不能切换微信类型，请先停止运行', 'info')
+      return
+    }
+    if (channel === wechatChannelRef.current) {
+      return
+    }
+    const nextConfig = normalizeWechatChannelConfig({ ...wechatChannelConfig, channel })
+    wechatChannelRef.current = nextConfig.channel
+    setWechatChannelConfig(nextConfig)
+    try {
+      await http.post('/api/user/system-config/wechat-channel', { channel: nextConfig.channel })
+      showToast(nextConfig.channel === 'enterprise' ? '已切换为企业微信' : '已切换为个人微信', 'success')
+    } catch (error: any) {
+      const fallbackConfig = normalizeWechatChannelConfig(wechatChannelConfig)
+      wechatChannelRef.current = fallbackConfig.channel
+      setWechatChannelConfig(fallbackConfig)
+      console.error('保存微信类型失败', error)
+      showToast(`切换微信类型失败: ${error?.message || '未知错误'}`, 'error')
+    }
   }
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -615,8 +600,8 @@ function AssistantPage(props: Props): JSX.Element {
   const activeRoleRef = useRef<Role | null>(null)
   const sessionConfigRef = useRef<SessionConfig | null>(null)
   const contactQueueRef = useRef<Map<string, Promise<void>>>(new Map())
-  // 个人微信共用一个真实客户端窗口，不同联系人也必须全局串行发送。
-  const personalSendQueueRef = useRef<Promise<void>>(Promise.resolve())
+  // 个人微信和企业微信都会操作真实客户端窗口，发送动作必须全局串行，避免并发抢焦点。
+  const nativeSendQueueRef = useRef<Promise<void>>(Promise.resolve())
   const lastProcessedByContactRef = useRef<Map<string, { text: string; at: number }>>(new Map())
   const outputStoreContextRef = useRef<Map<string, { contactKey: string; customerMessage: string }>>(new Map())
   const streamAbortControllersRef = useRef<Map<string, AbortController>>(new Map())
@@ -624,12 +609,7 @@ function AssistantPage(props: Props): JSX.Element {
   const wechatChannelRef = useRef<WeChatChannel>('personal')
 
   const normalizeWechatChannelConfig = (config?: Partial<WeChatChannelConfig> | null): WeChatChannelConfig => ({
-    channel: 'personal',
-    corpId: config?.corpId || '',
-    apiBaseUrl: config?.apiBaseUrl || '',
-    secretConfigured: config?.secretConfigured === 'true' ? 'true' : 'false',
-    tokenConfigured: config?.tokenConfigured === 'true' ? 'true' : 'false',
-    encodingAesKeyConfigured: config?.encodingAesKeyConfigured === 'true' ? 'true' : 'false',
+    channel: config?.channel === 'enterprise' ? 'enterprise' : 'personal',
     managedMode: config?.managedMode === 'semi' ? 'semi' : 'full'
   })
 
@@ -638,7 +618,7 @@ function AssistantPage(props: Props): JSX.Element {
       const res = await http.get<WeChatChannelConfig>('/api/user/system-config/wechat-channel')
       const nextConfig = normalizeWechatChannelConfig(res)
       setWechatChannelConfig(nextConfig)
-      wechatChannelRef.current = 'personal'
+      wechatChannelRef.current = nextConfig.channel
       return nextConfig
     } catch (error) {
       console.warn('获取微信消息通道失败，默认使用个人微信通道', error)
@@ -697,12 +677,12 @@ function AssistantPage(props: Props): JSX.Element {
     return list
   }
 
-  const enqueuePersonalWeChatSend = <T,>(task: () => Promise<T>): Promise<T> => {
+  const enqueueNativeWeChatSend = <T,>(task: () => Promise<T>): Promise<T> => {
     // 上一个发送失败也不能卡住后续队列；失败仍由当前任务自己的 catch 分支展示。
-    const runTask = personalSendQueueRef.current
+    const runTask = nativeSendQueueRef.current
       .catch(() => undefined)
       .then(task)
-    personalSendQueueRef.current = runTask.then(() => undefined, () => undefined)
+    nativeSendQueueRef.current = runTask.then(() => undefined, () => undefined)
     return runTask
   }
 
@@ -1055,13 +1035,9 @@ function AssistantPage(props: Props): JSX.Element {
                 const config = sessionConfigRef.current?.sceneConfig
                 if (config) {
                   // 回复间隔从 AI 输出完成后开始计算，避免 Dify 耗时抵消等待时间。
-                  const min = Math.max(0, config.replyIntervalStartSec || 0) * 1000
-                  const max = Math.max(min, (config.replyIntervalEndSec || 0) * 1000)
-                  if (max >= min && min >= 0) {
-                    const delayMs = Math.floor(min + Math.random() * (max - min))
-                    console.info('AI 回复生成后等待发送', { sessionKey, delayMs })
-                    await new Promise(resolve => setTimeout(resolve, delayMs))
-                  }
+                  const delayMs = calculateHumanReplyDelayMs(reply, config)
+                  console.info('AI 回复生成后等待发送', { sessionKey, delayMs, replyLength: Array.from(reply).length })
+                  await new Promise(resolve => setTimeout(resolve, delayMs))
                 }
 
                 const sendContext = { source, managedMode: managedModeRef.current, messageId, customerId, sessionKey }
@@ -1069,22 +1045,10 @@ function AssistantPage(props: Props): JSX.Element {
                 let sendRes: any
                 let sendFailed = false
                 try {
-                  if (source === 'enterprise') {
-                    if (!customerId) {
-                      throw new Error('企业微信客户ID为空，无法发送回复')
-                    }
-                    sendRes = await http.post('/api/user/enterprise-wechat/messages/send', {
-                      messageId,
-                      customerId,
-                      content: reply
-                    })
-                  } else {
-                    const api = (window as any).api
-                    // 个人微信发送会切换真实聊天窗口，统一进队列，避免不同联系人同时触发切窗。
-                    sendRes = await enqueuePersonalWeChatSend(() =>
-                      api.sendWeChatMessage({ target: contact, content: reply })
-                    )
-                  }
+                  const api = (window as any).api
+                  sendRes = await enqueueNativeWeChatSend(() =>
+                    api.sendWeChatMessage({ target: contact, content: reply })
+                  )
                 } catch (sendError) {
                   const responseData = (sendError as any)?.response?.data
                   const reason = responseData?.msg || responseData?.message || (sendError instanceof Error ? sendError.message : String(sendError || '未知原因'))
@@ -1099,23 +1063,11 @@ function AssistantPage(props: Props): JSX.Element {
                     showAutoSendFailure(reason)
                   } else {
                     console.info('全托管自动发送成功', sendContext)
-                    if (source === 'enterprise') {
-                      setMessages((prev) => [...prev, {
-                        id: `${contact}-${Date.now()}-reply-${Math.random().toString(36).substr(2, 9)}`,
-                        sessionKey,
-                        contact,
-                        content: reply,
-                        isSelf: true,
-                        timestamp: Date.now(),
-                        source,
-                        messageId,
-                        customerId
-                      }])
-                    } else if (sendRes?.sentMessage) {
+                    if (sendRes?.sentMessage) {
                       enqueueIncoming({
                         ...sendRes.sentMessage,
                         contact,
-                        source: 'personal',
+                        source,
                         trigger_reply: false
                       })
                     }
@@ -1242,11 +1194,8 @@ function AssistantPage(props: Props): JSX.Element {
       if (!isRunningRef.current) return
       try {
         const api = (window as any).api
-        const res = wechatChannelRef.current === 'enterprise'
-          ? await http.get<any>('/api/user/enterprise-wechat/messages/poll', {
-              params: { managedMode: managedModeRef.current }
-            })
-          : await api.pollWeChatMessages()
+        const currentChannel = wechatChannelRef.current
+        const res = await api.pollWeChatMessages()
         if (res?.ok && Array.isArray(res.messages)) {
           pollFailureCountRef.current = 0
           if (res.messages.length > 0) {
@@ -1270,7 +1219,7 @@ function AssistantPage(props: Props): JSX.Element {
           })
           for (const msg of res.messages) {
             if (msg?.type === 'text' && msg?.content) {
-              enqueueIncoming(msg)
+              enqueueIncoming({ ...msg, source: msg?.source === 'enterprise' ? 'enterprise' : currentChannel })
             }
           }
         } else if (res?.error) {
@@ -1287,10 +1236,7 @@ function AssistantPage(props: Props): JSX.Element {
         }
       } finally {
         if (isRunningRef.current) {
-          const delay = wechatChannelRef.current === 'personal'
-            ? 5_000
-            : 600 + Math.floor(Math.random() * 600)
-          pollTimeoutRef.current = setTimeout(loop, delay)
+          pollTimeoutRef.current = setTimeout(loop, WECHAT_POLL_INTERVAL_MS)
         }
       }
     }
@@ -1511,13 +1457,14 @@ function AssistantPage(props: Props): JSX.Element {
         console.error('Failed to check membership before running', e)
       }
 
-      if (wechatChannelRef.current === 'personal' && api.configureWeChatVision) {
+      if (api.configureWeChatVision) {
         const storedBaseUrl = localStorage.getItem('backendBaseUrl')
         const backendUrl = (storedBaseUrl || backendBaseUrl || AppConfig.apiBaseUrl).replace(/\/api\/?$/, '').replace(/\/$/, '')
         const visionConfigResult = await api.configureWeChatVision({
           backendBaseUrl: backendUrl,
           token: userToken,
-          tenantId: tenantId?.trim() || '1'
+          tenantId: tenantId?.trim() || '1',
+          channel: wechatChannelRef.current
         })
         if (!visionConfigResult?.ok) {
           throw new Error(visionConfigResult?.message || visionConfigResult?.error || '新方式视觉解析配置失败')
@@ -1599,11 +1546,13 @@ function AssistantPage(props: Props): JSX.Element {
         </div>
         
         <AssistantRunToolbar
+          wechatChannel={wechatChannelConfig.channel}
           managedMode={managedMode}
           configurationDisabled={configurationDisabled}
           startButtonDisabled={isSending || isConnecting}
           startButtonClassName={btnClass}
           startButtonContent={btnContent}
+          onWechatChannelChange={handleWechatChannelChange}
           onManagedModeChange={handleManagedModeChange}
           onToggleRunning={toggleRunning}
         />

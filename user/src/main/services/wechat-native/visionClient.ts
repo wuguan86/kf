@@ -41,7 +41,7 @@ export const parseWeChatSnapshotWithVision = async (
         imageDataUrl,
         windowTitle: window.title,
         previousDigest,
-        driverMode: 'native'
+        driverMode: config.channel === 'enterprise' ? 'native-enterprise' : 'native-personal'
       }),
       signal: controller.signal
     })

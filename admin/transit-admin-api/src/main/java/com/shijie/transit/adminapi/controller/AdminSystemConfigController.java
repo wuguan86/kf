@@ -65,11 +65,6 @@ public class AdminSystemConfigController {
         Map<String, String> config = new HashMap<>();
         String channel = systemConfigService.getValue("wechat_channel");
         config.put("channel", "enterprise".equalsIgnoreCase(channel) ? "enterprise" : "personal");
-        config.put("corpId", defaultString(systemConfigService.getValue("enterprise_wechat_corp_id")));
-        config.put("apiBaseUrl", defaultString(systemConfigService.getValue("enterprise_wechat_api_base_url")));
-        config.put("secretConfigured", hasText(systemConfigService.getValue("enterprise_wechat_secret")) ? "true" : "false");
-        config.put("tokenConfigured", hasText(systemConfigService.getValue("enterprise_wechat_token")) ? "true" : "false");
-        config.put("encodingAesKeyConfigured", hasText(systemConfigService.getValue("enterprise_wechat_encoding_aes_key")) ? "true" : "false");
         return Result.success(config);
     }
 
@@ -79,11 +74,6 @@ public class AdminSystemConfigController {
             String channel = "enterprise".equalsIgnoreCase(config.get("channel")) ? "enterprise" : "personal";
             systemConfigService.setValue("wechat_channel", channel, "微信消息通道");
         }
-        setSecretConfig(config, "corpId", "enterprise_wechat_corp_id", "企业微信 CorpID");
-        setSecretConfig(config, "secret", "enterprise_wechat_secret", "企业微信 Secret");
-        setSecretConfig(config, "token", "enterprise_wechat_token", "企业微信回调 Token");
-        setSecretConfig(config, "encodingAesKey", "enterprise_wechat_encoding_aes_key", "企业微信回调 EncodingAESKey");
-        setSecretConfig(config, "apiBaseUrl", "enterprise_wechat_api_base_url", "企业微信 API 地址");
         return Result.success(null);
     }
 
@@ -196,22 +186,4 @@ public class AdminSystemConfigController {
         return level;
     }
 
-    private void setSecretConfig(Map<String, String> config, String requestKey, String configKey, String description) {
-        if (!config.containsKey(requestKey)) {
-            return;
-        }
-        String value = config.get(requestKey);
-        if (value == null || value.isBlank() || "********".equals(value.trim())) {
-            return;
-        }
-        systemConfigService.setValue(configKey, value.trim(), description);
-    }
-
-    private boolean hasText(String value) {
-        return value != null && !value.isBlank();
-    }
-
-    private String defaultString(String value) {
-        return value == null ? "" : value;
-    }
 }

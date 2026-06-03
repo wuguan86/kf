@@ -1,5 +1,9 @@
 import { spawn } from 'child_process'
-import type { WindowBounds } from './types'
+import type { WeChatChannel, WindowBounds } from './types'
+
+const normalizeChannel = (channel?: WeChatChannel): WeChatChannel => {
+  return channel === 'enterprise' ? 'enterprise' : 'personal'
+}
 
 const runPowerShellJson = async (script: string, timeoutMs = 5000): Promise<any> => {
   return new Promise((resolve, reject) => {
@@ -61,25 +65,42 @@ const normalizeWindowBounds = (result: any): WindowBounds | null => {
   return window
 }
 
-export const isPlausibleWeChatWindow = (window: WindowBounds): boolean => {
+export const isPlausibleWeChatWindow = (window: WindowBounds, channel: WeChatChannel = 'personal'): boolean => {
+  const normalizedChannel = normalizeChannel(channel)
   const title = window.title.trim()
   const className = window.className.trim()
   const processName = String(window.processName || '').trim().toLowerCase()
+  const sizeLooksRight = window.width >= 500 && window.height >= 500 && window.width <= 1800 && window.height <= 1400
+  if (!sizeLooksRight) {
+    return false
+  }
+
+  if (normalizedChannel === 'enterprise') {
+    const looksLikeProcess = processName === 'wxwork' || processName === 'wecom' || processName === 'wechatwork'
+    const looksLikeClass = /wxwork|wework|wecom/i.test(className) || /^Qt.*QWindowIcon/i.test(className)
+    const looksLikeTitle = title === '企业微信' || /企业微信|WeCom|WeChat Work/i.test(title)
+    return looksLikeProcess || looksLikeClass || looksLikeTitle
+  }
+
   const looksLikeProcess = processName === 'weixin' || processName === 'wechat' || processName === 'wechatappex'
   const looksLikeClass = className === 'mmui::MainWindow' || /^Qt.*QWindowIcon/i.test(className)
   const looksLikeTitle = title === '微信' || /微信|WeChat/i.test(title)
-  const sizeLooksRight = window.width >= 500 && window.height >= 500 && window.width <= 1800 && window.height <= 1400
-  return sizeLooksRight && (looksLikeProcess || looksLikeClass || looksLikeTitle)
+  return looksLikeProcess || looksLikeClass || looksLikeTitle
 }
 
-export const findWeChatWindow = async (): Promise<WindowBounds | null> => {
+export const findWeChatWindow = async (channel: WeChatChannel = 'personal'): Promise<WindowBounds | null> => {
   if (process.platform !== 'win32') {
     console.warn('新方式当前仅支持 Windows 微信窗口识别')
     return null
   }
 
+  const normalizedChannel = normalizeChannel(channel)
   const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$targetChannel = "${normalizedChannel}"
+$personalProcessNames = @("Weixin", "WeChat", "WeChatAppEx")
+$enterpriseProcessNames = @("WXWork", "WeCom", "WeChatWork")
+$targetProcessNames = if ($targetChannel -eq "enterprise") { $enterpriseProcessNames } else { $personalProcessNames }
 Add-Type @"
 using System;
 using System.Text;
@@ -121,42 +142,48 @@ function Build-WindowInfo([IntPtr]$hwnd) {
     height = $height
   }
 }
+function Test-TargetWindow($info) {
+  if (-not $info) { return $false }
+  $looksLikeProcess = $info.processName -in $targetProcessNames
+  if ($targetChannel -eq "enterprise") {
+    $looksLikeClass = $info.className -like "*WXWork*" -or $info.className -like "*WeWork*" -or $info.className -like "*WeCom*" -or $info.className -like "Qt*QWindowIcon*"
+    $looksLikeTitle = $info.title -eq "企业微信" -or $info.title -like "*企业微信*" -or $info.title -like "*WeCom*" -or $info.title -like "*WeChat Work*"
+  } else {
+    $looksLikeClass = $info.className -eq "mmui::MainWindow" -or $info.className -like "Qt*QWindowIcon*"
+    $looksLikeTitle = $info.title -eq "微信" -or $info.title -like "*微信*" -or $info.title -like "*WeChat*"
+  }
+  $looksLikeAssistant = $info.title -like "*AI运营助手*" -or $info.title -like "*AI 运营助手*" -or $info.title -like "*Codex*" -or $info.title -like "*Google Chrome*"
+  $sizeLooksRight = $info.width -ge 500 -and $info.height -ge 500 -and $info.width -le 1800 -and $info.height -le 1400
+  return $sizeLooksRight -and -not $looksLikeAssistant -and ($looksLikeProcess -or $looksLikeClass -or $looksLikeTitle)
+}
 $matches = New-Object System.Collections.Generic.List[object]
-$mainProcess = Get-Process -Name Weixin -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+$mainProcess = Get-Process -Name $targetProcessNames -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if ($mainProcess) {
   $info = Build-WindowInfo([IntPtr]$mainProcess.MainWindowHandle)
-  if ($info) { $matches.Add($info) }
+  if (Test-TargetWindow $info) { $matches.Add($info) }
 }
 [Win32WindowSearch]::EnumWindows({
   param([IntPtr]$hwnd, [IntPtr]$lparam)
   if (-not [Win32WindowSearch]::IsWindowVisible($hwnd)) { return $true }
   $info = Build-WindowInfo($hwnd)
-  if (-not $info) { return $true }
-  $looksLikeProcess = $info.processName -in @("Weixin", "WeChat", "WeChatAppEx")
-  $looksLikeClass = $info.className -eq "mmui::MainWindow" -or $info.className -like "Qt*QWindowIcon*"
-  $looksLikeTitle = $info.title -eq "微信" -or $info.title -like "*微信*" -or $info.title -like "*WeChat*"
-  $looksLikeAssistant = $info.title -like "*AI运营助手*" -or $info.title -like "*AI 运营助手*" -or $info.title -like "*Codex*" -or $info.title -like "*Google Chrome*"
-  $sizeLooksRight = $info.width -ge 500 -and $info.height -ge 500 -and $info.width -le 1800 -and $info.height -le 1400
-  if ($sizeLooksRight -and -not $looksLikeAssistant -and ($looksLikeProcess -or $looksLikeClass -or $looksLikeTitle)) {
-    $matches.Add($info)
-  }
+  if (Test-TargetWindow $info) { $matches.Add($info) }
   return $true
 }, [IntPtr]::Zero) | Out-Null
 $matches |
-  Sort-Object @{ Expression = { if ($_.processName -eq "Weixin") { 0 } elseif ($_.className -like "Qt*QWindowIcon*") { 1 } else { 2 } } }, @{ Expression = { -$_.width * $_.height } } |
+  Sort-Object @{ Expression = { if ($_.processName -in $targetProcessNames) { 0 } elseif ($_.className -like "Qt*QWindowIcon*") { 1 } else { 2 } } }, @{ Expression = { -$_.width * $_.height } } |
   Select-Object -First 1 |
   ConvertTo-Json -Compress
 `
 
   try {
     const window = normalizeWindowBounds(await runPowerShellJson(script))
-    if (!window || !isPlausibleWeChatWindow(window)) {
-      console.warn('新方式未找到可信的微信窗口', { window })
+    if (!window || !isPlausibleWeChatWindow(window, normalizedChannel)) {
+      console.warn('新方式未找到可信的微信窗口', { channel: normalizedChannel, window })
       return null
     }
     return window
   } catch (error) {
-    console.error('新方式查找微信窗口失败', error)
+    console.error('新方式查找微信窗口失败', { channel: normalizedChannel, error })
     return null
   }
 }

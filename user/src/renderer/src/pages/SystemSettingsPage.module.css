@@ -93,73 +93,6 @@
   border-color: #d1d5db;
 }
 
-.enterpriseWechatCard {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.enterpriseWechatInfo {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
-}
-
-.enterpriseWechatIcon {
-  flex: 0 0 auto;
-  background: #eefbf3;
-  color: #07c160;
-}
-
-.enterpriseWechatText {
-  min-width: 0;
-}
-
-.enterpriseWechatText h4 {
-  margin: 0 0 8px;
-  color: #1f2937;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.enterpriseWechatMeta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.enterpriseWechatMeta span {
-  max-width: 220px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #f6f8fb;
-  color: #4b5563;
-  font-size: 12px;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.enterpriseWechatBtn {
-  flex: 0 0 auto;
-  padding: 8px 16px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #fff;
-  color: #111827;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.enterpriseWechatBtn:hover {
-  background: #f9fafb;
-  border-color: #d1d5db;
-}
-
 /* Contact Card */
 .contactGrid {
   display: grid;
@@ -282,15 +215,6 @@
 }
 
 @media (max-width: 720px) {
-  .enterpriseWechatCard {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .enterpriseWechatBtn {
-    width: 100%;
-  }
-
   .contactGrid {
     grid-template-columns: 1fr;
   }

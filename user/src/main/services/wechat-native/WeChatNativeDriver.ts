@@ -5,19 +5,27 @@ import { findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './window
 import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshots } from './snapshotDiff'
 import { parseWeChatSnapshotWithVision } from './visionClient'
-import { pasteAndSendText } from './inputBackend'
+import { clickConversationCandidate, pasteAndSendText } from './inputBackend'
+import { findUnreadConversationCandidates } from './unreadDetector'
 import type {
   ManagedMode,
   NativeDriverMessage,
   NativeDriverResult,
   ParsedWeChatSnapshot,
+  WeChatChannel,
   WeChatVisionRuntimeConfig,
   WindowBounds
 } from './types'
 
 const MAX_PERSISTED_REPLIED_MESSAGES = 200
-const NATIVE_POLL_INTERVAL_MS = 5000
+const NATIVE_POLL_INTERVAL_MS = 1500
 const MAX_CONSECUTIVE_VISION_FAILURES = 3
+const UNREAD_SWITCH_SETTLE_MIN_MS = 320
+const UNREAD_SWITCH_SETTLE_MAX_MS = 760
+
+const wait = (milliseconds: number): Promise<void> => {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
 
 type RepliedMessageStore = {
   version: number
@@ -32,7 +40,8 @@ export class WeChatNativeDriver {
   private repliedCustomerFingerprintOrder: string[] = []
   private lastWindow: WindowBounds | null = null
   private storeLoaded = false
-  private runtimeConfig: WeChatVisionRuntimeConfig = { backendBaseUrl: '', token: '', tenantId: '1' }
+  private channel: WeChatChannel = 'personal'
+  private runtimeConfig: WeChatVisionRuntimeConfig = { backendBaseUrl: '', token: '', tenantId: '1', channel: 'personal' }
   private lastPollAt = 0
   private lastScreenshotPng: Buffer | null = null
   private lastSnapshotDigest = ''
@@ -42,22 +51,26 @@ export class WeChatNativeDriver {
   private runGeneration = 0
 
   configure(config: Partial<WeChatVisionRuntimeConfig>): NativeDriverResult {
+    const nextChannel: WeChatChannel = config.channel === 'enterprise' ? 'enterprise' : 'personal'
+    this.channel = nextChannel
     this.runtimeConfig = {
       backendBaseUrl: String(config.backendBaseUrl || '').trim(),
       token: String(config.token || '').trim(),
-      tenantId: String(config.tenantId || '1').trim() || '1'
+      tenantId: String(config.tenantId || '1').trim() || '1',
+      channel: nextChannel
     }
     console.info('新方式视觉解析配置已更新', {
       hasBackendBaseUrl: !!this.runtimeConfig.backendBaseUrl,
       hasToken: !!this.runtimeConfig.token,
-      tenantId: this.runtimeConfig.tenantId
+      tenantId: this.runtimeConfig.tenantId,
+      channel: this.channel
     })
     return { ok: true, mode: 'native' }
   }
 
   async start(): Promise<NativeDriverResult> {
     await this.loadRepliedCustomerFingerprints()
-    const window = await findWeChatWindow()
+    const window = await findWeChatWindow(this.channel)
     if (!window) {
       return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到微信窗口，请先打开并登录微信' }
     }
@@ -108,7 +121,7 @@ export class WeChatNativeDriver {
     }
     this.lastPollAt = nowMs
 
-    const window = await findWeChatWindow()
+    const window = await findWeChatWindow(this.channel)
     if (!window) {
       return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到微信窗口' }
     }
@@ -135,13 +148,13 @@ export class WeChatNativeDriver {
     const hadPreviousBaseline = this.seenMessageFingerprints.size > 0
     const latestCustomerMessage = [...snapshot.messages].reverse().find((message) => !message.isSelf)
     const latestCustomerKey = latestCustomerMessage
-      ? this.buildFingerprint(snapshot.contact, latestCustomerMessage.content, latestCustomerMessage.isSelf)
+      ? this.buildFingerprint(snapshot.contact, latestCustomerMessage.content, latestCustomerMessage.isSelf, latestCustomerMessage.uiId)
       : ''
 
     const messages: NativeDriverMessage[] = []
     let hasNewReplyTrigger = false
     for (const parsedMessage of snapshot.messages) {
-      const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf)
+      const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf, parsedMessage.uiId)
       if (this.seenMessageFingerprints.has(fingerprint)) {
         continue
       }
@@ -181,7 +194,8 @@ export class WeChatNativeDriver {
         type: 'text',
         is_self: parsedMessage.isSelf,
         trigger_reply: shouldTriggerReply,
-        ui_id: parsedMessage.uiId
+        ui_id: parsedMessage.uiId,
+        source: this.channel
       })
     }
 
@@ -206,8 +220,8 @@ export class WeChatNativeDriver {
       return { ok: false, error: 'empty_content', message: '发送内容为空' }
     }
     // 发送会真实操作窗口，必须每次重新定位可信微信窗口，避免复用过期坐标。
-    const window = await findWeChatWindow()
-    if (!window || !isPlausibleWeChatWindow(window)) {
+    const window = await findWeChatWindow(this.channel)
+    if (!window || !isPlausibleWeChatWindow(window, this.channel)) {
       return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到可信微信窗口，无法发送消息' }
     }
     this.lastWindow = window
@@ -264,7 +278,7 @@ export class WeChatNativeDriver {
     try {
       const snapshot = await this.readSnapshot(window)
       for (const message of snapshot.messages) {
-        this.seenMessageFingerprints.add(this.buildFingerprint(snapshot.contact, message.content, message.isSelf))
+        this.seenMessageFingerprints.add(this.buildFingerprint(snapshot.contact, message.content, message.isSelf, message.uiId))
       }
       console.info('新方式已建立当前会话消息基线', { count: snapshot.messages.length })
     } catch (error) {
@@ -273,11 +287,40 @@ export class WeChatNativeDriver {
   }
 
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {
-    const screenshot = await captureWeChatWindow(window)
-    const diff = comparePngSnapshots(this.lastScreenshotPng, screenshot.png)
+    let screenshot = await captureWeChatWindow(window)
+    let diff = comparePngSnapshots(this.lastScreenshotPng, screenshot.png)
     this.lastScreenshotPng = screenshot.png
     const shouldRetryFailedVision = this.consecutiveVisionFailures > 0
+    let switchedUnreadConversation = false
     if (!diff.changed && !shouldRetryFailedVision) {
+      const unreadCandidates = findUnreadConversationCandidates(screenshot, window, this.channel)
+      const candidate = unreadCandidates[0]
+      if (candidate) {
+        console.info('新方式检测到未读会话红点，准备拟人化切换会话', {
+          candidateId: candidate.id,
+          centerX: candidate.centerX,
+          centerY: candidate.centerY,
+          score: candidate.score,
+          channel: this.channel
+        })
+        switchedUnreadConversation = await clickConversationCandidate(window, candidate)
+        if (switchedUnreadConversation) {
+          const settleMs = UNREAD_SWITCH_SETTLE_MIN_MS +
+            Math.floor(Math.random() * (UNREAD_SWITCH_SETTLE_MAX_MS - UNREAD_SWITCH_SETTLE_MIN_MS + 1))
+          await wait(settleMs)
+          const previousPng = screenshot.png
+          screenshot = await captureWeChatWindow(window)
+          diff = comparePngSnapshots(previousPng, screenshot.png)
+          this.lastScreenshotPng = screenshot.png
+          console.info('新方式已切换未读会话并重新截图', {
+            candidateId: candidate.id,
+            settleMs,
+            changedRatio: diff.changedRatio
+          })
+        }
+      }
+    }
+    if (!diff.changed && !shouldRetryFailedVision && !switchedUnreadConversation) {
       console.info('新方式截图无明显变化，本轮不请求视觉模型', {
         digest: diff.digest,
         changedRatio: diff.changedRatio
@@ -382,8 +425,13 @@ export class WeChatNativeDriver {
     return join(app.getPath('userData'), 'wechat-native-replied-messages.json')
   }
 
-  private buildFingerprint(contact: string, content: string, isSelf: boolean): string {
-    return `${contact}:${isSelf ? 'self' : 'customer'}:${this.normalizeFingerprintContent(content)}`
+  private buildFingerprint(contact: string, content: string, isSelf: boolean, uiId?: string): string {
+    const normalizedUiId = String(uiId || '').trim()
+    const normalizedContent = this.normalizeFingerprintContent(content)
+    if (normalizedUiId) {
+      return `${contact}:${isSelf ? 'self' : 'customer'}:${normalizedUiId}:${normalizedContent}`
+    }
+    return `${contact}:${isSelf ? 'self' : 'customer'}:${normalizedContent}`
   }
 
   private buildSentSelfMessage(target: unknown, content: string): NativeDriverMessage {
@@ -398,7 +446,8 @@ export class WeChatNativeDriver {
       type: 'text',
       is_self: true,
       trigger_reply: false,
-      ui_id: uiId
+      ui_id: uiId,
+      source: this.channel
     }
   }
 

@@ -200,7 +200,7 @@ public class WechatVisionService {
   }
 
   private String userPrompt(WechatVisionParseRequest request) {
-    return "请解析这张微信聊天截图。窗口标题：" + defaultString(request.windowTitle())
+    return "请解析这张微信或企业微信聊天截图。窗口标题：" + defaultString(request.windowTitle())
         + "；驱动方式：" + defaultString(request.driverMode())
         + "；上一张截图摘要：" + defaultString(request.previousDigest()) + "。";
   }

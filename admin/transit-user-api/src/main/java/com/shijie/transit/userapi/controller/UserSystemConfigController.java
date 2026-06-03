@@ -5,7 +5,7 @@ import com.shijie.transit.common.db.entity.SystemConfigEntity;
 import com.shijie.transit.common.mapper.SystemConfigMapper;
 import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.web.Result;
-import com.shijie.transit.userapi.enterprisewechat.EnterpriseWeChatConfigService;
+import com.shijie.transit.userapi.service.WeChatChannelConfigService;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.MediaType;
@@ -17,7 +17,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.util.StringUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,11 +29,11 @@ import java.util.Map;
 public class UserSystemConfigController {
 
     private final SystemConfigMapper systemConfigMapper;
-    private final EnterpriseWeChatConfigService enterpriseWeChatConfigService;
+    private final WeChatChannelConfigService weChatChannelConfigService;
 
-    public UserSystemConfigController(SystemConfigMapper systemConfigMapper, EnterpriseWeChatConfigService enterpriseWeChatConfigService) {
+    public UserSystemConfigController(SystemConfigMapper systemConfigMapper, WeChatChannelConfigService weChatChannelConfigService) {
         this.systemConfigMapper = systemConfigMapper;
-        this.enterpriseWeChatConfigService = enterpriseWeChatConfigService;
+        this.weChatChannelConfigService = weChatChannelConfigService;
     }
 
     @GetMapping("/customer-service")
@@ -63,22 +62,17 @@ public class UserSystemConfigController {
     public Result<Map<String, String>> getWechatChannel(Authentication authentication) {
         TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
         Map<String, String> config = new HashMap<>();
-        String channel = readConfig("wechat_channel");
+        String channel = weChatChannelConfigService.getChannelConfig(principal.tenantId()).channel();
         config.put("channel", "enterprise".equalsIgnoreCase(channel) ? "enterprise" : "personal");
-        config.put("corpId", defaultString(readConfig("enterprise_wechat_corp_id")));
-        config.put("apiBaseUrl", defaultString(readConfig("enterprise_wechat_api_base_url")));
-        config.put("secretConfigured", StringUtils.hasText(readConfig("enterprise_wechat_secret")) ? "true" : "false");
-        config.put("tokenConfigured", StringUtils.hasText(readConfig("enterprise_wechat_token")) ? "true" : "false");
-        config.put("encodingAesKeyConfigured", StringUtils.hasText(readConfig("enterprise_wechat_encoding_aes_key")) ? "true" : "false");
-        config.put("managedMode", enterpriseWeChatConfigService.getManagedMode(principal.tenantId()));
+        config.put("managedMode", weChatChannelConfigService.getManagedMode(principal.tenantId()));
         return Result.success(config);
     }
 
     @PostMapping("/wechat-channel")
-    public Result<Void> updateWechatChannel(@RequestBody EnterpriseWeChatConfigService.SaveWeChatChannelCommand command,
+    public Result<Void> updateWechatChannel(@RequestBody WeChatChannelConfigService.SaveWeChatChannelCommand command,
                                             Authentication authentication) {
         TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
-        enterpriseWeChatConfigService.saveTenantConfig(principal.tenantId(), command);
+        weChatChannelConfigService.saveTenantConfig(principal.tenantId(), command);
         return Result.success(null);
     }
 
@@ -86,7 +80,7 @@ public class UserSystemConfigController {
     public Result<Void> updateWechatManagedMode(@RequestBody ManagedModeRequest request,
                                                 Authentication authentication) {
         TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
-        enterpriseWeChatConfigService.saveManagedMode(principal.tenantId(), request.mode());
+        weChatChannelConfigService.saveManagedMode(principal.tenantId(), request.mode());
         return Result.success(null);
     }
 
@@ -116,10 +110,6 @@ public class UserSystemConfigController {
                 new LambdaQueryWrapper<SystemConfigEntity>().eq(SystemConfigEntity::getConfigKey, key)
         );
         return entity == null ? "" : entity.getConfigValue();
-    }
-
-    private String defaultString(String value) {
-        return value == null ? "" : value;
     }
 
     public record ManagedModeRequest(String mode) {

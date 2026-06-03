@@ -243,11 +243,12 @@ ipcMain.handle('wechat-bridge-set-managed-mode', async (_, mode: 'full' | 'semi'
   return wechatNativeDriver.setManagedMode(normalizedMode)
 })
 
-ipcMain.handle('wechat-bridge-configure-vision', async (_, payload: { backendBaseUrl?: string; token?: string; tenantId?: string }) => {
+ipcMain.handle('wechat-bridge-configure-vision', async (_, payload: { backendBaseUrl?: string; token?: string; tenantId?: string; channel?: 'personal' | 'enterprise' }) => {
   return wechatNativeDriver.configure({
     backendBaseUrl: payload?.backendBaseUrl,
     token: payload?.token,
-    tenantId: payload?.tenantId
+    tenantId: payload?.tenantId,
+    channel: payload?.channel
   })
 })
 
@@ -290,20 +291,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  void wechatNativeDriver.stop()
-  wechatBridgeDesiredRunning = false
-  if (wechatBridgeRestartTimer) {
-    clearTimeout(wechatBridgeRestartTimer)
-    wechatBridgeRestartTimer = null
-  }
-  if (wechatBridgeProcess && wechatBridgeProcess.pid) {
-    try {
-      console.log('Killing WeChat Bridge before quit...')
-      killProcessTree(wechatBridgeProcess.pid)
-    } catch (e) {
-      console.error('Failed to kill WeChat Bridge before quit:', e)
-    }
-  }
-  wechatBridgeProcess = null
+  // 客户端退出时只需要停止当前原生微信驱动，旧 sidecar 进程状态已不再存在。
+  void wechatNativeDriver.stop().catch((error) => {
+    console.error('客户端关闭时停止微信驱动失败', error)
+  })
 })
 

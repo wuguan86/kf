@@ -9,8 +9,7 @@ public class TenantProperties {
   private String headerName = "X-Tenant-Id";
   private List<String> ignoredPathPrefixes = new ArrayList<>(List.of(
       "/actuator",
-      "/api/user/auth",
-      "/api/user/enterprise-wechat/callback"));
+      "/api/user/auth"));
 
   public String getHeaderName() {
     return headerName;
