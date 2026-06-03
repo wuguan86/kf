@@ -1,0 +1,408 @@
+import { app } from 'electron'
+import { mkdir, readFile, writeFile } from 'fs/promises'
+import { dirname, join } from 'path'
+import { findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
+import { captureWeChatWindow } from './screenReader'
+import { comparePngSnapshots } from './snapshotDiff'
+import { parseWeChatSnapshotWithVision } from './visionClient'
+import { pasteAndSendText } from './inputBackend'
+import type {
+  ManagedMode,
+  NativeDriverMessage,
+  NativeDriverResult,
+  ParsedWeChatSnapshot,
+  WeChatVisionRuntimeConfig,
+  WindowBounds
+} from './types'
+
+const MAX_PERSISTED_REPLIED_MESSAGES = 200
+const NATIVE_POLL_INTERVAL_MS = 5000
+const MAX_CONSECUTIVE_VISION_FAILURES = 3
+
+type RepliedMessageStore = {
+  version: number
+  fingerprints: string[]
+}
+
+export class WeChatNativeDriver {
+  private running = false
+  private managedMode: ManagedMode = 'full'
+  private seenMessageFingerprints = new Set<string>()
+  private repliedCustomerFingerprints = new Set<string>()
+  private repliedCustomerFingerprintOrder: string[] = []
+  private lastWindow: WindowBounds | null = null
+  private storeLoaded = false
+  private runtimeConfig: WeChatVisionRuntimeConfig = { backendBaseUrl: '', token: '', tenantId: '1' }
+  private lastPollAt = 0
+  private lastScreenshotPng: Buffer | null = null
+  private lastSnapshotDigest = ''
+  private visionRequestRunning = false
+  private consecutiveVisionFailures = 0
+  private lastVisionErrorMessage = ''
+  private runGeneration = 0
+
+  configure(config: Partial<WeChatVisionRuntimeConfig>): NativeDriverResult {
+    this.runtimeConfig = {
+      backendBaseUrl: String(config.backendBaseUrl || '').trim(),
+      token: String(config.token || '').trim(),
+      tenantId: String(config.tenantId || '1').trim() || '1'
+    }
+    console.info('新方式视觉解析配置已更新', {
+      hasBackendBaseUrl: !!this.runtimeConfig.backendBaseUrl,
+      hasToken: !!this.runtimeConfig.token,
+      tenantId: this.runtimeConfig.tenantId
+    })
+    return { ok: true, mode: 'native' }
+  }
+
+  async start(): Promise<NativeDriverResult> {
+    await this.loadRepliedCustomerFingerprints()
+    const window = await findWeChatWindow()
+    if (!window) {
+      return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到微信窗口，请先打开并登录微信' }
+    }
+    await focusWindow(window.hwnd)
+    this.lastWindow = window
+    this.running = true
+    this.runGeneration += 1
+    this.seenMessageFingerprints.clear()
+    this.lastPollAt = 0
+    this.lastScreenshotPng = null
+    this.lastSnapshotDigest = ''
+    this.consecutiveVisionFailures = 0
+    this.lastVisionErrorMessage = ''
+    console.info('新方式微信视觉驱动已启动', {
+      title: window.title,
+      className: window.className,
+      processName: window.processName,
+      repliedCustomerCount: this.repliedCustomerFingerprints.size,
+      bounds: { x: window.x, y: window.y, width: window.width, height: window.height }
+    })
+    return { ok: true, mode: 'native' }
+  }
+
+  async stop(): Promise<NativeDriverResult> {
+    this.running = false
+    this.runGeneration += 1
+    this.seenMessageFingerprints.clear()
+    this.lastScreenshotPng = null
+    this.lastSnapshotDigest = ''
+    this.visionRequestRunning = false
+    this.lastVisionErrorMessage = ''
+    console.info('新方式微信视觉驱动已停止')
+    return { ok: true, mode: 'native' }
+  }
+
+  async poll(): Promise<NativeDriverResult> {
+    if (!this.running) {
+      return { ok: true, messages: [] }
+    }
+    const pollGeneration = this.runGeneration
+    const nowMs = Date.now()
+    if (this.lastPollAt > 0 && nowMs - this.lastPollAt < NATIVE_POLL_INTERVAL_MS) {
+      return { ok: true, messages: [] }
+    }
+    if (this.visionRequestRunning) {
+      console.info('新方式上一轮视觉解析仍在执行，本轮跳过')
+      return { ok: true, messages: [] }
+    }
+    this.lastPollAt = nowMs
+
+    const window = await findWeChatWindow()
+    if (!window) {
+      return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到微信窗口' }
+    }
+    this.lastWindow = window
+    const snapshot = await this.readSnapshotIfChanged(window)
+    if (!snapshot) {
+      if (this.consecutiveVisionFailures >= MAX_CONSECUTIVE_VISION_FAILURES && this.lastVisionErrorMessage) {
+        return { ok: false, error: 'vision_parse_failed', message: this.lastVisionErrorMessage }
+      }
+      return { ok: true, messages: [] }
+    }
+    if (snapshot.messages.length === 0) {
+      return { ok: true, messages: [] }
+    }
+    if (!this.running || pollGeneration !== this.runGeneration) {
+      console.info('新方式本轮视觉解析跨过停止或重启，丢弃过期消息结果', {
+        pollGeneration,
+        currentGeneration: this.runGeneration,
+        messageCount: snapshot.messages.length
+      })
+      return { ok: true, messages: [] }
+    }
+
+    const hadPreviousBaseline = this.seenMessageFingerprints.size > 0
+    const latestCustomerMessage = [...snapshot.messages].reverse().find((message) => !message.isSelf)
+    const latestCustomerKey = latestCustomerMessage
+      ? this.buildFingerprint(snapshot.contact, latestCustomerMessage.content, latestCustomerMessage.isSelf)
+      : ''
+
+    const messages: NativeDriverMessage[] = []
+    let hasNewReplyTrigger = false
+    for (const parsedMessage of snapshot.messages) {
+      const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf)
+      if (this.seenMessageFingerprints.has(fingerprint)) {
+        continue
+      }
+      this.seenMessageFingerprints.add(fingerprint)
+      if (parsedMessage.isSelf) {
+        console.info('新方式轮询识别到己方消息，仅更新基线不追加显示', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          uiId: parsedMessage.uiId
+        })
+        continue
+      }
+      const shouldTriggerReply = !parsedMessage.isSelf &&
+        fingerprint === latestCustomerKey &&
+        this.managedMode === 'full' &&
+        !this.repliedCustomerFingerprints.has(fingerprint)
+
+      if (shouldTriggerReply) {
+        hasNewReplyTrigger = true
+        await this.markCustomerMessageReplied(fingerprint)
+      }
+      if (!shouldTriggerReply && !hadPreviousBaseline) {
+        console.info('新方式首次扫描跳过当前可见历史消息', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          isSelf: parsedMessage.isSelf
+        })
+        continue
+      }
+
+      const now = Date.now()
+      messages.push({
+        id: `${parsedMessage.uiId}-${now}`,
+        contact: snapshot.contact,
+        content: parsedMessage.content,
+        timestamp: now,
+        type: 'text',
+        is_self: parsedMessage.isSelf,
+        trigger_reply: shouldTriggerReply,
+        ui_id: parsedMessage.uiId
+      })
+    }
+
+    if (messages.length > 0) {
+      console.info('新方式读取到微信消息', {
+        contact: snapshot.contact,
+        count: messages.length,
+        hasNewReplyTrigger,
+        messages: messages.map((message) => ({
+          content: message.content,
+          isSelf: message.is_self,
+          triggerReply: message.trigger_reply
+        }))
+      })
+    }
+    return { ok: true, messages }
+  }
+
+  async send(payload: { target?: string; content?: string }): Promise<NativeDriverResult> {
+    const content = String(payload?.content || '').trim()
+    if (!content) {
+      return { ok: false, error: 'empty_content', message: '发送内容为空' }
+    }
+    // 发送会真实操作窗口，必须每次重新定位可信微信窗口，避免复用过期坐标。
+    const window = await findWeChatWindow()
+    if (!window || !isPlausibleWeChatWindow(window)) {
+      return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到可信微信窗口，无法发送消息' }
+    }
+    this.lastWindow = window
+    await focusWindow(window.hwnd)
+    const success = await pasteAndSendText(window, content)
+    const targetContact = String(payload.target || window.title || '微信').trim() || '微信'
+    if (success) {
+      this.seenMessageFingerprints.add(this.buildFingerprint(targetContact, content, true))
+      setTimeout(() => {
+        this.refreshBaseline(window).catch((error) => {
+          console.warn('新方式发送后刷新消息基线失败', error)
+        })
+      }, 800)
+    }
+    if (success) {
+      return {
+        ok: true,
+        success: true,
+        mode: 'native',
+        sentMessage: this.buildSentSelfMessage(targetContact, content)
+      }
+    }
+    return { ok: false, success: false, error: 'send_failed', message: '新方式发送失败' }
+  }
+
+  async command(payload: Record<string, any>): Promise<NativeDriverResult> {
+    const action = String(payload?.action || '').trim()
+    if (action === 'set_managed_mode') {
+      return this.setManagedMode(payload?.mode)
+    }
+    if (action === 'copy_image_message') {
+      return this.copyImageMessage()
+    }
+    if (action === 'marketing_like' || action === 'marketing_comment') {
+      return { ok: false, error: 'native_marketing_unsupported', message: '新方式暂不支持朋友圈营销任务，请切换 UIA 方式' }
+    }
+    if (payload?.target && payload?.content) {
+      return this.send({ target: String(payload.target), content: String(payload.content) })
+    }
+    return { ok: false, error: 'native_command_unsupported', message: `新方式暂不支持该微信指令：${action || '未知指令'}` }
+  }
+
+  async setManagedMode(mode: unknown): Promise<NativeDriverResult> {
+    this.managedMode = mode === 'semi' ? 'semi' : 'full'
+    console.info('新方式托管模式已更新', { managedMode: this.managedMode })
+    return { ok: true, mode: this.managedMode }
+  }
+
+  async copyImageMessage(): Promise<NativeDriverResult> {
+    return { ok: false, error: 'native_image_copy_unsupported', message: '新方式暂不支持图片复制，请切换 UIA 方式处理图片消息' }
+  }
+
+  private async refreshBaseline(window: WindowBounds): Promise<void> {
+    try {
+      const snapshot = await this.readSnapshot(window)
+      for (const message of snapshot.messages) {
+        this.seenMessageFingerprints.add(this.buildFingerprint(snapshot.contact, message.content, message.isSelf))
+      }
+      console.info('新方式已建立当前会话消息基线', { count: snapshot.messages.length })
+    } catch (error) {
+      console.warn('新方式建立消息基线失败，后续轮询会继续尝试', error)
+    }
+  }
+
+  private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {
+    const screenshot = await captureWeChatWindow(window)
+    const diff = comparePngSnapshots(this.lastScreenshotPng, screenshot.png)
+    this.lastScreenshotPng = screenshot.png
+    const shouldRetryFailedVision = this.consecutiveVisionFailures > 0
+    if (!diff.changed && !shouldRetryFailedVision) {
+      console.info('新方式截图无明显变化，本轮不请求视觉模型', {
+        digest: diff.digest,
+        changedRatio: diff.changedRatio
+      })
+      this.lastSnapshotDigest = diff.digest
+      return null
+    }
+    if (!diff.changed && shouldRetryFailedVision) {
+      console.info('新方式上次视觉解析失败，本轮复用当前截图继续重试', {
+        digest: diff.digest,
+        failureCount: this.consecutiveVisionFailures
+      })
+    }
+
+    this.visionRequestRunning = true
+    try {
+      const snapshot = await parseWeChatSnapshotWithVision(
+        screenshot.dataUrl,
+        window,
+        this.lastSnapshotDigest,
+        this.runtimeConfig
+      )
+      this.lastSnapshotDigest = snapshot.snapshotDigest || diff.digest
+      this.consecutiveVisionFailures = 0
+      this.lastVisionErrorMessage = ''
+      return snapshot
+    } catch (error: any) {
+      this.consecutiveVisionFailures += 1
+      const errorMessage = error?.message || String(error)
+      this.lastVisionErrorMessage = this.consecutiveVisionFailures >= MAX_CONSECUTIVE_VISION_FAILURES
+        ? `新方式视觉解析连续失败，请检查后端 Qwen-VL 配置或网络连接：${errorMessage}`
+        : errorMessage
+      console.warn('新方式视觉解析失败', {
+        failureCount: this.consecutiveVisionFailures,
+        error: errorMessage
+      })
+      return null
+    } finally {
+      this.visionRequestRunning = false
+    }
+  }
+
+  private async readSnapshot(window: WindowBounds): Promise<ParsedWeChatSnapshot> {
+    const snapshot = await this.readSnapshotIfChanged(window)
+    return snapshot || { contact: window.title || '微信', messages: [] }
+  }
+
+  private async markCustomerMessageReplied(fingerprint: string): Promise<void> {
+    if (!this.repliedCustomerFingerprints.has(fingerprint)) {
+      this.repliedCustomerFingerprints.add(fingerprint)
+      this.repliedCustomerFingerprintOrder.push(fingerprint)
+    }
+
+    while (this.repliedCustomerFingerprintOrder.length > MAX_PERSISTED_REPLIED_MESSAGES) {
+      const oldestFingerprint = this.repliedCustomerFingerprintOrder.shift()
+      if (oldestFingerprint) {
+        this.repliedCustomerFingerprints.delete(oldestFingerprint)
+      }
+    }
+
+    await this.saveRepliedCustomerFingerprints()
+  }
+
+  private async loadRepliedCustomerFingerprints(): Promise<void> {
+    if (this.storeLoaded) {
+      return
+    }
+    this.storeLoaded = true
+    try {
+      const raw = await readFile(this.getRepliedStorePath(), 'utf-8')
+      const parsed = JSON.parse(raw) as Partial<RepliedMessageStore>
+      const fingerprints = Array.isArray(parsed.fingerprints) ? parsed.fingerprints : []
+      this.repliedCustomerFingerprintOrder = fingerprints
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .slice(-MAX_PERSISTED_REPLIED_MESSAGES)
+      this.repliedCustomerFingerprints = new Set(this.repliedCustomerFingerprintOrder)
+      console.info('新方式已加载客户消息回复记录', { count: this.repliedCustomerFingerprints.size })
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        console.warn('新方式加载客户消息回复记录失败，将从空记录继续', error)
+      }
+      this.repliedCustomerFingerprintOrder = []
+      this.repliedCustomerFingerprints.clear()
+    }
+  }
+
+  private async saveRepliedCustomerFingerprints(): Promise<void> {
+    const store: RepliedMessageStore = {
+      version: 1,
+      fingerprints: this.repliedCustomerFingerprintOrder.slice(-MAX_PERSISTED_REPLIED_MESSAGES)
+    }
+    try {
+      await mkdir(dirname(this.getRepliedStorePath()), { recursive: true })
+      await writeFile(this.getRepliedStorePath(), `${JSON.stringify(store, null, 2)}\n`, 'utf-8')
+    } catch (error) {
+      console.warn('新方式保存客户消息回复记录失败', error)
+    }
+  }
+
+  private getRepliedStorePath(): string {
+    return join(app.getPath('userData'), 'wechat-native-replied-messages.json')
+  }
+
+  private buildFingerprint(contact: string, content: string, isSelf: boolean): string {
+    return `${contact}:${isSelf ? 'self' : 'customer'}:${this.normalizeFingerprintContent(content)}`
+  }
+
+  private buildSentSelfMessage(target: unknown, content: string): NativeDriverMessage {
+    const now = Date.now()
+    const contact = String(target || this.lastWindow?.title || '微信').trim() || '微信'
+    const uiId = `native-self-${now}`
+    return {
+      id: uiId,
+      contact,
+      content,
+      timestamp: now,
+      type: 'text',
+      is_self: true,
+      trigger_reply: false,
+      ui_id: uiId
+    }
+  }
+
+  private normalizeFingerprintContent(content: string): string {
+    return content.replace(/\s+/g, ' ').trim()
+  }
+}

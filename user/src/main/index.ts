@@ -1,11 +1,11 @@
 import { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen, clipboard } from 'electron'
 import { join, dirname } from 'path'
-import { writeFile, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
-import { spawn, execSync, type ChildProcessWithoutNullStreams } from 'child_process'
-import os from 'os'
+import { spawn, execSync } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { WeChatClipboardImageExtractor } from './services/WeChatClipboardImageExtractor'
+import { WeChatNativeDriver } from './services/wechat-native/WeChatNativeDriver'
+import type { WeChatInteractionMode } from './services/wechat-native/types'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
@@ -13,9 +13,45 @@ let wechatBridgeProcess: ReturnType<typeof spawn> | null = null
 let wechatBridgeStartPromise: Promise<Record<string, any>> | null = null
 let wechatBridgeDesiredRunning = false
 let wechatBridgeRestartTimer: NodeJS.Timeout | null = null
+let wechatInteractionMode: WeChatInteractionMode = 'uia'
+const wechatNativeDriver = new WeChatNativeDriver()
 const WECHAT_BRIDGE_REQUEST_TIMEOUT_MS = 5000
 const WECHAT_BRIDGE_SEND_TIMEOUT_MS = 90000
 const WECHAT_BRIDGE_STARTUP_TIMEOUT_MS = 20000
+
+const normalizeWeChatInteractionMode = (mode: unknown): WeChatInteractionMode => {
+  return mode === 'native' ? 'native' : 'uia'
+}
+
+const getWeChatInteractionModePath = (): string => {
+  return join(app.getPath('userData'), 'wechat-interaction-mode.json')
+}
+
+const loadWeChatInteractionMode = (): WeChatInteractionMode => {
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const raw = fs.readFileSync(getWeChatInteractionModePath(), 'utf-8')
+    const parsed = JSON.parse(raw)
+    wechatInteractionMode = normalizeWeChatInteractionMode(parsed?.mode)
+  } catch {
+    wechatInteractionMode = 'uia'
+  }
+  return wechatInteractionMode
+}
+
+const saveWeChatInteractionMode = (mode: WeChatInteractionMode): void => {
+  try {
+    const fs = require('fs') as typeof import('fs')
+    fs.mkdirSync(dirname(getWeChatInteractionModePath()), { recursive: true })
+    fs.writeFileSync(getWeChatInteractionModePath(), JSON.stringify({ mode }, null, 2), 'utf-8')
+  } catch (error) {
+    console.warn('保存微信交互方式失败', error)
+  }
+}
+
+const getWeChatInteractionMode = (): WeChatInteractionMode => {
+  return wechatInteractionMode
+}
 
 const scheduleWeChatBridgeRestart = (reason: string): void => {
   if (!wechatBridgeDesiredRunning || wechatBridgeRestartTimer) {
@@ -318,7 +354,7 @@ ipcMain.handle('do-capture', async (_, coords) => {
     }
     const image = primarySource.thumbnail.crop(cropRect)
     
-    // Upscale image 2x to improve OCR accuracy for small text
+    // 手动截图保留 2 倍放大，便于用户查看细节。
     const scaledImage = image.resize({
       width: image.getSize().width * 2,
       height: image.getSize().height * 2,
@@ -341,126 +377,6 @@ ipcMain.handle('do-capture', async (_, coords) => {
     return { dataUrl, bounds: coords }
   }
   return null
-})
-
-ipcMain.handle('perform-ocr', async (_, dataUrl) => {
-  const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '')
-  const buffer = Buffer.from(base64Data, 'base64')
-  const tempPath = join(os.tmpdir(), `ocr_temp_${Date.now()}.png`)
-
-  try {
-    await writeFile(tempPath, buffer)
-    
-    const binDir = app.isPackaged 
-      ? join(process.resourcesPath, 'bin')
-      : join(__dirname, '../../resources/bin')
-    
-    const ocrPath = join(binDir, 'PaddleOCR-json.exe')
-    const modelsPath = join(binDir, 'models')
-
-    return new Promise((resolve, reject) => {
-      // PaddleOCR-json requires the image path passed via arguments
-      // It outputs log info and JSON result to stdout
-      // Fix: Pass models_path explicitly and run from temp dir to avoid crash when path contains Chinese characters
-      const args = [
-        `--image_path=${tempPath}`,
-        `--models_path=${modelsPath}`
-      ]
-      console.log('Running OCR with:', ocrPath, args)
-      
-      let ocrProcess: ChildProcessWithoutNullStreams | null = null
-      const timeoutTimer = setTimeout(() => {
-        if (ocrProcess) {
-           try { ocrProcess.kill() } catch (e) { /* ignore */ }
-        }
-        reject(new Error('OCR Timeout (10s) - Process took too long'))
-      }, 10000)
-
-      try {
-        // IMPORTANT: Set cwd to a safe ASCII path (like temp dir) to avoid 0xC0000409 crash
-        // when project path contains non-ASCII characters.
-        ocrProcess = spawn(ocrPath, args, {
-          cwd: os.tmpdir() 
-        })
-      } catch (spawnError: any) {
-        clearTimeout(timeoutTimer)
-        reject(new Error(`Failed to spawn OCR process: ${spawnError.message}`))
-        return
-      }
-      
-      let stdoutData = ''
-      let stderrData = ''
-
-      ocrProcess.stdout.on('data', (data) => {
-        stdoutData += data.toString()
-      })
-      
-      ocrProcess.stderr.on('data', (data) => {
-        stderrData += data.toString()
-      })
-
-      ocrProcess.on('close', async (code) => {
-        clearTimeout(timeoutTimer)
-        try {
-            if (existsSync(tempPath)) await unlink(tempPath)
-        } catch (e) { /* ignore cleanup error */ }
-        
-        console.log('OCR Process exited with code:', code)
-        // console.log('OCR Stdout:', stdoutData) 
-
-        // Split output by lines to handle mixed log/json output
-        const lines = stdoutData.split(/\r?\n/)
-        let result = { text: '', items: [] as any[] }
-        let hasJson = false
-
-        for (const line of lines) {
-          try {
-            if (!line.trim()) continue
-            
-            // Try to parse each line as JSON
-            const parsed = JSON.parse(line.trim())
-            
-            // Check if it's a valid OCR result (code 100 means success in PaddleOCR-json)
-            if (parsed.code === 100 && parsed.data) {
-              hasJson = true
-              result.text = parsed.data.map((item: any) => item.text).join('\n')
-              result.items = parsed.data
-              break // Found the result, stop processing
-            }
-          } catch (e) {
-            // Ignore non-JSON lines
-          }
-        }
-
-        if (hasJson) {
-          resolve(result)
-        } else {
-          // Return detailed error info for debugging
-          const debugInfo = [
-            '识别失败。调试信息：',
-            `Exit Code: ${code}`,
-            '--- Stdout ---',
-            stdoutData.slice(0, 500) + (stdoutData.length > 500 ? '...' : ''),
-            '--- Stderr ---',
-            stderrData.slice(0, 500) + (stderrData.length > 500 ? '...' : '')
-          ].join('\n')
-          resolve({ text: debugInfo, items: [] })
-        }
-      })
-
-      ocrProcess.on('error', async (err) => {
-        clearTimeout(timeoutTimer)
-        try {
-            if (existsSync(tempPath)) await unlink(tempPath)
-        } catch (e) { /* ignore cleanup error */ }
-        console.error('OCR Process Error:', err)
-        reject(new Error(`OCR Process Error: ${err.message}`))
-      })
-    })
-  } catch (error) {
-    console.error('OCR Error:', error)
-    return { text: 'OCR 识别出错', items: [] }
-  }
 })
 
 ipcMain.handle('simulate-reply', async (_, { text, focusCoords, sendCoords }) => {
@@ -531,10 +447,16 @@ ipcMain.handle('simulate-reply', async (_, { text, focusCoords, sendCoords }) =>
 })
 
 ipcMain.handle('wechat-bridge-start', async () => {
+  if (getWeChatInteractionMode() === 'native') {
+    return wechatNativeDriver.start()
+  }
   return startWeChatBridgeProcess()
 })
 
 ipcMain.handle('wechat-bridge-stop', async () => {
+  if (getWeChatInteractionMode() === 'native') {
+    return wechatNativeDriver.stop()
+  }
   wechatBridgeDesiredRunning = false
   if (wechatBridgeRestartTimer) {
     clearTimeout(wechatBridgeRestartTimer)
@@ -553,6 +475,9 @@ ipcMain.handle('wechat-bridge-stop', async () => {
 })
 
 ipcMain.handle('wechat-bridge-poll', async () => {
+  if (getWeChatInteractionMode() === 'native') {
+    return wechatNativeDriver.poll()
+  }
   let result = await requestWeChatBridge('/poll', { method: 'GET' })
   if (!result.ok && result.error === 'bridge_unreachable' && wechatBridgeProcess && !wechatBridgeProcess.killed) {
     try {
@@ -578,6 +503,9 @@ ipcMain.handle('wechat-bridge-poll', async () => {
 })
 
 ipcMain.handle('wechat-bridge-send', async (_, payload: { target: string; content: string }) => {
+  if (getWeChatInteractionMode() === 'native') {
+    return wechatNativeDriver.send(payload)
+  }
   return requestWeChatBridge('/command', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -586,6 +514,9 @@ ipcMain.handle('wechat-bridge-send', async (_, payload: { target: string; conten
 })
 
 ipcMain.handle('wechat-bridge-command', async (_, payload: Record<string, any>) => {
+  if (getWeChatInteractionMode() === 'native') {
+    return wechatNativeDriver.command(payload || {})
+  }
   return requestWeChatBridge('/command', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -595,6 +526,9 @@ ipcMain.handle('wechat-bridge-command', async (_, payload: Record<string, any>) 
 
 ipcMain.handle('wechat-bridge-set-managed-mode', async (_, mode: 'full' | 'semi') => {
   const normalizedMode = mode === 'semi' ? 'semi' : 'full'
+  if (getWeChatInteractionMode() === 'native') {
+    return wechatNativeDriver.setManagedMode(normalizedMode)
+  }
   return requestWeChatBridge('/command', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -605,10 +539,55 @@ ipcMain.handle('wechat-bridge-set-managed-mode', async (_, mode: 'full' | 'semi'
   })
 })
 
+ipcMain.handle('wechat-bridge-get-driver-mode', async () => {
+  return { ok: true, mode: getWeChatInteractionMode() }
+})
+
+ipcMain.handle('wechat-bridge-configure-vision', async (_, payload: { backendBaseUrl?: string; token?: string; tenantId?: string }) => {
+  return wechatNativeDriver.configure({
+    backendBaseUrl: payload?.backendBaseUrl,
+    token: payload?.token,
+    tenantId: payload?.tenantId
+  })
+})
+
+ipcMain.handle('wechat-bridge-set-driver-mode', async (_, mode: WeChatInteractionMode) => {
+  const normalizedMode = normalizeWeChatInteractionMode(mode)
+  if (normalizedMode === wechatInteractionMode) {
+    return { ok: true, mode: normalizedMode }
+  }
+
+  if (wechatInteractionMode === 'native') {
+    await wechatNativeDriver.stop()
+  } else {
+    wechatBridgeDesiredRunning = false
+    if (wechatBridgeRestartTimer) {
+      clearTimeout(wechatBridgeRestartTimer)
+      wechatBridgeRestartTimer = null
+    }
+    if (wechatBridgeProcess && wechatBridgeProcess.pid) {
+      try {
+        killProcessTree(wechatBridgeProcess.pid)
+      } catch (error) {
+        console.warn('切换微信交互方式时停止 UIA 服务失败', error)
+      }
+    }
+    wechatBridgeProcess = null
+  }
+
+  wechatInteractionMode = normalizedMode
+  saveWeChatInteractionMode(normalizedMode)
+  console.info('微信交互方式已切换', { mode: normalizedMode })
+  return { ok: true, mode: normalizedMode }
+})
+
 ipcMain.handle(
   'wechat-wait-image',
   async (_, payload: { senderId?: string; messageUiId?: unknown; timestamp?: number | string; timeout?: number }) => {
     try {
+      if (getWeChatInteractionMode() === 'native') {
+        return await wechatNativeDriver.copyImageMessage()
+      }
       const senderId = String(payload?.senderId || '').trim()
       const rawTimestamp = payload?.timestamp
       let timestamp = Date.now()
@@ -655,6 +634,8 @@ ipcMain.handle(
 )
 
 app.whenReady().then(async () => {
+  loadWeChatInteractionMode()
+  console.info('微信交互方式配置已加载', { mode: getWeChatInteractionMode() })
   electronApp.setAppUserModelId('com.electron')
 
   app.on('browser-window-created', (_, window) => {
@@ -675,6 +656,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  void wechatNativeDriver.stop()
   wechatBridgeDesiredRunning = false
   if (wechatBridgeRestartTimer) {
     clearTimeout(wechatBridgeRestartTimer)
@@ -690,3 +672,4 @@ app.on('before-quit', () => {
   }
   wechatBridgeProcess = null
 })
+
