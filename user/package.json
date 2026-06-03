@@ -6,7 +6,6 @@
   "author": "Trae",
   "scripts": {
     "dev": "chcp 65001 > nul && electron-vite dev",
-    "test:clipboard-image": "node scripts/test-clipboard-image-extractor.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "pack": "electron-builder --dir",
@@ -21,16 +20,6 @@
     "files": [
       "out/**/*",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "../sidecar_wechat/dist",
-        "to": "sidecar",
-        "filter": [
-          "wechat_bridge.exe",
-          "config.yaml"
-        ]
-      }
     ],
     "win": {
       "target": "nsis",

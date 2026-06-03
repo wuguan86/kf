@@ -2,17 +2,14 @@ import React from 'react'
 import styles from '../pages/AssistantPage.module.css'
 
 type ManagedMode = 'full' | 'semi'
-type WeChatDriverMode = 'uia' | 'native'
 
 type Props = {
   managedMode: ManagedMode
-  driverMode: WeChatDriverMode
   configurationDisabled: boolean
   startButtonDisabled: boolean
   startButtonClassName: string
   startButtonContent: React.ReactNode
   onManagedModeChange: (value: ManagedMode) => void
-  onDriverModeChange: (value: WeChatDriverMode) => void
   onToggleRunning: () => void
 }
 
@@ -39,22 +36,6 @@ const ManagedModeIcon = ({ mode }: { mode: ManagedMode }): JSX.Element => (
       <>
         <path d="M5 5.7c0-.8.6-1.4 1.4-1.4h11.2c.8 0 1.4.6 1.4 1.4v8.4c0 .8-.6 1.4-1.4 1.4H6.4c-.8 0-1.4-.6-1.4-1.4V5.7Z" />
         <path d="M8.1 19.1h7.8M12 15.5v3.6M8.3 9.8h7.4" className={styles.iconStroke} />
-      </>
-    )}
-  </svg>
-)
-
-const DriverModeIcon = ({ mode }: { mode: WeChatDriverMode }): JSX.Element => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    {mode === 'native' ? (
-      <>
-        <path d="M4.5 6.8c0-1 .8-1.8 1.8-1.8h11.4c1 0 1.8.8 1.8 1.8v8.1c0 1-.8 1.8-1.8 1.8H6.3c-1 0-1.8-.8-1.8-1.8V6.8Z" />
-        <path d="M8.1 19h7.8M12 16.7V19M8.3 10.7h7.4" className={styles.iconStroke} />
-      </>
-    ) : (
-      <>
-        <path d="M12 3.4 18.8 6v5.3c0 4-2.7 7.5-6.8 8.9-4.1-1.4-6.8-4.9-6.8-8.9V6L12 3.4Z" />
-        <path d="M8.2 11.8h7.6M12 8v7.6" className={styles.iconStroke} />
       </>
     )}
   </svg>
@@ -148,35 +129,13 @@ function ToolbarDropdown<T extends string>(props: {
 export default function AssistantRunToolbar(props: Props): JSX.Element {
   const {
     managedMode,
-    driverMode,
     configurationDisabled,
     startButtonDisabled,
     startButtonClassName,
     startButtonContent,
     onManagedModeChange,
-    onDriverModeChange,
     onToggleRunning
   } = props
-  const driverModeOptions: DropdownOption<WeChatDriverMode>[] = [
-    {
-      value: 'uia',
-      label: 'UIA',
-      icon: (
-        <span className={`${styles.selectIcon} ${styles.selectIconUia}`}>
-          <DriverModeIcon mode="uia" />
-        </span>
-      )
-    },
-    {
-      value: 'native',
-      label: '新方式',
-      icon: (
-        <span className={`${styles.selectIcon} ${styles.selectIconNative}`}>
-          <DriverModeIcon mode="native" />
-        </span>
-      )
-    }
-  ]
   const managedModeOptions: DropdownOption<ManagedMode>[] = [
     {
       value: 'full',
@@ -200,15 +159,6 @@ export default function AssistantRunToolbar(props: Props): JSX.Element {
 
   return (
     <div className={styles.pageHeaderActions}>
-      <ToolbarDropdown
-        title="选择微信交互方式"
-        disabledTitle="运行中请先停止运行，再切换微信交互方式"
-        value={driverMode}
-        disabled={configurationDisabled}
-        options={driverModeOptions}
-        onChange={onDriverModeChange}
-      />
-
       <ToolbarDropdown
         title="选择托管模式"
         disabledTitle="运行中请先停止运行，再切换托管模式"

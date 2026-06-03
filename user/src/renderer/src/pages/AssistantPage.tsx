@@ -74,12 +74,6 @@ const STREAM_TOTAL_TIMEOUT_MS = 180000
 const IMAGE_STREAM_CHUNK_TIMEOUT_MS = 90000
 const IMAGE_STREAM_TOTAL_TIMEOUT_MS = 240000
 type WeChatChannel = 'personal' | 'enterprise'
-type WeChatDriverMode = 'uia' | 'native'
-const WECHAT_DRIVER_MODE_STORAGE_KEY = 'wechatDriverMode'
-
-const normalizeWeChatDriverMode = (mode: unknown): WeChatDriverMode => {
-  return mode === 'native' ? 'native' : 'uia'
-}
 
 const defaultWechatChannelConfig: WeChatChannelConfig = {
   channel: 'personal',
@@ -540,13 +534,6 @@ function AssistantPage(props: Props): JSX.Element {
   const [activeRole, setActiveRole] = useState<Role | null>(null)
   const [lastReplied, setLastReplied] = useState<{ contact: string; text: string; at: number } | null>(null)
   const [managedMode, setManagedMode] = useState<'full' | 'semi'>('full')
-  const [wechatDriverMode, setWechatDriverMode] = useState<WeChatDriverMode>(() => {
-    try {
-      return normalizeWeChatDriverMode(localStorage.getItem(WECHAT_DRIVER_MODE_STORAGE_KEY))
-    } catch {
-      return 'uia'
-    }
-  })
   const [knowledgeBaseOptions, setKnowledgeBaseOptions] = useState<SelectableKnowledgeBase[]>([])
   const [storeDialogOpen, setStoreDialogOpen] = useState(false)
   const [storeSubmitting, setStoreSubmitting] = useState(false)
@@ -556,7 +543,6 @@ function AssistantPage(props: Props): JSX.Element {
   const [showNoRoleDialog, setShowNoRoleDialog] = useState(false)
   const [wechatChannelConfig, setWechatChannelConfig] = useState<WeChatChannelConfig>(defaultWechatChannelConfig)
   const managedModeRef = useRef<'full' | 'semi'>('full')
-  const wechatDriverModeRef = useRef<WeChatDriverMode>('uia')
   const seenBridgeMessageIdsRef = useRef<Set<string>>(new Set())
 
   const syncManagedModeToBridge = async (mode: 'full' | 'semi') => {
@@ -584,30 +570,6 @@ function AssistantPage(props: Props): JSX.Element {
       syncManagedModeToBridge(managedMode)
     }
   }, [managedMode])
-
-  useEffect(() => {
-    wechatDriverModeRef.current = wechatDriverMode
-    try {
-      localStorage.setItem(WECHAT_DRIVER_MODE_STORAGE_KEY, wechatDriverMode)
-    } catch {
-    }
-  }, [wechatDriverMode])
-
-  useEffect(() => {
-    const api = (window as any).api
-    if (!api?.getWeChatDriverMode) {
-      return
-    }
-    api.getWeChatDriverMode()
-      .then((result: any) => {
-        if (result?.ok) {
-          setWechatDriverMode(normalizeWeChatDriverMode(result.mode))
-        }
-      })
-      .catch((error: any) => {
-        console.warn('读取微信交互方式失败', error)
-      })
-  }, [])
 
   const releaseEnterpriseManualSessions = async () => {
     const customerIds = Array.from(new Set(
@@ -642,33 +604,6 @@ function AssistantPage(props: Props): JSX.Element {
       }
     }
     setManagedMode(mode)
-  }
-
-  const handleDriverModeChange = async (mode: WeChatDriverMode) => {
-    if (isRunningRef.current || isConnecting) {
-      showToast('运行中不能切换微信交互方式，请先停止运行', 'info')
-      return
-    }
-    const normalizedMode = normalizeWeChatDriverMode(mode)
-    if (normalizedMode === wechatDriverModeRef.current) {
-      return
-    }
-    const previousMode = wechatDriverModeRef.current
-    setWechatDriverMode(normalizedMode)
-    try {
-      const api = (window as any).api
-      if (api?.setWeChatDriverMode) {
-        const result = await api.setWeChatDriverMode(normalizedMode)
-        if (!result?.ok) {
-          throw new Error(result?.message || result?.error || '切换失败')
-        }
-      }
-      showToast(normalizedMode === 'native' ? '已切换到新方式' : '已切换到 UIA 方式', 'success')
-    } catch (error: any) {
-      console.error('切换微信交互方式失败', error)
-      setWechatDriverMode(previousMode)
-      showToast(`切换微信交互方式失败: ${error?.message || '未知原因'}`, 'error')
-    }
   }
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -1352,7 +1287,7 @@ function AssistantPage(props: Props): JSX.Element {
         }
       } finally {
         if (isRunningRef.current) {
-          const delay = wechatChannelRef.current === 'personal' && wechatDriverModeRef.current === 'native'
+          const delay = wechatChannelRef.current === 'personal'
             ? 5_000
             : 600 + Math.floor(Math.random() * 600)
           pollTimeoutRef.current = setTimeout(loop, delay)
@@ -1576,7 +1511,7 @@ function AssistantPage(props: Props): JSX.Element {
         console.error('Failed to check membership before running', e)
       }
 
-      if (wechatChannelRef.current === 'personal' && wechatDriverModeRef.current === 'native' && api.configureWeChatVision) {
+      if (wechatChannelRef.current === 'personal' && api.configureWeChatVision) {
         const storedBaseUrl = localStorage.getItem('backendBaseUrl')
         const backendUrl = (storedBaseUrl || backendBaseUrl || AppConfig.apiBaseUrl).replace(/\/api\/?$/, '').replace(/\/$/, '')
         const visionConfigResult = await api.configureWeChatVision({
@@ -1593,7 +1528,7 @@ function AssistantPage(props: Props): JSX.Element {
       if (!startRes?.ok) {
         throw new Error(startRes?.message || startRes?.error || '启动失败')
       }
-      console.info('微信交互方式启动成功', { mode: wechatDriverModeRef.current })
+      console.info('微信新方式启动成功')
       await syncManagedModeToBridge(managedModeRef.current)
       pollFailureCountRef.current = 0
       setIsRunning(true)
@@ -1665,13 +1600,11 @@ function AssistantPage(props: Props): JSX.Element {
         
         <AssistantRunToolbar
           managedMode={managedMode}
-          driverMode={wechatDriverMode}
           configurationDisabled={configurationDisabled}
           startButtonDisabled={isSending || isConnecting}
           startButtonClassName={btnClass}
           startButtonContent={btnContent}
           onManagedModeChange={handleManagedModeChange}
-          onDriverModeChange={handleDriverModeChange}
           onToggleRunning={toggleRunning}
         />
       </header>

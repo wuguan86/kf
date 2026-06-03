@@ -1,240 +1,12 @@
-import { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen, clipboard } from 'electron'
-import { join, dirname } from 'path'
-import { existsSync } from 'fs'
-import { spawn, execSync } from 'child_process'
+import { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen } from 'electron'
+import { join } from 'path'
+import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { WeChatClipboardImageExtractor } from './services/WeChatClipboardImageExtractor'
 import { WeChatNativeDriver } from './services/wechat-native/WeChatNativeDriver'
-import type { WeChatInteractionMode } from './services/wechat-native/types'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
-let wechatBridgeProcess: ReturnType<typeof spawn> | null = null
-let wechatBridgeStartPromise: Promise<Record<string, any>> | null = null
-let wechatBridgeDesiredRunning = false
-let wechatBridgeRestartTimer: NodeJS.Timeout | null = null
-let wechatInteractionMode: WeChatInteractionMode = 'uia'
 const wechatNativeDriver = new WeChatNativeDriver()
-const WECHAT_BRIDGE_REQUEST_TIMEOUT_MS = 5000
-const WECHAT_BRIDGE_SEND_TIMEOUT_MS = 90000
-const WECHAT_BRIDGE_STARTUP_TIMEOUT_MS = 20000
-
-const normalizeWeChatInteractionMode = (mode: unknown): WeChatInteractionMode => {
-  return mode === 'native' ? 'native' : 'uia'
-}
-
-const getWeChatInteractionModePath = (): string => {
-  return join(app.getPath('userData'), 'wechat-interaction-mode.json')
-}
-
-const loadWeChatInteractionMode = (): WeChatInteractionMode => {
-  try {
-    const fs = require('fs') as typeof import('fs')
-    const raw = fs.readFileSync(getWeChatInteractionModePath(), 'utf-8')
-    const parsed = JSON.parse(raw)
-    wechatInteractionMode = normalizeWeChatInteractionMode(parsed?.mode)
-  } catch {
-    wechatInteractionMode = 'uia'
-  }
-  return wechatInteractionMode
-}
-
-const saveWeChatInteractionMode = (mode: WeChatInteractionMode): void => {
-  try {
-    const fs = require('fs') as typeof import('fs')
-    fs.mkdirSync(dirname(getWeChatInteractionModePath()), { recursive: true })
-    fs.writeFileSync(getWeChatInteractionModePath(), JSON.stringify({ mode }, null, 2), 'utf-8')
-  } catch (error) {
-    console.warn('保存微信交互方式失败', error)
-  }
-}
-
-const getWeChatInteractionMode = (): WeChatInteractionMode => {
-  return wechatInteractionMode
-}
-
-const scheduleWeChatBridgeRestart = (reason: string): void => {
-  if (!wechatBridgeDesiredRunning || wechatBridgeRestartTimer) {
-    return
-  }
-  console.warn('微信桥接服务异常退出，准备自动重启', { reason })
-  wechatBridgeRestartTimer = setTimeout(() => {
-    wechatBridgeRestartTimer = null
-    if (!wechatBridgeDesiredRunning) {
-      return
-    }
-    startWeChatBridgeProcess().catch((error) => {
-      console.error('微信桥接服务自动重启失败', error)
-      scheduleWeChatBridgeRestart('restart_failed')
-    })
-  }, 1000)
-}
-
-const killProcessTree = (pid: number): void => {
-  try {
-    if (process.platform === 'win32') {
-      execSync(`taskkill /pid ${pid} /T /F`)
-    } else {
-      process.kill(-pid) // Kill process group for Unix
-    }
-  } catch (e) {
-    // Ignore error if process already dead
-    console.log(`Failed to kill process ${pid}:`, e)
-  }
-}
-
-const getSidecarWeChatDir = (): string => {
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'sidecar')
-  }
-  const appPath = app.getAppPath()
-  return join(dirname(appPath), 'sidecar_wechat')
-}
-
-const getWeChatBridgeExecutable = (): string => {
-  if (app.isPackaged) {
-    return join(getSidecarWeChatDir(), 'wechat_bridge.exe')
-  }
-  return join(getSidecarWeChatDir(), 'wechat_bridge.py')
-}
-
-const getWeChatBridgeConfig = (): string => {
-  return join(getSidecarWeChatDir(), 'config.yaml')
-}
-
-const getWeChatBridgeBaseUrl = (): string => {
-  return 'http://127.0.0.1:51234'
-}
-
-const waitForWeChatBridgeReady = async (timeoutMs: number): Promise<void> => {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(`${getWeChatBridgeBaseUrl()}/health`, { method: 'GET' })
-      if (res.ok) {
-        return
-      }
-    } catch (e) {
-    }
-    await new Promise((r) => setTimeout(r, 200))
-  }
-  throw new Error('WeChat bridge not ready')
-}
-
-const requestWeChatBridge = async (
-  endpoint: string,
-  init: RequestInit,
-  timeoutMs: number = WECHAT_BRIDGE_REQUEST_TIMEOUT_MS
-): Promise<Record<string, any>> => {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const res = await fetch(`${getWeChatBridgeBaseUrl()}${endpoint}`, {
-      ...init,
-      signal: controller.signal
-    })
-    const text = await res.text()
-    let payload: Record<string, any> = {}
-    try {
-      payload = JSON.parse(text)
-    } catch (e) {
-      return { ok: false, error: 'invalid_json', raw: text, status: res.status }
-    }
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: payload.error || 'bridge_http_error',
-        status: res.status,
-        ...payload
-      }
-    }
-    return payload
-  } catch (e: any) {
-    if (e?.name === 'AbortError') {
-      const isSendCommand = timeoutMs >= WECHAT_BRIDGE_SEND_TIMEOUT_MS
-      const message = isSendCommand
-        ? '微信自动发送等待超时，请确认微信窗口未卡住后重试'
-        : '微信桥接服务请求超时，请稍后重试'
-      console.warn('微信桥接请求超时', { endpoint, timeoutMs, message })
-      return { ok: false, error: 'bridge_timeout', message }
-    }
-    return { ok: false, error: 'bridge_unreachable', message: e?.message || String(e) }
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-const startWeChatBridgeProcess = async (): Promise<Record<string, any>> => {
-  wechatBridgeDesiredRunning = true
-  if (wechatBridgeStartPromise) {
-    return wechatBridgeStartPromise
-  }
-
-  wechatBridgeStartPromise = (async () => {
-    if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
-      try {
-        await waitForWeChatBridgeReady(3000)
-        return { ok: true }
-      } catch (e: any) {
-        console.info('微信桥接服务仍在启动中', { message: e?.message || String(e) })
-        return { ok: true, warmingUp: true, message: 'bridge_starting' }
-      }
-    }
-
-    const execPath = getWeChatBridgeExecutable()
-    const configPath = getWeChatBridgeConfig()
-
-    if (!existsSync(execPath)) {
-      return { ok: false, error: `WeChat bridge executable not found: ${execPath}` }
-    }
-    if (!existsSync(configPath)) {
-      return { ok: false, error: `config.yaml not found: ${configPath}` }
-    }
-
-    console.info('正在启动微信桥接服务', { execPath, configPath, packaged: app.isPackaged })
-    if (app.isPackaged) {
-      wechatBridgeProcess = spawn(execPath, ['--config', configPath], {
-        cwd: getSidecarWeChatDir(),
-        windowsHide: true
-      })
-    } else {
-      wechatBridgeProcess = spawn('python', [execPath, '--config', configPath], {
-        cwd: getSidecarWeChatDir(),
-        windowsHide: true
-      })
-    }
-
-    wechatBridgeProcess.on('exit', (code, signal) => {
-      console.warn('微信桥接进程已退出', { code, signal })
-      wechatBridgeProcess = null
-      scheduleWeChatBridgeRestart(`exit:${code ?? 'null'}:${signal ?? 'null'}`)
-    })
-    wechatBridgeProcess.on('error', (error) => {
-      console.error('微信桥接进程异常', error)
-      wechatBridgeProcess = null
-      scheduleWeChatBridgeRestart('process_error')
-    })
-    // sidecar 会把大量中文扫描日志写到控制台；主进程必须消费管道，避免运行一段时间后阻塞。
-    wechatBridgeProcess.stdout?.on('data', () => {})
-    wechatBridgeProcess.stderr?.on('data', () => {})
-
-    try {
-      await waitForWeChatBridgeReady(WECHAT_BRIDGE_STARTUP_TIMEOUT_MS)
-      return { ok: true }
-    } catch (e: any) {
-      if (wechatBridgeProcess && !wechatBridgeProcess.killed) {
-        return { ok: true, warmingUp: true, message: 'bridge_starting' }
-      }
-      return { ok: false, error: 'bridge_not_ready', message: e?.message || String(e) }
-    }
-  })()
-
-  try {
-    return await wechatBridgeStartPromise
-  } finally {
-    wechatBridgeStartPromise = null
-  }
-}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -447,100 +219,28 @@ ipcMain.handle('simulate-reply', async (_, { text, focusCoords, sendCoords }) =>
 })
 
 ipcMain.handle('wechat-bridge-start', async () => {
-  if (getWeChatInteractionMode() === 'native') {
-    return wechatNativeDriver.start()
-  }
-  return startWeChatBridgeProcess()
+  return wechatNativeDriver.start()
 })
 
 ipcMain.handle('wechat-bridge-stop', async () => {
-  if (getWeChatInteractionMode() === 'native') {
-    return wechatNativeDriver.stop()
-  }
-  wechatBridgeDesiredRunning = false
-  if (wechatBridgeRestartTimer) {
-    clearTimeout(wechatBridgeRestartTimer)
-    wechatBridgeRestartTimer = null
-  }
-  if (wechatBridgeProcess && wechatBridgeProcess.pid) {
-    try {
-      console.log('Stopping WeChat Bridge Process:', wechatBridgeProcess.pid)
-      killProcessTree(wechatBridgeProcess.pid)
-    } catch (e) {
-      console.error('Failed to stop WeChat Bridge:', e)
-    }
-  }
-  wechatBridgeProcess = null
-  return { ok: true }
+  return wechatNativeDriver.stop()
 })
 
 ipcMain.handle('wechat-bridge-poll', async () => {
-  if (getWeChatInteractionMode() === 'native') {
-    return wechatNativeDriver.poll()
-  }
-  let result = await requestWeChatBridge('/poll', { method: 'GET' })
-  if (!result.ok && result.error === 'bridge_unreachable' && wechatBridgeProcess && !wechatBridgeProcess.killed) {
-    try {
-      await waitForWeChatBridgeReady(1500)
-      result = await requestWeChatBridge('/poll', { method: 'GET' })
-    } catch (e: any) {
-      result = { ok: false, error: 'bridge_unreachable', message: e?.message || String(e) }
-    }
-  }
-  if (!result.ok && result.error === 'bridge_unreachable') {
-    console.warn('微信桥接服务不可用，尝试自动恢复')
-    const startResult = await startWeChatBridgeProcess()
-    if (!startResult?.ok || startResult?.warmingUp) {
-      return {
-        ok: false,
-        error: startResult?.error || 'bridge_starting',
-        message: startResult?.message || 'bridge_starting'
-      }
-    }
-    result = await requestWeChatBridge('/poll', { method: 'GET' })
-  }
-  return result
+  return wechatNativeDriver.poll()
 })
 
 ipcMain.handle('wechat-bridge-send', async (_, payload: { target: string; content: string }) => {
-  if (getWeChatInteractionMode() === 'native') {
-    return wechatNativeDriver.send(payload)
-  }
-  return requestWeChatBridge('/command', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }, WECHAT_BRIDGE_SEND_TIMEOUT_MS)
+  return wechatNativeDriver.send(payload)
 })
 
 ipcMain.handle('wechat-bridge-command', async (_, payload: Record<string, any>) => {
-  if (getWeChatInteractionMode() === 'native') {
-    return wechatNativeDriver.command(payload || {})
-  }
-  return requestWeChatBridge('/command', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload || {})
-  })
+  return wechatNativeDriver.command(payload || {})
 })
 
 ipcMain.handle('wechat-bridge-set-managed-mode', async (_, mode: 'full' | 'semi') => {
   const normalizedMode = mode === 'semi' ? 'semi' : 'full'
-  if (getWeChatInteractionMode() === 'native') {
-    return wechatNativeDriver.setManagedMode(normalizedMode)
-  }
-  return requestWeChatBridge('/command', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'set_managed_mode',
-      mode: normalizedMode
-    })
-  })
-})
-
-ipcMain.handle('wechat-bridge-get-driver-mode', async () => {
-  return { ok: true, mode: getWeChatInteractionMode() }
+  return wechatNativeDriver.setManagedMode(normalizedMode)
 })
 
 ipcMain.handle('wechat-bridge-configure-vision', async (_, payload: { backendBaseUrl?: string; token?: string; tenantId?: string }) => {
@@ -551,76 +251,11 @@ ipcMain.handle('wechat-bridge-configure-vision', async (_, payload: { backendBas
   })
 })
 
-ipcMain.handle('wechat-bridge-set-driver-mode', async (_, mode: WeChatInteractionMode) => {
-  const normalizedMode = normalizeWeChatInteractionMode(mode)
-  if (normalizedMode === wechatInteractionMode) {
-    return { ok: true, mode: normalizedMode }
-  }
-
-  if (wechatInteractionMode === 'native') {
-    await wechatNativeDriver.stop()
-  } else {
-    wechatBridgeDesiredRunning = false
-    if (wechatBridgeRestartTimer) {
-      clearTimeout(wechatBridgeRestartTimer)
-      wechatBridgeRestartTimer = null
-    }
-    if (wechatBridgeProcess && wechatBridgeProcess.pid) {
-      try {
-        killProcessTree(wechatBridgeProcess.pid)
-      } catch (error) {
-        console.warn('切换微信交互方式时停止 UIA 服务失败', error)
-      }
-    }
-    wechatBridgeProcess = null
-  }
-
-  wechatInteractionMode = normalizedMode
-  saveWeChatInteractionMode(normalizedMode)
-  console.info('微信交互方式已切换', { mode: normalizedMode })
-  return { ok: true, mode: normalizedMode }
-})
-
 ipcMain.handle(
   'wechat-wait-image',
   async (_, payload: { senderId?: string; messageUiId?: unknown; timestamp?: number | string; timeout?: number }) => {
     try {
-      if (getWeChatInteractionMode() === 'native') {
-        return await wechatNativeDriver.copyImageMessage()
-      }
-      const senderId = String(payload?.senderId || '').trim()
-      const rawTimestamp = payload?.timestamp
-      let timestamp = Date.now()
-      if (typeof rawTimestamp === 'number' && Number.isFinite(rawTimestamp)) {
-        timestamp = rawTimestamp
-      } else if (typeof rawTimestamp === 'string' && rawTimestamp.trim()) {
-        const parsed = Date.parse(rawTimestamp)
-        if (!Number.isNaN(parsed)) {
-          timestamp = parsed
-        }
-      }
-      const timeout = Number.isFinite(payload?.timeout) ? Number(payload.timeout) : 5000
-      console.log('[主进程] wechat-wait-image 开始复制微信图片', { senderId, timestamp, timeout })
-      const extractor = new WeChatClipboardImageExtractor({
-        clipboard,
-        executeWeChatCommand: (commandPayload) => requestWeChatBridge('/command', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(commandPayload)
-        }, Math.max(timeout + 3000, WECHAT_BRIDGE_SEND_TIMEOUT_MS))
-      })
-      const dataUrl = await extractor.extractImage({
-        senderId,
-        messageUiId: payload?.messageUiId,
-        timestamp,
-        timeoutMs: timeout
-      })
-      console.log('[主进程] wechat-wait-image 剪贴板读取成功', {
-        senderId,
-        timestamp,
-        dataUrlLength: dataUrl.length
-      })
-      return { ok: true, dataUrl }
+      return await wechatNativeDriver.copyImageMessage()
     } catch (error: any) {
       const errorMessage = error?.message || String(error)
       console.error('[主进程] wechat-wait-image 失败', { payload, error: error?.message || String(error) })
@@ -634,8 +269,7 @@ ipcMain.handle(
 )
 
 app.whenReady().then(async () => {
-  loadWeChatInteractionMode()
-  console.info('微信交互方式配置已加载', { mode: getWeChatInteractionMode() })
+  console.info('微信交互方式已固定为新方式')
   electronApp.setAppUserModelId('com.electron')
 
   app.on('browser-window-created', (_, window) => {

@@ -6,17 +6,8 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Building everything for environment: $env" -ForegroundColor Green
 
-# 1. Build Python Sidecar
-Write-Host "`n[1/3] Building Python Sidecar..." -ForegroundColor Cyan
-Push-Location "sidecar_wechat"
-try {
-    .\package.ps1 -env $env
-} finally {
-    Pop-Location
-}
-
-# 2. Build User Frontend (Electron + React)
-Write-Host "`n[2/3] Building Electron Frontend..." -ForegroundColor Cyan
+# 1. Build User Frontend (Electron + React)
+Write-Host "`n[1/2] Building Electron Frontend..." -ForegroundColor Cyan
 Push-Location "user"
 try {
     # Install dependencies if node_modules is missing (optional but good practice)
@@ -42,8 +33,8 @@ try {
     Pop-Location
 }
 
-# 3. Package Electron App
-Write-Host "`n[3/3] Packaging Electron App..." -ForegroundColor Cyan
+# 2. Package Electron App
+Write-Host "`n[2/2] Packaging Electron App..." -ForegroundColor Cyan
 Push-Location "user"
 try {
     Write-Host "Running electron-builder..."

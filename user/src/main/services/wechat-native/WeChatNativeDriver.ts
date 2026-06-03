@@ -242,7 +242,7 @@ export class WeChatNativeDriver {
       return this.copyImageMessage()
     }
     if (action === 'marketing_like' || action === 'marketing_comment') {
-      return { ok: false, error: 'native_marketing_unsupported', message: '新方式暂不支持朋友圈营销任务，请切换 UIA 方式' }
+      return { ok: false, error: 'native_marketing_unsupported', message: '新方式暂不支持朋友圈营销任务' }
     }
     if (payload?.target && payload?.content) {
       return this.send({ target: String(payload.target), content: String(payload.content) })
@@ -257,7 +257,7 @@ export class WeChatNativeDriver {
   }
 
   async copyImageMessage(): Promise<NativeDriverResult> {
-    return { ok: false, error: 'native_image_copy_unsupported', message: '新方式暂不支持图片复制，请切换 UIA 方式处理图片消息' }
+    return { ok: false, error: 'native_image_copy_unsupported', message: '新方式暂不支持图片复制' }
   }
 
   private async refreshBaseline(window: WindowBounds): Promise<void> {

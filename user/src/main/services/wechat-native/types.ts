@@ -1,5 +1,3 @@
-export type WeChatInteractionMode = 'uia' | 'native'
-
 export type ManagedMode = 'full' | 'semi'
 
 export type NativeDriverMessage = {
