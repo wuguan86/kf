@@ -26,7 +26,10 @@ const MAX_CONSECUTIVE_VISION_FAILURES = 3
 const UNREAD_SWITCH_SETTLE_MIN_MS = 320
 const UNREAD_SWITCH_SETTLE_MAX_MS = 760
 const SKIPPED_CANDIDATE_TTL_MS = 60_000
+const RECENT_SENT_SELF_REPLY_TTL_MS = 5 * 60_000
 const MAX_RECENT_MESSAGE_CONTENT_FINGERPRINTS = 1000
+const MAX_RECENT_SENT_SELF_REPLY_CONTENTS = 120
+const MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH = 8
 const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
 
 const wait = (milliseconds: number): Promise<void> => {
@@ -43,6 +46,7 @@ export class WeChatNativeDriver {
   private managedMode: ManagedMode = 'full'
   private seenMessageFingerprints = new Set<string>()
   private recentMessageContentFingerprints = new Map<string, number>()
+  private recentSentSelfReplyContents = new Map<string, { contact: string; content: string; expiresAt: number }>()
   private repliedCustomerFingerprints = new Set<string>()
   private repliedCustomerFingerprintOrder: string[] = []
   private lastWindow: WindowBounds | null = null
@@ -90,6 +94,7 @@ export class WeChatNativeDriver {
     this.runGeneration += 1
     this.seenMessageFingerprints.clear()
     this.recentMessageContentFingerprints.clear()
+    this.recentSentSelfReplyContents.clear()
     this.lastPollAt = 0
     this.lastScreenshotPng = null
     this.lastSnapshotDigest = ''
@@ -113,6 +118,7 @@ export class WeChatNativeDriver {
     this.runGeneration += 1
     this.seenMessageFingerprints.clear()
     this.recentMessageContentFingerprints.clear()
+    this.recentSentSelfReplyContents.clear()
     this.lastScreenshotPng = null
     this.lastSnapshotDigest = ''
     this.visionRequestRunning = false
@@ -178,6 +184,7 @@ export class WeChatNativeDriver {
     const observedContentFingerprints = new Set<string>()
     const currentSnapshotLatestFingerprintByContent = this.buildLatestFingerprintByContent(snapshot)
     let hasNewReplyTrigger = false
+    this.cleanupRecentSentSelfReplyContents(Date.now())
     for (const parsedMessage of snapshot.messages) {
       const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf, parsedMessage.uiId)
       const contentFingerprint = this.buildContentFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf)
@@ -207,6 +214,14 @@ export class WeChatNativeDriver {
         continue
       }
       this.seenMessageFingerprints.add(fingerprint)
+      if (!parsedMessage.isSelf && this.isRecentSentSelfReplyContent(snapshot.contact, parsedMessage.content)) {
+        console.info('新方式识别到视觉模型疑似把最近己方自动回复片段标成客户消息，已跳过触发', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          uiId: parsedMessage.uiId
+        })
+        continue
+      }
       if (parsedMessage.isSelf) {
         console.info('新方式轮询识别到己方消息，仅更新基线不追加显示', {
           contact: snapshot.contact,
@@ -288,6 +303,7 @@ export class WeChatNativeDriver {
     const targetContact = String(payload.target || window.title || '微信').trim() || '微信'
     if (success) {
       this.seenMessageFingerprints.add(this.buildFingerprint(targetContact, content, true))
+      this.markRecentSentSelfReplyContent(targetContact, content)
       setTimeout(() => {
         this.refreshBaseline(window).catch((error) => {
           console.warn('新方式发送后刷新消息基线失败', error)
@@ -573,6 +589,63 @@ export class WeChatNativeDriver {
       }
       this.recentMessageContentFingerprints.delete(oldestFingerprint)
     }
+  }
+
+  private markRecentSentSelfReplyContent(contact: string, content: string): void {
+    const normalizedContent = this.normalizeFingerprintContent(content)
+    if (!normalizedContent) {
+      return
+    }
+    const key = this.buildSentSelfReplyContentKey(contact, normalizedContent)
+    this.recentSentSelfReplyContents.set(key, {
+      contact: String(contact || '').trim(),
+      content: normalizedContent,
+      expiresAt: Date.now() + RECENT_SENT_SELF_REPLY_TTL_MS
+    })
+    this.cleanupRecentSentSelfReplyContents(Date.now())
+    while (this.recentSentSelfReplyContents.size > MAX_RECENT_SENT_SELF_REPLY_CONTENTS) {
+      const oldestKey = this.recentSentSelfReplyContents.keys().next().value
+      if (!oldestKey) {
+        break
+      }
+      this.recentSentSelfReplyContents.delete(oldestKey)
+    }
+  }
+
+  private isRecentSentSelfReplyContent(contact: string, content: string): boolean {
+    const normalizedContact = String(contact || '').trim()
+    const normalizedContent = this.normalizeFingerprintContent(content)
+    if (!normalizedContent || normalizedContent.length < MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH) {
+      return false
+    }
+    this.cleanupRecentSentSelfReplyContents(Date.now())
+    for (const item of this.recentSentSelfReplyContents.values()) {
+      if (item.contact !== normalizedContact) {
+        continue
+      }
+      if (item.content === normalizedContent) {
+        return true
+      }
+      if (item.content.length >= MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH && item.content.includes(normalizedContent)) {
+        return true
+      }
+      if (normalizedContent.length >= MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH && normalizedContent.includes(item.content)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private cleanupRecentSentSelfReplyContents(now: number): void {
+    for (const [key, item] of this.recentSentSelfReplyContents.entries()) {
+      if (item.expiresAt <= now) {
+        this.recentSentSelfReplyContents.delete(key)
+      }
+    }
+  }
+
+  private buildSentSelfReplyContentKey(contact: string, normalizedContent: string): string {
+    return `${String(contact || '').trim()}:${normalizedContent}`
   }
 
   private buildSessionKey(contact: string): string {

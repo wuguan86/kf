@@ -493,6 +493,43 @@ async function testNativeSendReturnsSelfMessageForDisplay() {
   assert.equal(result.sentMessage.trigger_reply, false)
 }
 
+async function testRecentlySentSelfReplyMisreadAsCustomerIsNotReported() {
+  let parseCount = 0
+  const sentReply = '可以呀 公园空气好 走一万步刚好~ 记得穿双舒服的鞋'
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=misread-self-reply',
+      png: Buffer.from(`misread-self-reply-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-misread-self-reply-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: '客户A',
+        messages: [
+          { content: '走一万步刚好~ 记得穿双舒服的鞋', isSelf: false, uiId: `misread-self-reply-${parseCount}` }
+        ],
+        snapshotDigest: `digest-misread-self-reply-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.send({ target: '客户A', content: sentReply })
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+}
+
 await testStopDiscardsInFlightPollMessages()
 await testSpecialConversationGetsSkippedBeforeClick()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
@@ -504,3 +541,4 @@ await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
+await testRecentlySentSelfReplyMisreadAsCustomerIsNotReported()

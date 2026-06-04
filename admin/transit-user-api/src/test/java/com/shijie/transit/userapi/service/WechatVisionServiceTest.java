@@ -48,6 +48,9 @@ class WechatVisionServiceTest {
         .andExpect(content().string(Matchers.containsString("\"model\":\"qwen-vl-plus\"")))
         .andExpect(content().string(Matchers.containsString("\"enable_thinking\":false")))
         .andExpect(content().string(Matchers.containsString("data:image/png;base64,AAAA")))
+        .andExpect(content().string(Matchers.containsString("messages 必须严格按聊天气泡在截图中的视觉顺序输出：从上到下，也就是从旧到新。")))
+        .andExpect(content().string(Matchers.containsString("最底部可见聊天气泡必须是 messages 的最后一项。")))
+        .andExpect(content().string(Matchers.containsString("自动回复内容如果出现在右侧绿色气泡，必须视为己方消息。")))
         .andRespond(withSuccess("""
             {
               "choices": [

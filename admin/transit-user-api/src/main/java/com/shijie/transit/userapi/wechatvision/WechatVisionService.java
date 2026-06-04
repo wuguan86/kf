@@ -252,9 +252,14 @@ public class WechatVisionService {
         messages 是数组，每项字段固定为 content、isSelf、uiId、type、confidence。
         如果图片是聊天窗口：
         - 只识别当前打开会话里的可见聊天气泡文本。
+        - messages 必须严格按聊天气泡在截图中的视觉顺序输出：从上到下，也就是从旧到新。
+        - 最底部可见聊天气泡必须是 messages 的最后一项。
         - type 固定输出 text。
         - 右侧绿色或右侧头像消息必须是 isSelf=true。
+        - 自动回复内容如果出现在右侧绿色气泡，必须视为己方消息。
+        - 禁止把右侧绿色气泡中的整句或片段识别成客户消息。
         - 左侧灰白色或左侧头像消息必须是 isSelf=false。
+        - 如果文字归属不确定，请降低 confidence，不要猜测成客户消息。
         - 群聊名称通常会显示成员数量、多个成员头像或群聊标题，请输出 conversationType=GROUP。
         - 单聊请输出 conversationType=SINGLE。
         - 文件传输助手请输出 accountCategory=FILE_HELPER。
