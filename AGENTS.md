@@ -13,7 +13,7 @@
 - `admin/transit-admin-api/`：管理端业务模块，作为组件被单体服务引用。
 - `admin_web/`：管理后台前端，Vite + React + TypeScript。
 - `user/`：用户端桌面应用，Electron + React + TypeScript。
-- `sidecar_wechat/`：微信侧车服务，主要为 Python 相关脚本和打包配置。
+- `user/src/main/services/wechat-native/`：桌面端微信原生驱动能力，包括窗口定位、截图识别、未读检测和消息发送。
 - `uploads/`：运行期上传或静态资源目录，修改前必须确认是否为用户数据。
 
 ## 2. 后端开发约定
@@ -41,12 +41,12 @@
 - 涉及接口调用时必须处理失败场景，并输出必要的中文日志或提示。
 - React 组件应保持单一职责；组件文件接近 500 行时必须拆分组件、hooks 或工具函数。
 
-## 4. Python 侧车开发约定
+## 4. 微信原生驱动开发约定
 
-- `sidecar_wechat/` 中的脚本修改前必须确认与 Electron 打包流程的关系。
-- 日志必须使用中文，并包含足够定位问题的信息。
-- 配置文件变更必须同步检查 `config.yaml`、`config_dev.yaml`、`config_prod.yaml` 的一致性。
-- 打包相关修改必须检查 `sidecar_wechat/package.ps1` 和 `user/package.json` 中 `extraResources` 的路径是否匹配。
+- 微信个人号自动化能力已内置在 `user/src/main/services/wechat-native/`，不再依赖独立外部服务目录。
+- 修改窗口定位、截图识别、未读检测、视觉解析或消息发送逻辑前，必须先确认 Electron 主进程、preload 暴露接口和渲染进程调用链是否匹配。
+- 日志必须使用中文，并包含足够定位问题的信息，例如会话标识、窗口信息、识别阶段、发送阶段和失败原因。
+- 打包相关修改必须检查 `user/package.json` 与 Electron 主进程资源引用是否匹配，避免引入已经不存在的外部目录。
 
 ## 5. 修改流程
 

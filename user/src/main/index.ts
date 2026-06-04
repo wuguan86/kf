@@ -317,7 +317,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  // 客户端退出时只需要停止当前原生微信驱动，旧 sidecar 进程状态已不再存在。
+  // 客户端退出时释放当前原生微信驱动状态，避免下次启动沿用过期会话。
   void wechatNativeDriver.stop().catch((error) => {
     console.error('客户端关闭时停止微信驱动失败', error)
   })
