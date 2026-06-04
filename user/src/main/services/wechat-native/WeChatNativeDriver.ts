@@ -27,6 +27,7 @@ const UNREAD_SWITCH_SETTLE_MIN_MS = 320
 const UNREAD_SWITCH_SETTLE_MAX_MS = 760
 const SKIPPED_CANDIDATE_TTL_MS = 60_000
 const MAX_RECENT_MESSAGE_CONTENT_FINGERPRINTS = 1000
+const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
 
 const wait = (milliseconds: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -370,8 +371,17 @@ export class WeChatNativeDriver {
     let diff = comparePngSnapshots(this.lastScreenshotPng, screenshot.png)
     this.lastScreenshotPng = screenshot.png
     const shouldRetryFailedVision = this.consecutiveVisionFailures > 0
+    const shouldParseMinorCurrentChatChange = !diff.changed &&
+      !shouldRetryFailedVision &&
+      diff.changedRatio >= MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO
     let switchedUnreadConversation = false
-    if (!diff.changed && !shouldRetryFailedVision) {
+    if (shouldParseMinorCurrentChatChange) {
+      console.info('新方式检测到当前聊天轻微变化，按短消息气泡处理并请求视觉解析', {
+        digest: diff.digest,
+        changedRatio: diff.changedRatio
+      })
+    }
+    if (!diff.changed && !shouldParseMinorCurrentChatChange && !shouldRetryFailedVision) {
       const unreadCandidates = findUnreadConversationCandidates(screenshot, window, this.channel)
       const candidate = unreadCandidates.find((item) => !this.isSkippedCandidateCoolingDown(item))
       if (candidate) {
@@ -409,7 +419,7 @@ export class WeChatNativeDriver {
         }
       }
     }
-    if (!diff.changed && !shouldRetryFailedVision && !switchedUnreadConversation) {
+    if (!diff.changed && !shouldParseMinorCurrentChatChange && !shouldRetryFailedVision && !switchedUnreadConversation) {
       console.info('新方式截图无明显变化，本轮不请求视觉模型', {
         digest: diff.digest,
         changedRatio: diff.changedRatio
@@ -417,7 +427,7 @@ export class WeChatNativeDriver {
       this.lastSnapshotDigest = diff.digest
       return null
     }
-    if (!diff.changed && shouldRetryFailedVision) {
+    if (!diff.changed && !shouldParseMinorCurrentChatChange && shouldRetryFailedVision) {
       console.info('新方式上次视觉解析失败，本轮复用当前截图继续重试', {
         digest: diff.digest,
         failureCount: this.consecutiveVisionFailures

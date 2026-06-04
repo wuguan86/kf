@@ -367,6 +367,41 @@ async function testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow(
   assert.deepEqual(secondResult.messages, [])
 }
 
+async function testMinorCurrentChatChangeStillTriggersVisionParsing() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=minor-change',
+      png: Buffer.from(`minor-current-chat-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: `digest-minor-${parseCount}`, changedRatio: 0.004 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'minor-change-customer',
+        messages: [
+          { content: 'short new text', isSelf: false, uiId: `minor-customer-${parseCount}` }
+        ],
+        snapshotDigest: `digest-minor-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(parseCount, 1)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content, 'short new text')
+}
+
 async function testNativeSendReturnsSelfMessageForDisplay() {
   const { WeChatNativeDriver } = loadNativeDriver({
     findWeChatWindow: async () => testWindow,
@@ -393,4 +428,5 @@ await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testSpecialConversationGetsExitedAfterOpen()
 await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
+await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
