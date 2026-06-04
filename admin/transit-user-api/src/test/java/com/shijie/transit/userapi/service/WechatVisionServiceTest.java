@@ -116,6 +116,38 @@ class WechatVisionServiceTest {
   }
 
   @Test
+  void parseFiltersSelfRecallSystemNotice() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"contact\\":\\"夏天\\",\\"messages\\":[{\\"content\\":\\"还得老板开明\\",\\"isSelf\\":false,\\"uiId\\":\\"msg-1\\"},{\\"content\\":\\"你撤回了一条消息\\",\\"isSelf\\":false,\\"uiId\\":\\"msg-recall\\"},{\\"content\\":\\"也是 老板不卡人 我才能准点撤 😂\\",\\"isSelf\\":true,\\"uiId\\":\\"msg-2\\"}],\\"changed\\":true,\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\"}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatVisionParseResponse response = service.parse(new WechatVisionParseRequest(
+        "data:image/png;base64,RECALL",
+        "微信",
+        "",
+        "native",
+        "CHAT"));
+
+    assertEquals("夏天", response.contact());
+    assertEquals(2, response.messages().size());
+    assertEquals("还得老板开明", response.messages().get(0).content());
+    assertEquals("也是 老板不卡人 我才能准点撤 😂", response.messages().get(1).content());
+    server.verify();
+  }
+
+  @Test
   void parseRejectsNonJsonModelOutput() {
     RestClient.Builder builder = RestClient.builder();
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();

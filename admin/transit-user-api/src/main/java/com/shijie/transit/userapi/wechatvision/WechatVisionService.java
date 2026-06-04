@@ -178,6 +178,10 @@ public class WechatVisionService {
         if (!StringUtils.hasText(content)) {
           continue;
         }
+        if (isIgnoredSystemNotice(content)) {
+          log.info("微信视觉解析忽略系统提示 contact={} content={}", contact, content);
+          continue;
+        }
         String uiId = text(node.path("uiId"));
         if (!StringUtils.hasText(uiId)) {
           uiId = "vlm-" + snapshotDigest.substring(0, 12) + "-" + index;
@@ -213,6 +217,12 @@ public class WechatVisionService {
         classification.skipAutoReply(),
         classification.skipReason(),
         classification.confidence());
+  }
+
+  private boolean isIgnoredSystemNotice(String content) {
+    String normalizedContent = defaultString(content);
+    // 微信撤回提示是灰色系统文案，不属于双方聊天气泡，不能进入自动回复消息流。
+    return "你撤回了一条消息".equals(normalizedContent);
   }
 
   private void logParsedMessages(WechatVisionParseResponse parsed) {
