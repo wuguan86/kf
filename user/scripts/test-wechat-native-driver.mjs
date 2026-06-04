@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -9,6 +9,11 @@ const require = createRequire(import.meta.url)
 const testUserDataPath = resolve(tmpdir(), 'shijie-wechat-native-test')
 
 rmSync(testUserDataPath, { recursive: true, force: true })
+
+function writeRepliedMessageStore(store) {
+  mkdirSync(testUserDataPath, { recursive: true })
+  writeFileSync(resolve(testUserDataPath, 'wechat-native-replied-messages.json'), `${JSON.stringify(store, null, 2)}\n`, 'utf8')
+}
 
 function createDeferred() {
   let resolveValue
@@ -439,6 +444,46 @@ async function testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterResta
   assert.deepEqual(secondResult.messages, [])
 }
 
+async function testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage() {
+  let parseCount = 0
+  writeRepliedMessageStore({
+    version: 1,
+    fingerprints: [
+      'legacy-repeat-customer:customer:repeat text'
+    ]
+  })
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=legacy-repeat',
+      png: Buffer.from(`legacy-repeat-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-legacy-repeat-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'legacy-repeat-customer',
+        messages: [
+          { content: 'repeat text', isSelf: false, uiId: `legacy-repeat-${parseCount}` }
+        ],
+        snapshotDigest: `digest-legacy-repeat-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
 async function testMinorCurrentChatChangeStillTriggersVisionParsing() {
   let parseCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -539,6 +584,7 @@ await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
+await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
 await testRecentlySentSelfReplyMisreadAsCustomerIsNotReported()

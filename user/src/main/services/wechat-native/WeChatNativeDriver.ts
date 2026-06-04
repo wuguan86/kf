@@ -21,6 +21,7 @@ import type {
 } from './types'
 
 const MAX_PERSISTED_REPLIED_MESSAGES = 200
+const REPLIED_CUSTOMER_FINGERPRINT_TTL_MS = 2 * 60_000
 const NATIVE_POLL_INTERVAL_MS = 1500
 const MAX_CONSECUTIVE_VISION_FAILURES = 3
 const UNREAD_SWITCH_SETTLE_MIN_MS = 320
@@ -38,7 +39,13 @@ const wait = (milliseconds: number): Promise<void> => {
 
 type RepliedMessageStore = {
   version: number
-  fingerprints: string[]
+  fingerprints?: string[]
+  records?: RepliedMessageRecord[]
+}
+
+type RepliedMessageRecord = {
+  fingerprint: string
+  expiresAt: number
 }
 
 export class WeChatNativeDriver {
@@ -47,7 +54,7 @@ export class WeChatNativeDriver {
   private seenMessageFingerprints = new Set<string>()
   private recentMessageContentFingerprints = new Map<string, number>()
   private recentSentSelfReplyContents = new Map<string, { contact: string; content: string; expiresAt: number }>()
-  private repliedCustomerFingerprints = new Set<string>()
+  private repliedCustomerFingerprints = new Map<string, number>()
   private repliedCustomerFingerprintOrder: string[] = []
   private lastWindow: WindowBounds | null = null
   private storeLoaded = false
@@ -234,7 +241,7 @@ export class WeChatNativeDriver {
       const shouldTriggerReply = !parsedMessage.isSelf &&
         fingerprint === latestCustomerKey &&
         this.managedMode === 'full' &&
-        !this.repliedCustomerFingerprints.has(customerReplyFingerprint)
+        !this.hasRepliedCustomerFingerprint(customerReplyFingerprint)
 
       if (shouldTriggerReply) {
         hasNewReplyTrigger = true
@@ -653,10 +660,12 @@ export class WeChatNativeDriver {
   }
 
   private async markCustomerMessageReplied(fingerprint: string): Promise<void> {
+    this.cleanupExpiredRepliedCustomerFingerprints(Date.now())
+    const expiresAt = Date.now() + REPLIED_CUSTOMER_FINGERPRINT_TTL_MS
     if (!this.repliedCustomerFingerprints.has(fingerprint)) {
-      this.repliedCustomerFingerprints.add(fingerprint)
       this.repliedCustomerFingerprintOrder.push(fingerprint)
     }
+    this.repliedCustomerFingerprints.set(fingerprint, expiresAt)
 
     while (this.repliedCustomerFingerprintOrder.length > MAX_PERSISTED_REPLIED_MESSAGES) {
       const oldestFingerprint = this.repliedCustomerFingerprintOrder.shift()
@@ -676,9 +685,14 @@ export class WeChatNativeDriver {
     try {
       const raw = await readFile(this.getRepliedStorePath(), 'utf-8')
       const parsed = JSON.parse(raw) as Partial<RepliedMessageStore>
-      const fingerprints = Array.isArray(parsed.fingerprints) ? parsed.fingerprints : []
-      this.repliedCustomerFingerprintOrder = this.normalizePersistedRepliedFingerprints(fingerprints)
-      this.repliedCustomerFingerprints = new Set(this.repliedCustomerFingerprintOrder)
+      const records = this.normalizePersistedRepliedRecords(Array.isArray(parsed.records) ? parsed.records : [])
+      this.repliedCustomerFingerprintOrder = records.map((record) => record.fingerprint)
+      this.repliedCustomerFingerprints = new Map(records.map((record) => [record.fingerprint, record.expiresAt]))
+      if (!Array.isArray(parsed.records) && Array.isArray(parsed.fingerprints) && parsed.fingerprints.length > 0) {
+        console.info('检测到旧版客户消息回复记录，旧记录缺少时间边界，已忽略以避免误拦截新的同文本消息', {
+          legacyCount: parsed.fingerprints.length
+        })
+      }
       console.info('新方式已加载客户消息回复记录', {
         count: this.repliedCustomerFingerprints.size
       })
@@ -692,9 +706,16 @@ export class WeChatNativeDriver {
   }
 
   private async saveRepliedCustomerFingerprints(): Promise<void> {
+    this.cleanupExpiredRepliedCustomerFingerprints(Date.now())
     const store: RepliedMessageStore = {
-      version: 1,
-      fingerprints: this.repliedCustomerFingerprintOrder.slice(-MAX_PERSISTED_REPLIED_MESSAGES)
+      version: 2,
+      records: this.repliedCustomerFingerprintOrder
+        .slice(-MAX_PERSISTED_REPLIED_MESSAGES)
+        .map((fingerprint) => ({
+          fingerprint,
+          expiresAt: this.repliedCustomerFingerprints.get(fingerprint) || 0
+        }))
+        .filter((record) => record.expiresAt > Date.now())
     }
     try {
       await mkdir(dirname(this.getRepliedStorePath()), { recursive: true })
@@ -735,52 +756,54 @@ export class WeChatNativeDriver {
     return this.buildContentFingerprint(contact, content, false)
   }
 
-  private normalizePersistedRepliedFingerprints(fingerprints: unknown[]): string[] {
-    const normalized: string[] = []
+  private hasRepliedCustomerFingerprint(fingerprint: string): boolean {
+    this.cleanupExpiredRepliedCustomerFingerprints(Date.now())
+    return this.repliedCustomerFingerprints.has(fingerprint)
+  }
+
+  private cleanupExpiredRepliedCustomerFingerprints(now: number): void {
+    let hasExpired = false
+    for (const [fingerprint, expiresAt] of this.repliedCustomerFingerprints.entries()) {
+      if (expiresAt <= now) {
+        this.repliedCustomerFingerprints.delete(fingerprint)
+        hasExpired = true
+      }
+    }
+    if (hasExpired) {
+      this.repliedCustomerFingerprintOrder = this.repliedCustomerFingerprintOrder.filter((fingerprint) =>
+        this.repliedCustomerFingerprints.has(fingerprint)
+      )
+    }
+  }
+
+  private normalizePersistedRepliedRecords(records: unknown[]): RepliedMessageRecord[] {
+    const normalized: RepliedMessageRecord[] = []
     const seen = new Set<string>()
-    const addFingerprint = (fingerprint: string): void => {
-      const value = String(fingerprint || '').trim()
+    const now = Date.now()
+    const addRecord = (record: RepliedMessageRecord): void => {
+      const value = String(record.fingerprint || '').trim()
       if (!value || seen.has(value)) {
         return
       }
+      if (!Number.isFinite(record.expiresAt) || record.expiresAt <= now) {
+        return
+      }
       seen.add(value)
-      normalized.push(value)
+      normalized.push({ fingerprint: value, expiresAt: record.expiresAt })
     }
 
-    for (const item of fingerprints) {
-      const fingerprint = String(item || '').trim()
-      addFingerprint(fingerprint)
-      addFingerprint(this.convertLegacyReplyFingerprintToContentFingerprint(fingerprint))
+    for (const item of records) {
+      if (!item || typeof item !== 'object') {
+        continue
+      }
+      const raw = item as Partial<RepliedMessageRecord>
+      addRecord({
+        fingerprint: String(raw.fingerprint || ''),
+        expiresAt: Number(raw.expiresAt)
+      })
     }
 
     return normalized.slice(-MAX_PERSISTED_REPLIED_MESSAGES)
-  }
-
-  private convertLegacyReplyFingerprintToContentFingerprint(fingerprint: string): string {
-    const customerMarker = ':customer:'
-    const markerIndex = fingerprint.indexOf(customerMarker)
-    if (markerIndex < 0) {
-      return ''
-    }
-
-    const contact = fingerprint.slice(0, markerIndex)
-    const payload = fingerprint.slice(markerIndex + customerMarker.length)
-    const separatorIndex = payload.indexOf(':')
-    if (!contact || separatorIndex < 0) {
-      return ''
-    }
-
-    const uiId = payload.slice(0, separatorIndex)
-    const content = payload.slice(separatorIndex + 1)
-    if (!this.looksLikeLegacyMessageUiId(uiId) || !content) {
-      return ''
-    }
-
-    return this.buildCustomerReplyFingerprint(contact, content)
-  }
-
-  private looksLikeLegacyMessageUiId(uiId: string): boolean {
-    return /^(vlm|msg|message|customer|native|duplicate|old-visible|minor|replied|bubble|floating)[\w-]*$/i.test(uiId) || /^\d+$/.test(uiId)
   }
 
   private buildSentSelfMessage(target: unknown, content: string): NativeDriverMessage {
