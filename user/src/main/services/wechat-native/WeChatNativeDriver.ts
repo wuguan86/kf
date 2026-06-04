@@ -1,17 +1,20 @@
 import { app } from 'electron'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
-import { findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
+import { recognizeUnreadConversationCandidate } from './conversationListRecognizer'
+import { clickConversationCandidate, exitConversationToList, pasteAndSendText } from './inputBackend'
 import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshots } from './snapshotDiff'
-import { parseWeChatSnapshotWithVision } from './visionClient'
-import { clickConversationCandidate, pasteAndSendText } from './inputBackend'
 import { findUnreadConversationCandidates } from './unreadDetector'
+import { parseWeChatSnapshotWithVision } from './visionClient'
+import { findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
 import type {
+  ConversationListItemRecognition,
   ManagedMode,
   NativeDriverMessage,
   NativeDriverResult,
   ParsedWeChatSnapshot,
+  UnreadConversationCandidate,
   WeChatChannel,
   WeChatVisionRuntimeConfig,
   WindowBounds
@@ -22,6 +25,7 @@ const NATIVE_POLL_INTERVAL_MS = 1500
 const MAX_CONSECUTIVE_VISION_FAILURES = 3
 const UNREAD_SWITCH_SETTLE_MIN_MS = 320
 const UNREAD_SWITCH_SETTLE_MAX_MS = 760
+const SKIPPED_CANDIDATE_TTL_MS = 60_000
 
 const wait = (milliseconds: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -49,6 +53,9 @@ export class WeChatNativeDriver {
   private consecutiveVisionFailures = 0
   private lastVisionErrorMessage = ''
   private runGeneration = 0
+  private activeReplySessionKey = ''
+  private pendingReplySessionKey = ''
+  private skippedConversationCandidates = new Map<string, number>()
 
   configure(config: Partial<WeChatVisionRuntimeConfig>): NativeDriverResult {
     const nextChannel: WeChatChannel = config.channel === 'enterprise' ? 'enterprise' : 'personal'
@@ -84,6 +91,9 @@ export class WeChatNativeDriver {
     this.lastSnapshotDigest = ''
     this.consecutiveVisionFailures = 0
     this.lastVisionErrorMessage = ''
+    this.activeReplySessionKey = ''
+    this.pendingReplySessionKey = ''
+    this.skippedConversationCandidates.clear()
     console.info('新方式微信视觉驱动已启动', {
       title: window.title,
       className: window.className,
@@ -102,6 +112,8 @@ export class WeChatNativeDriver {
     this.lastSnapshotDigest = ''
     this.visionRequestRunning = false
     this.lastVisionErrorMessage = ''
+    this.activeReplySessionKey = ''
+    this.pendingReplySessionKey = ''
     console.info('新方式微信视觉驱动已停止')
     return { ok: true, mode: 'native' }
   }
@@ -126,14 +138,12 @@ export class WeChatNativeDriver {
       return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到微信窗口' }
     }
     this.lastWindow = window
+    this.cleanupExpiredSkippedCandidates(nowMs)
     const snapshot = await this.readSnapshotIfChanged(window)
     if (!snapshot) {
       if (this.consecutiveVisionFailures >= MAX_CONSECUTIVE_VISION_FAILURES && this.lastVisionErrorMessage) {
         return { ok: false, error: 'vision_parse_failed', message: this.lastVisionErrorMessage }
       }
-      return { ok: true, messages: [] }
-    }
-    if (snapshot.messages.length === 0) {
       return { ok: true, messages: [] }
     }
     if (!this.running || pollGeneration !== this.runGeneration) {
@@ -144,12 +154,20 @@ export class WeChatNativeDriver {
       })
       return { ok: true, messages: [] }
     }
+    if (snapshot.skipAutoReply) {
+      await this.handleSkippedSnapshot(window, snapshot)
+      return { ok: true, messages: [] }
+    }
+    if (snapshot.messages.length === 0) {
+      return { ok: true, messages: [] }
+    }
 
     const hadPreviousBaseline = this.seenMessageFingerprints.size > 0
     const latestCustomerMessage = [...snapshot.messages].reverse().find((message) => !message.isSelf)
     const latestCustomerKey = latestCustomerMessage
       ? this.buildFingerprint(snapshot.contact, latestCustomerMessage.content, latestCustomerMessage.isSelf, latestCustomerMessage.uiId)
       : ''
+    const snapshotSessionKey = this.buildSessionKey(snapshot.contact)
 
     const messages: NativeDriverMessage[] = []
     let hasNewReplyTrigger = false
@@ -167,6 +185,7 @@ export class WeChatNativeDriver {
         })
         continue
       }
+
       const shouldTriggerReply = !parsedMessage.isSelf &&
         fingerprint === latestCustomerKey &&
         this.managedMode === 'full' &&
@@ -174,6 +193,7 @@ export class WeChatNativeDriver {
 
       if (shouldTriggerReply) {
         hasNewReplyTrigger = true
+        this.pendingReplySessionKey = snapshotSessionKey
         await this.markCustomerMessageReplied(fingerprint)
       }
       if (!shouldTriggerReply && !hadPreviousBaseline) {
@@ -195,7 +215,11 @@ export class WeChatNativeDriver {
         is_self: parsedMessage.isSelf,
         trigger_reply: shouldTriggerReply,
         ui_id: parsedMessage.uiId,
-        source: this.channel
+        source: this.channel,
+        conversation_type: snapshot.conversationType,
+        account_category: snapshot.accountCategory,
+        skip_auto_reply: snapshot.skipAutoReply,
+        skip_reason: snapshot.skipReason
       })
     }
 
@@ -204,6 +228,8 @@ export class WeChatNativeDriver {
         contact: snapshot.contact,
         count: messages.length,
         hasNewReplyTrigger,
+        conversationType: snapshot.conversationType,
+        accountCategory: snapshot.accountCategory,
         messages: messages.map((message) => ({
           content: message.content,
           isSelf: message.is_self,
@@ -219,7 +245,6 @@ export class WeChatNativeDriver {
     if (!content) {
       return { ok: false, error: 'empty_content', message: '发送内容为空' }
     }
-    // 发送会真实操作窗口，必须每次重新定位可信微信窗口，避免复用过期坐标。
     const window = await findWeChatWindow(this.channel)
     if (!window || !isPlausibleWeChatWindow(window, this.channel)) {
       return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到可信微信窗口，无法发送消息' }
@@ -255,6 +280,12 @@ export class WeChatNativeDriver {
     if (action === 'copy_image_message') {
       return this.copyImageMessage()
     }
+    if (action === 'reply_session_started') {
+      return this.markReplySessionStarted(payload?.sessionKey)
+    }
+    if (action === 'reply_session_finished') {
+      return this.markReplySessionFinished(payload?.sessionKey)
+    }
     if (action === 'marketing_like' || action === 'marketing_comment') {
       return { ok: false, error: 'native_marketing_unsupported', message: '新方式暂不支持朋友圈营销任务' }
     }
@@ -272,6 +303,34 @@ export class WeChatNativeDriver {
 
   async copyImageMessage(): Promise<NativeDriverResult> {
     return { ok: false, error: 'native_image_copy_unsupported', message: '新方式暂不支持图片复制' }
+  }
+
+  private async markReplySessionStarted(sessionKey: unknown): Promise<NativeDriverResult> {
+    const normalizedSessionKey = String(sessionKey || '').trim()
+    if (!normalizedSessionKey) {
+      return { ok: false, error: 'empty_session_key', message: '开始回复时缺少会话标识' }
+    }
+    this.activeReplySessionKey = normalizedSessionKey
+    this.pendingReplySessionKey = normalizedSessionKey
+    console.info('新方式已锁定当前回复会话', { sessionKey: normalizedSessionKey })
+    return { ok: true, sessionKey: normalizedSessionKey }
+  }
+
+  private async markReplySessionFinished(sessionKey: unknown): Promise<NativeDriverResult> {
+    const normalizedSessionKey = String(sessionKey || '').trim()
+    if (normalizedSessionKey && this.activeReplySessionKey && this.activeReplySessionKey !== normalizedSessionKey) {
+      console.info('新方式收到其他会话的结束通知，保留当前锁定会话', {
+        sessionKey: normalizedSessionKey,
+        activeReplySessionKey: this.activeReplySessionKey
+      })
+      return { ok: true, sessionKey: this.activeReplySessionKey, ignored: true }
+    }
+    console.info('新方式已释放当前回复会话锁', {
+      sessionKey: normalizedSessionKey || this.activeReplySessionKey || this.pendingReplySessionKey
+    })
+    this.activeReplySessionKey = ''
+    this.pendingReplySessionKey = ''
+    return { ok: true }
   }
 
   private async refreshBaseline(window: WindowBounds): Promise<void> {
@@ -294,29 +353,39 @@ export class WeChatNativeDriver {
     let switchedUnreadConversation = false
     if (!diff.changed && !shouldRetryFailedVision) {
       const unreadCandidates = findUnreadConversationCandidates(screenshot, window, this.channel)
-      const candidate = unreadCandidates[0]
+      const candidate = unreadCandidates.find((item) => !this.isSkippedCandidateCoolingDown(item))
       if (candidate) {
-        console.info('新方式检测到未读会话红点，准备拟人化切换会话', {
-          candidateId: candidate.id,
-          centerX: candidate.centerX,
-          centerY: candidate.centerY,
-          score: candidate.score,
-          channel: this.channel
-        })
-        switchedUnreadConversation = await clickConversationCandidate(window, candidate)
-        if (switchedUnreadConversation) {
-          const settleMs = UNREAD_SWITCH_SETTLE_MIN_MS +
-            Math.floor(Math.random() * (UNREAD_SWITCH_SETTLE_MAX_MS - UNREAD_SWITCH_SETTLE_MIN_MS + 1))
-          await wait(settleMs)
-          const previousPng = screenshot.png
-          screenshot = await captureWeChatWindow(window)
-          diff = comparePngSnapshots(previousPng, screenshot.png)
-          this.lastScreenshotPng = screenshot.png
-          console.info('新方式已切换未读会话并重新截图', {
-            candidateId: candidate.id,
-            settleMs,
-            changedRatio: diff.changedRatio
+        if (this.activeReplySessionKey) {
+          console.info('新方式当前会话仍在回复中，本轮仅扫描未读但不点击', {
+            activeReplySessionKey: this.activeReplySessionKey,
+            candidateId: candidate.id
           })
+        } else {
+          const shouldSkipCandidate = await this.shouldSkipUnreadCandidate(screenshot, window, candidate)
+          if (!shouldSkipCandidate) {
+            console.info('新方式检测到未读会话红点，准备拟人化切换会话', {
+              candidateId: candidate.id,
+              centerX: candidate.centerX,
+              centerY: candidate.centerY,
+              score: candidate.score,
+              channel: this.channel
+            })
+            switchedUnreadConversation = await clickConversationCandidate(window, candidate)
+            if (switchedUnreadConversation) {
+              const settleMs = UNREAD_SWITCH_SETTLE_MIN_MS +
+                Math.floor(Math.random() * (UNREAD_SWITCH_SETTLE_MAX_MS - UNREAD_SWITCH_SETTLE_MIN_MS + 1))
+              await wait(settleMs)
+              const previousPng = screenshot.png
+              screenshot = await captureWeChatWindow(window)
+              diff = comparePngSnapshots(previousPng, screenshot.png)
+              this.lastScreenshotPng = screenshot.png
+              console.info('新方式已切换未读会话并重新截图', {
+                candidateId: candidate.id,
+                settleMs,
+                changedRatio: diff.changedRatio
+              })
+            }
+          }
         }
       }
     }
@@ -366,6 +435,95 @@ export class WeChatNativeDriver {
   private async readSnapshot(window: WindowBounds): Promise<ParsedWeChatSnapshot> {
     const snapshot = await this.readSnapshotIfChanged(window)
     return snapshot || { contact: window.title || '微信', messages: [] }
+  }
+
+  private async shouldSkipUnreadCandidate(
+    screenshot: { dataUrl: string; png: Buffer; width: number; height: number },
+    window: WindowBounds,
+    candidate: UnreadConversationCandidate
+  ): Promise<boolean> {
+    try {
+      const recognized = await recognizeUnreadConversationCandidate(screenshot, window, candidate, this.channel, this.runtimeConfig)
+      if (!recognized) {
+        return false
+      }
+      const confidence = typeof recognized.confidence === 'number' ? recognized.confidence : 0
+      const hitFixedRule = recognized.accountCategory === 'FILE_HELPER'
+        || recognized.accountCategory === 'TENCENT_NEWS'
+        || recognized.accountCategory === 'OFFICIAL_ACCOUNT'
+        || recognized.accountCategory === 'SERVICE_ACCOUNT'
+      const shouldSkip = recognized.skipAutoReply || (hitFixedRule && confidence >= 0.5)
+      if (!shouldSkip) {
+        return false
+      }
+      this.markCandidateSkipped(candidate, recognized)
+      console.info('新方式点击前命中特殊会话过滤规则，直接跳过', {
+        candidateId: candidate.id,
+        contact: recognized.contact,
+        accountCategory: recognized.accountCategory,
+        confidence,
+        skipReason: recognized.skipReason
+      })
+      return true
+    } catch (error) {
+      console.warn('新方式点击前会话预判失败，降级为继续原流程', {
+        candidateId: candidate.id,
+        error
+      })
+      return false
+    }
+  }
+
+  private async handleSkippedSnapshot(window: WindowBounds, snapshot: ParsedWeChatSnapshot): Promise<void> {
+    console.info('新方式在聊天窗口中识别到特殊会话，准备返回会话列表', {
+      contact: snapshot.contact,
+      accountCategory: snapshot.accountCategory,
+      skipReason: snapshot.skipReason
+    })
+    await exitConversationToList(window)
+    await wait(240)
+    this.lastScreenshotPng = null
+    this.lastSnapshotDigest = ''
+  }
+
+  private markCandidateSkipped(candidate: UnreadConversationCandidate, recognized: ConversationListItemRecognition): void {
+    const skipKey = this.buildSkippedCandidateKey(candidate, recognized.contact)
+    this.skippedConversationCandidates.set(skipKey, Date.now() + SKIPPED_CANDIDATE_TTL_MS)
+  }
+
+  private isSkippedCandidateCoolingDown(candidate: UnreadConversationCandidate): boolean {
+    const now = Date.now()
+    const keysToDelete: string[] = []
+    let coolingDown = false
+    for (const [key, expiresAt] of this.skippedConversationCandidates.entries()) {
+      if (expiresAt <= now) {
+        keysToDelete.push(key)
+        continue
+      }
+      if (key.startsWith(`${candidate.id}:`)) {
+        coolingDown = true
+      }
+    }
+    for (const key of keysToDelete) {
+      this.skippedConversationCandidates.delete(key)
+    }
+    return coolingDown
+  }
+
+  private cleanupExpiredSkippedCandidates(now: number): void {
+    for (const [key, expiresAt] of this.skippedConversationCandidates.entries()) {
+      if (expiresAt <= now) {
+        this.skippedConversationCandidates.delete(key)
+      }
+    }
+  }
+
+  private buildSkippedCandidateKey(candidate: UnreadConversationCandidate, contact: string): string {
+    return `${candidate.id}:${String(contact || '').trim()}`
+  }
+
+  private buildSessionKey(contact: string): string {
+    return String(contact || '').trim()
   }
 
   private async markCustomerMessageReplied(fingerprint: string): Promise<void> {

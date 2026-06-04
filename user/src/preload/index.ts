@@ -19,6 +19,8 @@ const api = {
   setWeChatManagedMode: (mode: 'full' | 'semi') => ipcRenderer.invoke('wechat-bridge-set-managed-mode', mode),
   configureWeChatVision: (data: { backendBaseUrl: string; token: string; tenantId: string; channel?: 'personal' | 'enterprise' }) =>
     ipcRenderer.invoke('wechat-bridge-configure-vision', data),
+  notifyReplySessionStarted: (data: { sessionKey: string }) => ipcRenderer.invoke('wechat-bridge-command', { action: 'reply_session_started', ...data }),
+  notifyReplySessionFinished: (data: { sessionKey: string }) => ipcRenderer.invoke('wechat-bridge-command', { action: 'reply_session_finished', ...data }),
   waitForWeChatImage: (data: { senderId: string; messageUiId?: unknown; timestamp: number | string; timeout?: number }) =>
     ipcRenderer.invoke('wechat-wait-image', data),
   minimizeWindow: () => ipcRenderer.send('window-minimize'),

@@ -4,5 +4,6 @@ public record WechatVisionParseRequest(
     String imageDataUrl,
     String windowTitle,
     String previousDigest,
-    String driverMode) {
+    String driverMode,
+    String sceneHint) {
 }

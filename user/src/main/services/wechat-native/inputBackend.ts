@@ -52,7 +52,7 @@ using System.Runtime.InteropServices;
 public class NativeInput {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
-[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
 "@
 function Move-HumanLike([int]$targetX, [int]$targetY) {
@@ -149,6 +149,57 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
     clickX,
     clickY,
     score: candidate.score
+  })
+  return true
+}
+
+export const exitConversationToList = async (bounds: WindowBounds): Promise<boolean> => {
+  const listX = Math.round(bounds.x + bounds.width * 0.18 + Math.random() * 8 - 4)
+  const listY = Math.round(bounds.y + bounds.height * 0.16 + Math.random() * 12 - 6)
+  const script = `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class NativeExitConversation {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+function Move-HumanLike([int]$targetX, [int]$targetY) {
+  $current = [System.Windows.Forms.Cursor]::Position
+  $steps = Get-Random -Minimum 4 -Maximum 8
+  for ($i = 1; $i -le $steps; $i++) {
+    $ratio = [double]$i / [double]$steps
+    $nextX = [int]($current.X + (($targetX - $current.X) * $ratio) + (Get-Random -Minimum -2 -Maximum 3))
+    $nextY = [int]($current.Y + (($targetY - $current.Y) * $ratio) + (Get-Random -Minimum -2 -Maximum 3))
+    [void][NativeExitConversation]::SetCursorPos($nextX, $nextY)
+    Start-Sleep -Milliseconds (Get-Random -Minimum 16 -Maximum 46)
+  }
+  [void][NativeExitConversation]::SetCursorPos($targetX, $targetY)
+}
+function Click-HumanLike([int]$targetX, [int]$targetY) {
+  Move-HumanLike $targetX $targetY
+  Start-Sleep -Milliseconds (Get-Random -Minimum 70 -Maximum 140)
+  [NativeExitConversation]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds (Get-Random -Minimum 40 -Maximum 90)
+  [NativeExitConversation]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+}
+$hwnd = [IntPtr]${Math.round(bounds.hwnd)}
+[void][NativeExitConversation]::SetForegroundWindow($hwnd)
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+Click-HumanLike ${listX} ${listY}
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+[System.Windows.Forms.SendKeys]::SendWait("{ESC}")
+`
+
+  await runPowerShell(script, 8000)
+  console.info('新方式已拟人化返回会话列表', {
+    listX,
+    listY,
+    processName: bounds.processName
   })
   return true
 }

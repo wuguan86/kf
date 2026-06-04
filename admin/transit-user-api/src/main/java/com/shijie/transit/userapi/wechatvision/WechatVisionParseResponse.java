@@ -6,5 +6,10 @@ public record WechatVisionParseResponse(
     String contact,
     List<WechatVisionMessage> messages,
     String snapshotDigest,
-    boolean changed) {
+    boolean changed,
+    String conversationType,
+    String accountCategory,
+    boolean skipAutoReply,
+    String skipReason,
+    Double confidence) {
 }

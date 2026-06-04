@@ -1,4 +1,12 @@
-import type { ParsedWeChatMessage, ParsedWeChatSnapshot, WeChatVisionRuntimeConfig, WindowBounds } from './types'
+import type {
+  ConversationListItemRecognition,
+  ParsedWeChatMessage,
+  ParsedWeChatSnapshot,
+  WeChatAccountCategory,
+  WeChatConversationType,
+  WeChatVisionRuntimeConfig,
+  WindowBounds
+} from './types'
 
 type VisionMessage = {
   content?: unknown
@@ -13,6 +21,11 @@ type VisionResponse = {
   messages?: VisionMessage[]
   snapshotDigest?: unknown
   changed?: unknown
+  conversationType?: unknown
+  accountCategory?: unknown
+  skipAutoReply?: unknown
+  skipReason?: unknown
+  confidence?: unknown
 }
 
 const VISION_REQUEST_TIMEOUT_MS = 15_000
@@ -22,6 +35,32 @@ export const parseWeChatSnapshotWithVision = async (
   window: WindowBounds,
   previousDigest: string,
   config: WeChatVisionRuntimeConfig
+): Promise<ParsedWeChatSnapshot> => {
+  return requestVisionRecognition(imageDataUrl, window, previousDigest, config, 'CHAT')
+}
+
+export const recognizeConversationListItemWithVision = async (
+  imageDataUrl: string,
+  window: WindowBounds,
+  config: WeChatVisionRuntimeConfig
+): Promise<ConversationListItemRecognition> => {
+  const parsed = await requestVisionRecognition(imageDataUrl, window, '', config, 'CONVERSATION_LIST')
+  return {
+    contact: parsed.contact,
+    conversationType: parsed.conversationType || 'SINGLE',
+    accountCategory: parsed.accountCategory || 'UNKNOWN',
+    skipAutoReply: parsed.skipAutoReply === true,
+    skipReason: String(parsed.skipReason || '').trim(),
+    confidence: typeof parsed.confidence === 'number' ? parsed.confidence : null
+  }
+}
+
+const requestVisionRecognition = async (
+  imageDataUrl: string,
+  window: WindowBounds,
+  previousDigest: string,
+  config: WeChatVisionRuntimeConfig,
+  sceneHint: 'CHAT' | 'CONVERSATION_LIST'
 ): Promise<ParsedWeChatSnapshot> => {
   if (!config.backendBaseUrl || !config.token) {
     throw new Error('新方式缺少后端地址或登录凭证，请重新登录后再启动')
@@ -41,7 +80,8 @@ export const parseWeChatSnapshotWithVision = async (
         imageDataUrl,
         windowTitle: window.title,
         previousDigest,
-        driverMode: config.channel === 'enterprise' ? 'native-enterprise' : 'native-personal'
+        driverMode: config.channel === 'enterprise' ? 'native-enterprise' : 'native-personal',
+        sceneHint
       }),
       signal: controller.signal
     })
@@ -70,6 +110,11 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
     contact,
     snapshotDigest: String(data?.snapshotDigest || '').trim(),
     changed: data?.changed !== false,
+    conversationType: normalizeConversationType(data?.conversationType),
+    accountCategory: normalizeAccountCategory(data?.accountCategory),
+    skipAutoReply: data?.skipAutoReply === true,
+    skipReason: String(data?.skipReason || '').trim(),
+    confidence: typeof data?.confidence === 'number' ? data.confidence : null,
     messages: messages
       .map((message, index): ParsedWeChatMessage | null => {
         const content = String(message?.content || '').trim()
@@ -84,5 +129,27 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
         }
       })
       .filter((message): message is ParsedWeChatMessage => !!message)
+  }
+}
+
+const normalizeConversationType = (value: unknown): WeChatConversationType => {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized === 'GROUP' || normalized === 'SYSTEM') {
+    return normalized
+  }
+  return 'SINGLE'
+}
+
+const normalizeAccountCategory = (value: unknown): WeChatAccountCategory => {
+  const normalized = String(value || '').trim().toUpperCase()
+  switch (normalized) {
+    case 'NORMAL':
+    case 'FILE_HELPER':
+    case 'TENCENT_NEWS':
+    case 'OFFICIAL_ACCOUNT':
+    case 'SERVICE_ACCOUNT':
+      return normalized
+    default:
+      return 'UNKNOWN'
   }
 }

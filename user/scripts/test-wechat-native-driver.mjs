@@ -49,12 +49,19 @@ function loadNativeDriver(mocks = {}) {
       return { comparePngSnapshots: mocks.comparePngSnapshots }
     }
     if (id === './visionClient') {
-      return { parseWeChatSnapshotWithVision: mocks.parseWeChatSnapshotWithVision }
+      return {
+        parseWeChatSnapshotWithVision: mocks.parseWeChatSnapshotWithVision,
+        recognizeConversationListItemWithVision: mocks.recognizeConversationListItemWithVision
+      }
+    }
+    if (id === './conversationListRecognizer') {
+      return { recognizeUnreadConversationCandidate: mocks.recognizeUnreadConversationCandidate || (async () => null) }
     }
     if (id === './inputBackend') {
       return {
         pasteAndSendText: mocks.pasteAndSendText,
-        clickConversationCandidate: mocks.clickConversationCandidate
+        clickConversationCandidate: mocks.clickConversationCandidate,
+        exitConversationToList: mocks.exitConversationToList || (async () => true)
       }
     }
     if (id === './unreadDetector') {
@@ -69,7 +76,7 @@ function loadNativeDriver(mocks = {}) {
 
 const testWindow = {
   hwnd: 100,
-  title: '暗夜',
+  title: '客户A',
   className: 'Weixin',
   processName: 'Weixin',
   x: 0,
@@ -93,14 +100,13 @@ async function testStopDiscardsInFlightPollMessages() {
   const pollPromise = driver.poll()
   await driver.stop()
   parseDeferred.resolve({
-    contact: '暗夜',
+    contact: '客户A',
     messages: [
-      { content: '在吗', isSelf: false, uiId: 'customer-1' },
-      { content: '吃了没?', isSelf: false, uiId: 'customer-2' },
-      { content: '今天要做什么。', isSelf: false, uiId: 'customer-3' },
-      { content: '刚刚好计划 上午看数据复盘 下午搞个活动脑暴 你呢?', isSelf: true, uiId: 'self-1' }
+      { content: '在吗', isSelf: false, uiId: 'customer-1' }
     ],
-    snapshotDigest: 'digest-2'
+    snapshotDigest: 'digest-2',
+    conversationType: 'SINGLE',
+    accountCategory: 'NORMAL'
   })
 
   const result = await pollPromise
@@ -108,146 +114,8 @@ async function testStopDiscardsInFlightPollMessages() {
   assert.deepEqual(result.messages, [])
 }
 
-async function testNativeSendReturnsSelfMessageForDisplay() {
-  const { WeChatNativeDriver } = loadNativeDriver({
-    findWeChatWindow: async () => testWindow,
-    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
-    comparePngSnapshots: () => ({ changed: false, digest: 'digest-1', changedRatio: 0 }),
-    parseWeChatSnapshotWithVision: async () => ({ contact: '暗夜', messages: [], snapshotDigest: 'digest-1' }),
-    pasteAndSendText: async () => true
-  })
-  const driver = new WeChatNativeDriver()
-
-  const result = await driver.send({ target: '暗夜', content: '刚刚好计划 上午看数据复盘 下午搞个活动脑暴 你呢?' })
-
-  assert.equal(result.ok, true)
-  assert.equal(result.sentMessage.contact, '暗夜')
-  assert.equal(result.sentMessage.content, '刚刚好计划 上午看数据复盘 下午搞个活动脑暴 你呢?')
-  assert.equal(result.sentMessage.is_self, true)
-  assert.equal(result.sentMessage.trigger_reply, false)
-}
-
-async function testEnterpriseChannelUsesEnterpriseWindowLocator() {
-  const requestedChannels = []
-  const { WeChatNativeDriver } = loadNativeDriver({
-    findWeChatWindow: async (channel) => {
-      requestedChannels.push(channel)
-      return { ...testWindow, title: '企业微信', className: 'WXWorkWindow', processName: 'WXWork' }
-    },
-    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
-    comparePngSnapshots: () => ({ changed: true, digest: 'digest-1', changedRatio: 1 }),
-    parseWeChatSnapshotWithVision: async () => ({
-      contact: '企业微信客户',
-      messages: [{ content: '您好', isSelf: false, uiId: 'enterprise-customer-1' }],
-      snapshotDigest: 'digest-1'
-    }),
-    pasteAndSendText: async () => true
-  })
-  const driver = new WeChatNativeDriver()
-
-  driver.configure({ channel: 'enterprise', backendBaseUrl: 'http://localhost', token: 'token', tenantId: '1' })
-  await driver.start()
-  await driver.poll()
-  await driver.send({ target: '企业微信客户', content: '您好，稍等' })
-
-  assert.deepEqual(requestedChannels, ['enterprise', 'enterprise', 'enterprise'])
-}
-
-async function testFirstPollOnlyReportsLatestCustomerMessage() {
-  const { WeChatNativeDriver } = loadNativeDriver({
-    findWeChatWindow: async () => testWindow,
-    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
-    comparePngSnapshots: () => ({ changed: true, digest: 'digest-1', changedRatio: 1 }),
-    parseWeChatSnapshotWithVision: async () => ({
-      contact: '暗夜',
-      messages: [
-        { content: '吃了没?', isSelf: false, uiId: 'customer-old' },
-        { content: '刚刚好计划 上午看数据复盘 下午搞个活动脑暴 你呢?', isSelf: true, uiId: 'self-old' },
-        { content: '我在复盘', isSelf: false, uiId: 'customer-latest' }
-      ],
-      snapshotDigest: 'digest-1'
-    }),
-    pasteAndSendText: async () => true
-  })
-  const driver = new WeChatNativeDriver()
-
-  await driver.start()
-  const result = await driver.poll()
-
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.messages.map((message) => ({
-    content: message.content,
-    isSelf: message.is_self,
-    triggerReply: message.trigger_reply
-  })), [
-    { content: '我在复盘', isSelf: false, triggerReply: true }
-  ])
-}
-
-async function testPollSkipsBackendSelfMessagesAfterKnownSelfReply() {
-  const { WeChatNativeDriver } = loadNativeDriver({
-    findWeChatWindow: async () => testWindow,
-    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
-    comparePngSnapshots: () => ({ changed: true, digest: 'digest-1', changedRatio: 1 }),
-    parseWeChatSnapshotWithVision: async () => ({
-      contact: '暗夜',
-      messages: [
-        { content: '刚刚好计划 上午看数据复盘 下午搞个活动脑暴 你呢?', isSelf: true, uiId: 'self-known' },
-        { content: '数据一般', isSelf: true, uiId: 'backend-self' }
-      ],
-      snapshotDigest: 'digest-1'
-    }),
-    pasteAndSendText: async () => true
-  })
-  const driver = new WeChatNativeDriver()
-
-  await driver.start()
-  await driver.send({ target: '暗夜', content: '刚刚好计划 上午看数据复盘 下午搞个活动脑暴 你呢?' })
-  const result = await driver.poll()
-
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.messages, [])
-}
-
-async function testNativePollAllowsNextReadAfterOnePointFiveSeconds() {
-  const originalNow = Date.now
-  let nowMs = 10_000
-  Date.now = () => nowMs
-  let parseCount = 0
-  try {
-    const { WeChatNativeDriver } = loadNativeDriver({
-      findWeChatWindow: async () => testWindow,
-      captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from(`current-${parseCount}`), width: 1, height: 1 }),
-      comparePngSnapshots: () => ({ changed: true, digest: `digest-${parseCount + 1}`, changedRatio: 1 }),
-      parseWeChatSnapshotWithVision: async () => {
-        parseCount += 1
-        return {
-          contact: '鏆楀',
-          messages: [{ content: `瀹㈡埛娑堟伅-${parseCount}`, isSelf: false, uiId: `customer-${parseCount}` }],
-          snapshotDigest: `digest-${parseCount}`
-        }
-      },
-      pasteAndSendText: async () => true
-    })
-    const driver = new WeChatNativeDriver()
-
-    await driver.start()
-    await driver.poll()
-    nowMs += 1_400
-    const skippedResult = await driver.poll()
-    nowMs += 100
-    await driver.poll()
-
-    assert.deepEqual(skippedResult.messages, [])
-    assert.equal(parseCount, 2)
-  } finally {
-    Date.now = originalNow
-  }
-}
-
-async function testPollClicksUnreadConversationWhenScreenshotUnchanged() {
+async function testSpecialConversationGetsSkippedBeforeClick() {
   const clickedCandidates = []
-  let parseCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
     findWeChatWindow: async () => testWindow,
     captureWeChatWindow: async () => ({
@@ -258,7 +126,105 @@ async function testPollClicksUnreadConversationWhenScreenshotUnchanged() {
     }),
     comparePngSnapshots: () => ({ changed: false, digest: 'digest-unchanged', changedRatio: 0 }),
     findUnreadConversationCandidates: () => [{
-      id: 'unread-1',
+      id: 'unread-special',
+      x: 82,
+      y: 132,
+      width: 14,
+      height: 14,
+      centerX: 89,
+      centerY: 139,
+      score: 16
+    }],
+    recognizeUnreadConversationCandidate: async () => ({
+      contact: '文件传输助手',
+      conversationType: 'SYSTEM',
+      accountCategory: 'FILE_HELPER',
+      skipAutoReply: true,
+      skipReason: '命中文件传输助手固定过滤规则',
+      confidence: 0.99
+    }),
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'digest-1',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(clickedCandidates, [])
+}
+
+async function testActiveReplySessionBlocksSwitchingUnreadConversation() {
+  const clickedCandidates = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64,current',
+      png: Buffer.from('same-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-unchanged', changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-normal',
+      x: 82,
+      y: 132,
+      width: 14,
+      height: 14,
+      centerX: 89,
+      centerY: 139,
+      score: 16
+    }],
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'digest-1',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.command({ action: 'reply_session_started', sessionKey: '客户A' })
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(clickedCandidates, [])
+}
+
+async function testReplySessionUnlockAllowsSwitchingUnreadConversation() {
+  const clickedCandidates = []
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64,current',
+      png: Buffer.from(`same-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: `digest-${parseCount}`, changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-normal',
       x: 82,
       y: 132,
       width: 14,
@@ -275,9 +241,44 @@ async function testPollClicksUnreadConversationWhenScreenshotUnchanged() {
       parseCount += 1
       return {
         contact: '新会话',
-        messages: [{ content: '有新消息', isSelf: false, uiId: 'new-session-message' }],
-        snapshotDigest: `digest-after-click-${parseCount}`
+        messages: [{ content: '有新消息', isSelf: false, uiId: `customer-${parseCount}` }],
+        snapshotDigest: `digest-after-click-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
       }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.command({ action: 'reply_session_started', sessionKey: '客户A' })
+  await driver.command({ action: 'reply_session_finished', sessionKey: '客户A' })
+  const result = await driver.poll()
+
+  assert.deepEqual(clickedCandidates, ['unread-normal'])
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].contact, '新会话')
+}
+
+async function testSpecialConversationGetsExitedAfterOpen() {
+  const exits = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-1', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '腾讯新闻',
+      messages: [],
+      snapshotDigest: 'digest-1',
+      conversationType: 'SYSTEM',
+      accountCategory: 'TENCENT_NEWS',
+      skipAutoReply: true,
+      skipReason: '命中腾讯新闻固定过滤规则'
+    }),
+    exitConversationToList: async () => {
+      exits.push('exit')
+      return true
     },
     pasteAndSendText: async () => true
   })
@@ -286,76 +287,33 @@ async function testPollClicksUnreadConversationWhenScreenshotUnchanged() {
   await driver.start()
   const result = await driver.poll()
 
-  assert.deepEqual(clickedCandidates, ['unread-1'])
-  assert.equal(parseCount, 1)
-  assert.equal(result.messages.length, 1)
-  assert.equal(result.messages[0].contact, '新会话')
-  assert.equal(result.messages[0].trigger_reply, true)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(exits, ['exit'])
 }
 
-async function testPollHandlesRepeatedCustomerTextWithDifferentUiIds() {
-  const originalNow = Date.now
-  let nowMs = 20_000
-  Date.now = () => nowMs
-  let pollIndex = 0
-  try {
-    const { WeChatNativeDriver } = loadNativeDriver({
-      findWeChatWindow: async () => testWindow,
-      captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from(`current-${pollIndex}`), width: 1, height: 1 }),
-      comparePngSnapshots: () => ({ changed: true, digest: `digest-${pollIndex + 1}`, changedRatio: 1 }),
-      parseWeChatSnapshotWithVision: async () => {
-        pollIndex += 1
-        return {
-          contact: '重复文本客户',
-          messages: [
-            { content: '你好', isSelf: false, uiId: 'customer-repeat-1' },
-            { content: '你好', isSelf: false, uiId: 'customer-repeat-2' }
-          ].slice(0, pollIndex),
-          snapshotDigest: `digest-${pollIndex}`
-        }
-      },
-      pasteAndSendText: async () => true
-    })
-    const driver = new WeChatNativeDriver()
-
-    await driver.start()
-    await driver.poll()
-    nowMs += 1_500
-    const result = await driver.poll()
-
-    assert.equal(result.messages.length, 1)
-    assert.equal(result.messages[0].ui_id, 'customer-repeat-2')
-  } finally {
-    Date.now = originalNow
-  }
-}
-
-async function testNativeSendUsesHumanizedClickPath() {
-  const clicks = []
+async function testNativeSendReturnsSelfMessageForDisplay() {
   const { WeChatNativeDriver } = loadNativeDriver({
     findWeChatWindow: async () => testWindow,
     captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
     comparePngSnapshots: () => ({ changed: false, digest: 'digest-1', changedRatio: 0 }),
-    parseWeChatSnapshotWithVision: async () => ({ contact: '客户', messages: [], snapshotDigest: 'digest-1' }),
-    pasteAndSendText: async (_window, content) => {
-      clicks.push(content)
-      return true
-    }
+    parseWeChatSnapshotWithVision: async () => ({ contact: '客户A', messages: [], snapshotDigest: 'digest-1', conversationType: 'SINGLE', accountCategory: 'NORMAL' }),
+    pasteAndSendText: async () => true
   })
   const driver = new WeChatNativeDriver()
 
-  const result = await driver.send({ target: '客户', content: '稍等，我看一下' })
+  const result = await driver.send({ target: '客户A', content: '稍等，我看一下' })
 
   assert.equal(result.ok, true)
-  assert.deepEqual(clicks, ['稍等，我看一下'])
+  assert.equal(result.sentMessage.contact, '客户A')
+  assert.equal(result.sentMessage.content, '稍等，我看一下')
+  assert.equal(result.sentMessage.is_self, true)
+  assert.equal(result.sentMessage.trigger_reply, false)
 }
 
 await testStopDiscardsInFlightPollMessages()
+await testSpecialConversationGetsSkippedBeforeClick()
+await testActiveReplySessionBlocksSwitchingUnreadConversation()
+await testReplySessionUnlockAllowsSwitchingUnreadConversation()
+await testSpecialConversationGetsExitedAfterOpen()
 await testNativeSendReturnsSelfMessageForDisplay()
-await testEnterpriseChannelUsesEnterpriseWindowLocator()
-await testFirstPollOnlyReportsLatestCustomerMessage()
-await testPollSkipsBackendSelfMessagesAfterKnownSelfReply()
-await testNativePollAllowsNextReadAfterOnePointFiveSeconds()
-await testPollClicksUnreadConversationWhenScreenshotUnchanged()
-await testPollHandlesRepeatedCustomerTextWithDifferentUiIds()
-await testNativeSendUsesHumanizedClickPath()

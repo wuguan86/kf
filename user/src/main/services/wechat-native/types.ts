@@ -1,5 +1,7 @@
 export type ManagedMode = 'full' | 'semi'
 export type WeChatChannel = 'personal' | 'enterprise'
+export type WeChatConversationType = 'SINGLE' | 'GROUP' | 'SYSTEM'
+export type WeChatAccountCategory = 'NORMAL' | 'FILE_HELPER' | 'TENCENT_NEWS' | 'OFFICIAL_ACCOUNT' | 'SERVICE_ACCOUNT' | 'UNKNOWN'
 
 export type NativeDriverMessage = {
   id: string
@@ -11,6 +13,10 @@ export type NativeDriverMessage = {
   trigger_reply: boolean
   ui_id?: string
   source?: WeChatChannel
+  conversation_type?: WeChatConversationType
+  account_category?: WeChatAccountCategory
+  skip_auto_reply?: boolean
+  skip_reason?: string
 }
 
 export type NativeDriverResult = Record<string, any>
@@ -37,6 +43,11 @@ export type ParsedWeChatSnapshot = {
   messages: ParsedWeChatMessage[]
   snapshotDigest?: string
   changed?: boolean
+  conversationType?: WeChatConversationType
+  accountCategory?: WeChatAccountCategory
+  skipAutoReply?: boolean
+  skipReason?: string
+  confidence?: number | null
 }
 
 export type WindowBounds = {
@@ -62,4 +73,13 @@ export type WeChatVisionRuntimeConfig = {
   token: string
   tenantId: string
   channel: WeChatChannel
+}
+
+export type ConversationListItemRecognition = {
+  contact: string
+  conversationType: WeChatConversationType
+  accountCategory: WeChatAccountCategory
+  skipAutoReply: boolean
+  skipReason: string
+  confidence?: number | null
 }

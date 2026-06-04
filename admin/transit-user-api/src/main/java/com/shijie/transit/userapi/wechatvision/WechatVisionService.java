@@ -9,6 +9,7 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,8 @@ public class WechatVisionService {
   private static final Logger log = LoggerFactory.getLogger(WechatVisionService.class);
   private static final String DEFAULT_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com";
   private static final int MAX_LOG_RESPONSE_LENGTH = 1000;
+  private static final String SCENE_HINT_CHAT = "CHAT";
+  private static final String SCENE_HINT_CONVERSATION_LIST = "CONVERSATION_LIST";
 
   private final boolean modelConfigured;
   private final ObjectMapper objectMapper;
@@ -58,8 +61,14 @@ public class WechatVisionService {
       log.info("微信视觉解析模型原始返回 snapshotDigest={} model={} output={}",
           snapshotDigest, model, abbreviate(aiOutput));
       WechatVisionParseResponse parsed = parseModelOutput(aiOutput, request, snapshotDigest);
-      log.info("微信视觉解析完成 contact={} changed={} messageCount={} model={}",
-          parsed.contact(), parsed.changed(), parsed.messages().size(), model);
+      log.info("微信视觉解析完成 contact={} changed={} messageCount={} conversationType={} accountCategory={} skipAutoReply={} model={}",
+          parsed.contact(),
+          parsed.changed(),
+          parsed.messages().size(),
+          parsed.conversationType(),
+          parsed.accountCategory(),
+          parsed.skipAutoReply(),
+          model);
       logParsedMessages(parsed);
       return parsed;
     } catch (IllegalArgumentException | IllegalStateException ex) {
@@ -89,8 +98,11 @@ public class WechatVisionService {
         .putObject("image_url")
         .put("url", request.imageDataUrl());
 
-    log.info("微信视觉解析发起百炼兼容接口请求 endpoint={} model={} imageLength={}",
-        compatibleEndpoint, model, request.imageDataUrl().length());
+    log.info("微信视觉解析发起百炼兼容接口请求 endpoint={} model={} imageLength={} sceneHint={}",
+        compatibleEndpoint,
+        model,
+        request.imageDataUrl().length(),
+        request.sceneHint());
     try {
       JsonNode response = restClient.post()
           .uri(compatibleEndpoint)
@@ -102,7 +114,11 @@ public class WechatVisionService {
       return readCompatibleContent(response);
     } catch (RestClientResponseException ex) {
       log.error("微信视觉解析百炼兼容接口失败 endpoint={} model={} status={} response={}",
-          compatibleEndpoint, model, ex.getRawStatusCode(), abbreviate(ex.getResponseBodyAsString()), ex);
+          compatibleEndpoint,
+          model,
+          ex.getRawStatusCode(),
+          abbreviate(ex.getResponseBodyAsString()),
+          ex);
       throw ex;
     }
   }
@@ -120,10 +136,16 @@ public class WechatVisionService {
     if (!root.isObject()) {
       throw new IllegalArgumentException("微信视觉解析结果不是有效 JSON");
     }
+
     String contact = text(root.path("contact"));
     if (!StringUtils.hasText(contact)) {
       contact = StringUtils.hasText(request.windowTitle()) ? request.windowTitle().trim() : "微信";
     }
+    String conversationType = normalizeConversationType(text(root.path("conversationType")));
+    String accountCategory = normalizeAccountCategory(text(root.path("accountCategory")));
+    String skipReason = text(root.path("skipReason")).trim();
+    Double confidence = root.path("confidence").isNumber() ? root.path("confidence").asDouble() : null;
+
     List<WechatVisionMessage> messages = new ArrayList<>();
     JsonNode messageNodes = root.path("messages");
     if (messageNodes.isArray()) {
@@ -147,10 +169,27 @@ public class WechatVisionService {
         index++;
       }
     }
+
     boolean changed = root.has("changed")
         ? root.path("changed").asBoolean(true)
         : !snapshotDigest.equals(StringUtils.hasText(request.previousDigest()) ? request.previousDigest().trim() : "");
-    return new WechatVisionParseResponse(contact.trim(), List.copyOf(messages), snapshotDigest, changed);
+    ClassificationResult classification = classifyConversation(
+        contact,
+        accountCategory,
+        conversationType,
+        skipReason,
+        confidence,
+        request);
+    return new WechatVisionParseResponse(
+        contact.trim(),
+        List.copyOf(messages),
+        snapshotDigest,
+        changed,
+        classification.conversationType(),
+        classification.accountCategory(),
+        classification.skipAutoReply(),
+        classification.skipReason(),
+        classification.confidence());
   }
 
   private void logParsedMessages(WechatVisionParseResponse parsed) {
@@ -181,27 +220,38 @@ public class WechatVisionService {
 
   private String systemPrompt() {
     return """
-        你是微信聊天窗口视觉解析助手。只从截图中识别当前打开会话的可见聊天消息。
+        你是微信桌面端界面解析助手。
         必须只输出 JSON Object，不要输出 Markdown，不要解释。
-        JSON 字段固定为 contact、changed、messages。
+        固定输出字段：
+        contact、changed、messages、conversationType、accountCategory、skipReason、confidence。
+        conversationType 只能是 SINGLE、GROUP、SYSTEM。
+        accountCategory 只能是 NORMAL、FILE_HELPER、TENCENT_NEWS、OFFICIAL_ACCOUNT、SERVICE_ACCOUNT、UNKNOWN。
         messages 是数组，每项字段固定为 content、isSelf、uiId、type、confidence。
-        type 固定输出 text；isSelf 表示消息是否由当前登录微信账号发送。
-        判断 isSelf 只能看截图里的气泡水平位置和头像位置，不能按文本语义、说话口吻或上下文猜测。
-        微信桌面聊天窗口的固定规则如下，必须严格执行：
-        - 右侧气泡、右侧头像、绿色气泡、气泡尖角朝右：当前登录账号自己发送，isSelf=true。
-        - 左侧气泡、左侧头像、灰色或白色气泡、气泡尖角朝左：对方发送，isSelf=false。
-        - 如果消息在截图右半区且靠右对齐，即使内容像提问，也必须输出 isSelf=true。
-        - 如果消息在截图左半区且靠左对齐，即使内容像回答，也必须输出 isSelf=false。
-        - 严禁反向标注：右侧绿色消息不能输出 isSelf=false；左侧灰白消息不能输出 isSelf=true。
-        输出前必须自检每条消息的左右位置，发现左右规则与 isSelf 冲突时，以左右位置为准修正。
-        只输出真实可见的聊天气泡文本，忽略微信菜单、搜索框、输入框、发送按钮、时间戳和系统导航。
-        uiId 要在同一张截图内稳定，可使用消息位置或顺序生成。
+        如果图片是聊天窗口：
+        - 只识别当前打开会话里的可见聊天气泡文本。
+        - type 固定输出 text。
+        - 右侧绿色或右侧头像消息必须是 isSelf=true。
+        - 左侧灰白色或左侧头像消息必须是 isSelf=false。
+        - 群聊名称通常会显示成员数量、多个成员头像或群聊标题，请输出 conversationType=GROUP。
+        - 单聊请输出 conversationType=SINGLE。
+        - 文件传输助手请输出 accountCategory=FILE_HELPER。
+        - 腾讯新闻请输出 accountCategory=TENCENT_NEWS。
+        - 公众号请输出 accountCategory=OFFICIAL_ACCOUNT。
+        - 服务号请输出 accountCategory=SERVICE_ACCOUNT。
+        - 正常好友或客户会话请输出 accountCategory=NORMAL。
+        - 如果会话本身不适合自动回复，请在 skipReason 写明原因。
+        如果图片是左侧会话列表中的单个会话项：
+        - 重点识别 contact、conversationType、accountCategory、skipReason、confidence。
+        - messages 返回空数组。
+        - changed 固定返回 true。
+        只输出真实可见内容，忽略搜索框、输入框、菜单、按钮、时间轴和其他系统控件。
         """;
   }
 
   private String userPrompt(WechatVisionParseRequest request) {
-    return "请解析这张微信或企业微信聊天截图。窗口标题：" + defaultString(request.windowTitle())
+    return "请解析这张微信或企业微信截图。窗口标题：" + defaultString(request.windowTitle())
         + "；驱动方式：" + defaultString(request.driverMode())
+        + "；场景：" + defaultString(request.sceneHint())
         + "；上一张截图摘要：" + defaultString(request.previousDigest()) + "。";
   }
 
@@ -222,6 +272,81 @@ public class WechatVisionService {
       return node.asText();
     }
     return "";
+  }
+
+  private ClassificationResult classifyConversation(
+      String contact,
+      String rawAccountCategory,
+      String rawConversationType,
+      String rawSkipReason,
+      Double rawConfidence,
+      WechatVisionParseRequest request) {
+    String normalizedContact = StringUtils.hasText(contact) ? contact.trim() : "";
+    String accountCategory = normalizeAccountCategory(rawAccountCategory);
+    String conversationType = normalizeConversationType(rawConversationType);
+    String skipReason = StringUtils.hasText(rawSkipReason) ? rawSkipReason.trim() : "";
+    double confidence = rawConfidence == null ? 0.78D : Math.max(0D, Math.min(1D, rawConfidence));
+    String sceneHint = normalizeSceneHint(request == null ? null : request.sceneHint());
+    String lowerContact = normalizedContact.toLowerCase(Locale.ROOT);
+
+    if ("文件传输助手".equals(normalizedContact) || lowerContact.contains("file transfer")) {
+      return new ClassificationResult(conversationType, "FILE_HELPER", true, "命中文件传输助手固定过滤规则", Math.max(confidence, 0.99D));
+    }
+    if ("腾讯新闻".equals(normalizedContact) || lowerContact.contains("tencent news")) {
+      return new ClassificationResult(conversationType, "TENCENT_NEWS", true, "命中腾讯新闻固定过滤规则", Math.max(confidence, 0.99D));
+    }
+    if ("OFFICIAL_ACCOUNT".equals(accountCategory)) {
+      return new ClassificationResult(conversationType, accountCategory, true, ensureSkipReason(skipReason, "识别为公众号，按固定规则跳过"), Math.max(confidence, 0.9D));
+    }
+    if ("SERVICE_ACCOUNT".equals(accountCategory)) {
+      return new ClassificationResult(conversationType, accountCategory, true, ensureSkipReason(skipReason, "识别为服务号，按固定规则跳过"), Math.max(confidence, 0.9D));
+    }
+    if ("UNKNOWN".equals(accountCategory) && normalizedContact.contains("公众号")) {
+      accountCategory = "OFFICIAL_ACCOUNT";
+    } else if ("UNKNOWN".equals(accountCategory) && normalizedContact.contains("服务号")) {
+      accountCategory = "SERVICE_ACCOUNT";
+    } else if ("UNKNOWN".equals(accountCategory) && SCENE_HINT_CONVERSATION_LIST.equals(sceneHint) && normalizedContact.contains("腾讯")) {
+      accountCategory = "TENCENT_NEWS";
+    }
+
+    boolean skipAutoReply = "OFFICIAL_ACCOUNT".equals(accountCategory)
+        || "SERVICE_ACCOUNT".equals(accountCategory)
+        || "FILE_HELPER".equals(accountCategory)
+        || "TENCENT_NEWS".equals(accountCategory);
+    return new ClassificationResult(
+        conversationType,
+        accountCategory,
+        skipAutoReply,
+        skipAutoReply ? ensureSkipReason(skipReason, "命中特殊会话固定过滤规则") : skipReason,
+        confidence);
+  }
+
+  private String ensureSkipReason(String skipReason, String defaultReason) {
+    return StringUtils.hasText(skipReason) ? skipReason.trim() : defaultReason;
+  }
+
+  private String normalizeConversationType(String rawValue) {
+    String normalized = defaultString(rawValue).toUpperCase(Locale.ROOT);
+    if ("GROUP".equals(normalized) || "SYSTEM".equals(normalized)) {
+      return normalized;
+    }
+    return "SINGLE";
+  }
+
+  private String normalizeAccountCategory(String rawValue) {
+    String normalized = defaultString(rawValue).toUpperCase(Locale.ROOT);
+    return switch (normalized) {
+      case "NORMAL", "FILE_HELPER", "TENCENT_NEWS", "OFFICIAL_ACCOUNT", "SERVICE_ACCOUNT" -> normalized;
+      default -> "UNKNOWN";
+    };
+  }
+
+  private String normalizeSceneHint(String rawValue) {
+    String normalized = defaultString(rawValue).toUpperCase(Locale.ROOT);
+    if (SCENE_HINT_CONVERSATION_LIST.equals(normalized)) {
+      return SCENE_HINT_CONVERSATION_LIST;
+    }
+    return SCENE_HINT_CHAT;
   }
 
   private String buildCompatibleEndpoint(String configuredBaseUrl) {
@@ -265,5 +390,13 @@ public class WechatVisionService {
     }
     String value = text.trim();
     return value.length() <= MAX_LOG_RESPONSE_LENGTH ? value : value.substring(0, MAX_LOG_RESPONSE_LENGTH);
+  }
+
+  private record ClassificationResult(
+      String conversationType,
+      String accountCategory,
+      boolean skipAutoReply,
+      String skipReason,
+      Double confidence) {
   }
 }

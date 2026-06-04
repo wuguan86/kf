@@ -30,7 +30,8 @@ class WechatVisionServiceTest {
         "data:image/png;base64,AAAA",
         "微信",
         "",
-        "native");
+        "native",
+        "CHAT");
 
     IllegalStateException error = assertThrows(IllegalStateException.class, () -> service.parse(request));
 
@@ -52,7 +53,7 @@ class WechatVisionServiceTest {
               "choices": [
                 {
                   "message": {
-                    "content": "{\\"contact\\":\\"张三\\",\\"messages\\":[{\\"content\\":\\"你好\\",\\"isSelf\\":false,\\"uiId\\":\\"msg-1\\",\\"type\\":\\"text\\",\\"confidence\\":0.92}],\\"changed\\":true}"
+                    "content": "{\\"contact\\":\\"张三\\",\\"messages\\":[{\\"content\\":\\"你好\\",\\"isSelf\\":false,\\"uiId\\":\\"msg-1\\",\\"type\\":\\"text\\",\\"confidence\\":0.92}],\\"changed\\":true,\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.88}"
                   }
                 }
               ]
@@ -64,7 +65,8 @@ class WechatVisionServiceTest {
         "data:image/png;base64,AAAA",
         "微信",
         "",
-        "native"));
+        "native",
+        "CHAT"));
 
     assertEquals("张三", response.contact());
     assertEquals(true, response.changed());
@@ -72,6 +74,9 @@ class WechatVisionServiceTest {
     assertEquals("你好", response.messages().get(0).content());
     assertEquals(false, response.messages().get(0).isSelf());
     assertEquals("msg-1", response.messages().get(0).uiId());
+    assertEquals("SINGLE", response.conversationType());
+    assertEquals("NORMAL", response.accountCategory());
+    assertEquals(false, response.skipAutoReply());
     server.verify();
   }
 
@@ -85,7 +90,7 @@ class WechatVisionServiceTest {
               "choices": [
                 {
                   "message": {
-                    "content": "```json\\n{\\"contact\\":\\"李四\\",\\"messages\\":[{\\"content\\":\\"\\",\\"isSelf\\":false,\\"uiId\\":\\"empty\\"},{\\"content\\":\\"收到\\",\\"isSelf\\":true,\\"uiId\\":\\"msg-2\\"}],\\"changed\\":true}\\n```"
+                    "content": "```json\\n{\\"contact\\":\\"李四\\",\\"messages\\":[{\\"content\\":\\"\\",\\"isSelf\\":false,\\"uiId\\":\\"empty\\"},{\\"content\\":\\"收到\\",\\"isSelf\\":true,\\"uiId\\":\\"msg-2\\"}],\\"changed\\":true,\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"UNKNOWN\\"}\\n```"
                   }
                 }
               ]
@@ -97,7 +102,8 @@ class WechatVisionServiceTest {
         "data:image/png;base64,BBBB",
         "微信",
         "",
-        "native"));
+        "native",
+        "CHAT"));
 
     assertEquals("李四", response.contact());
     assertEquals(1, response.messages().size());
@@ -118,9 +124,41 @@ class WechatVisionServiceTest {
 
     IllegalArgumentException error = assertThrows(
         IllegalArgumentException.class,
-        () -> service.parse(new WechatVisionParseRequest("data:image/png;base64,CCCC", "微信", "", "native")));
+        () -> service.parse(new WechatVisionParseRequest("data:image/png;base64,CCCC", "微信", "", "native", "CHAT")));
 
     assertEquals("微信视觉解析结果不是有效 JSON", error.getMessage());
+    server.verify();
+  }
+
+  @Test
+  void parseMarksSpecialConversationAsSkip() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"contact\\":\\"文件传输助手\\",\\"messages\\":[],\\"changed\\":true,\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"FILE_HELPER\\",\\"confidence\\":0.95}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatVisionParseResponse response = service.parse(new WechatVisionParseRequest(
+        "data:image/png;base64,DDDD",
+        "微信",
+        "",
+        "native",
+        "CONVERSATION_LIST"));
+
+    assertEquals("FILE_HELPER", response.accountCategory());
+    assertEquals("SYSTEM", response.conversationType());
+    assertEquals(true, response.skipAutoReply());
+    assertEquals("命中文件传输助手固定过滤规则", response.skipReason());
     server.verify();
   }
 

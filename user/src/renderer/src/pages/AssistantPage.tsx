@@ -48,6 +48,10 @@ type ChatMessage = {
   source?: 'personal' | 'enterprise'
   messageId?: string
   customerId?: string
+  conversationType?: 'SINGLE' | 'GROUP' | 'SYSTEM'
+  accountCategory?: 'NORMAL' | 'FILE_HELPER' | 'TENCENT_NEWS' | 'OFFICIAL_ACCOUNT' | 'SERVICE_ACCOUNT' | 'UNKNOWN'
+  skipAutoReply?: boolean
+  skipReason?: string
 }
 type StoreContext = {
   itemId: string
@@ -729,6 +733,15 @@ function AssistantPage(props: Props): JSX.Element {
     const text = String(msg?.content || '').trim()
     const isSelf = !!msg?.is_self
     const triggerReply = !!msg?.trigger_reply
+    const conversationType: 'SINGLE' | 'GROUP' | 'SYSTEM' =
+      msg?.conversation_type === 'GROUP' || msg?.conversationType === 'GROUP'
+        ? 'GROUP'
+        : msg?.conversation_type === 'SYSTEM' || msg?.conversationType === 'SYSTEM'
+          ? 'SYSTEM'
+          : 'SINGLE'
+    const accountCategory = String(msg?.account_category || msg?.accountCategory || '').trim().toUpperCase() as ChatMessage['accountCategory']
+    const skipAutoReply = msg?.skip_auto_reply === true || msg?.skipAutoReply === true
+    const skipReason = String(msg?.skip_reason || msg?.skipReason || '').trim()
     const messageTimestamp = resolveMessageTimestamp(msg?.timestamp)
     const messageUiId = msg?.ui_id || msg?.uiId
     const source: 'personal' | 'enterprise' = msg?.source === 'enterprise' ? 'enterprise' : 'personal'
@@ -752,6 +765,9 @@ function AssistantPage(props: Props): JSX.Element {
       text,
       isSelf,
       triggerReply,
+      conversationType,
+      accountCategory,
+      skipAutoReply,
       messageUiId,
       shouldWaitForImage,
       source
@@ -789,7 +805,22 @@ function AssistantPage(props: Props): JSX.Element {
     const next = prev
       .then(async () => {
         const { imageDataUrl, imageNotice } = await imageTask
-        await handleIncoming(sessionKey, contact, text, isSelf, triggerReply, imageDataUrl, imageNotice, source, messageId, customerId)
+        await handleIncoming(
+          sessionKey,
+          contact,
+          text,
+          isSelf,
+          triggerReply,
+          imageDataUrl,
+          imageNotice,
+          source,
+          messageId,
+          customerId,
+          conversationType,
+          accountCategory,
+          skipAutoReply,
+          skipReason
+        )
       })
       .catch(() => {
       })
@@ -811,10 +842,15 @@ function AssistantPage(props: Props): JSX.Element {
     imageNotice?: string,
     source: 'personal' | 'enterprise' = 'personal',
     messageId?: string,
-    customerId?: string
+    customerId?: string,
+    conversationType: 'SINGLE' | 'GROUP' | 'SYSTEM' = 'SINGLE',
+    accountCategory: ChatMessage['accountCategory'] = 'UNKNOWN',
+    skipAutoReply = false,
+    skipReason = ''
   ) => {
     const normalizedText = normalizeMessage(text)
     if (!normalizedText) return
+    const roomType: 'SINGLE' | 'GROUP' = conversationType === 'GROUP' ? 'GROUP' : 'SINGLE'
 
     const now = Date.now()
     
@@ -829,11 +865,26 @@ function AssistantPage(props: Props): JSX.Element {
       imageNotice: imageNotice || undefined,
       source,
       messageId,
-      customerId
+      customerId,
+      conversationType,
+      accountCategory,
+      skipAutoReply,
+      skipReason
     }
     setMessages((prev) => [...prev, newMessage])
 
     if (isSelf) return
+
+    if (skipAutoReply) {
+      console.info('特殊会话已被过滤，不进入自动回复链路', {
+        sessionKey,
+        contact,
+        conversationType,
+        accountCategory,
+        skipReason
+      })
+      return
+    }
 
     if (!triggerReply) {
       console.log('Ignore reply (not latest or already replied):', normalizedText)
@@ -854,6 +905,14 @@ function AssistantPage(props: Props): JSX.Element {
     setDifyResponse('')
 
     try {
+      const api = (window as any).api
+      if (api?.notifyReplySessionStarted) {
+        try {
+          await api.notifyReplySessionStarted({ sessionKey })
+        } catch (lockError) {
+          console.warn('通知主进程锁定回复会话失败，将继续本轮回复', { sessionKey, lockError })
+        }
+      }
       const role = activeRoleRef.current
       if (!role?.id) {
         setDifyResponse('请先在角色配置中启用一个角色')
@@ -908,6 +967,7 @@ function AssistantPage(props: Props): JSX.Element {
             role: role.content || '',
             wechatContact: sessionKey,
             wechatContactDisplayName: contact,
+            roomType,
             ...(requestImageDataUrl ? { imageDataUrl: requestImageDataUrl } : {})
           }),
           signal: currentAbortController.signal
@@ -1045,7 +1105,6 @@ function AssistantPage(props: Props): JSX.Element {
                 let sendRes: any
                 let sendFailed = false
                 try {
-                  const api = (window as any).api
                   sendRes = await enqueueNativeWeChatSend(() =>
                     api.sendWeChatMessage({ target: contact, content: reply })
                   )
@@ -1165,6 +1224,14 @@ function AssistantPage(props: Props): JSX.Element {
     } finally {
       setIsSending(false)
       streamAbortControllersRef.current.delete(sessionKey)
+      try {
+        const api = (window as any).api
+        if (api?.notifyReplySessionFinished) {
+          await api.notifyReplySessionFinished({ sessionKey })
+        }
+      } catch (unlockError) {
+        console.warn('通知主进程释放回复会话失败', { sessionKey, unlockError })
+      }
       eventBus.emit('points-updated')
     }
   }
@@ -1423,6 +1490,14 @@ function AssistantPage(props: Props): JSX.Element {
       setIsRunning(false)
       pollFailureCountRef.current = 0
       try {
+        streamAbortControllersRef.current.forEach((controller, key) => {
+          controller.abort()
+          const api = (window as any).api
+          if (api?.notifyReplySessionFinished) {
+            void api.notifyReplySessionFinished({ sessionKey: key })
+          }
+        })
+        streamAbortControllersRef.current.clear()
         await syncManagedModeToBridge('full')
         await api.stopWeChatBridge()
       } catch (e) {
