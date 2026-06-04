@@ -103,6 +103,7 @@ public class WechatVisionService {
         model,
         request.imageDataUrl().length(),
         request.sceneHint());
+    long startedAt = System.currentTimeMillis();
     try {
       JsonNode response = restClient.post()
           .uri(compatibleEndpoint)
@@ -111,13 +112,35 @@ public class WechatVisionService {
           .body(body)
           .retrieve()
           .body(JsonNode.class);
-      return readCompatibleContent(response);
-    } catch (RestClientResponseException ex) {
-      log.error("微信视觉解析百炼兼容接口失败 endpoint={} model={} status={} response={}",
+      String contentText = readCompatibleContent(response);
+      long elapsedMs = System.currentTimeMillis() - startedAt;
+      log.info("微信视觉识别消息调用视觉大模型成功 endpoint={} model={} sceneHint={} elapsedMs={} outputLength={}",
           compatibleEndpoint,
           model,
+          request.sceneHint(),
+          elapsedMs,
+          contentText.length());
+      return contentText;
+    } catch (RestClientResponseException ex) {
+      long elapsedMs = System.currentTimeMillis() - startedAt;
+      log.error("微信视觉识别消息调用视觉大模型失败 endpoint={} model={} sceneHint={} elapsedMs={} status={} response={}",
+          compatibleEndpoint,
+          model,
+          request.sceneHint(),
+          elapsedMs,
           ex.getRawStatusCode(),
           abbreviate(ex.getResponseBodyAsString()),
+          ex);
+      throw ex;
+    } catch (RuntimeException ex) {
+      long elapsedMs = System.currentTimeMillis() - startedAt;
+      log.error("微信视觉识别消息调用视觉大模型异常 endpoint={} model={} sceneHint={} elapsedMs={} exType={} msg={}",
+          compatibleEndpoint,
+          model,
+          request.sceneHint(),
+          elapsedMs,
+          ex.getClass().getName(),
+          ex.getMessage(),
           ex);
       throw ex;
     }

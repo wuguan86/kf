@@ -328,6 +328,39 @@ async function testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain() {
   assert.deepEqual(secondResult.messages, [])
 }
 
+async function testRepeatedCustomerMessageInSameVisionResultIsReportedOnce() {
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=same-result-duplicate',
+      png: Buffer.from('same-result-duplicate-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-same-result-duplicate', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'same-result-customer',
+      messages: [
+        { content: 'same customer text', isSelf: false, uiId: 'same-result-1' },
+        { content: 'same customer text', isSelf: false, uiId: 'same-result-2' }
+      ],
+      snapshotDigest: 'digest-same-result-duplicate-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  driver.seenMessageFingerprints.add('existing-baseline')
+  const result = await driver.poll()
+
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content, 'same customer text')
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
 async function testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow() {
   let parseCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -466,6 +499,7 @@ await testActiveReplySessionBlocksSwitchingUnreadConversation()
 await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testSpecialConversationGetsExitedAfterOpen()
 await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
+await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()

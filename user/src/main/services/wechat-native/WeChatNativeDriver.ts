@@ -176,12 +176,23 @@ export class WeChatNativeDriver {
 
     const messages: NativeDriverMessage[] = []
     const observedContentFingerprints = new Set<string>()
+    const currentSnapshotLatestFingerprintByContent = this.buildLatestFingerprintByContent(snapshot)
     let hasNewReplyTrigger = false
     for (const parsedMessage of snapshot.messages) {
       const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf, parsedMessage.uiId)
       const contentFingerprint = this.buildContentFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf)
       const customerReplyFingerprint = this.buildCustomerReplyFingerprint(snapshot.contact, parsedMessage.content)
       observedContentFingerprints.add(contentFingerprint)
+      if (currentSnapshotLatestFingerprintByContent.get(contentFingerprint) !== fingerprint) {
+        this.seenMessageFingerprints.add(fingerprint)
+        console.info('新方式识别到同一轮重复消息，已保留最新气泡并跳过较早重复项', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          isSelf: parsedMessage.isSelf,
+          uiId: parsedMessage.uiId
+        })
+        continue
+      }
       if (this.seenMessageFingerprints.has(fingerprint)) {
         continue
       }
@@ -635,6 +646,16 @@ export class WeChatNativeDriver {
 
   private buildContentFingerprint(contact: string, content: string, isSelf: boolean): string {
     return `${contact}:${isSelf ? 'self' : 'customer'}:${this.normalizeFingerprintContent(content)}`
+  }
+
+  private buildLatestFingerprintByContent(snapshot: ParsedWeChatSnapshot): Map<string, string> {
+    const latestFingerprintByContent = new Map<string, string>()
+    for (const message of snapshot.messages) {
+      const contentFingerprint = this.buildContentFingerprint(snapshot.contact, message.content, message.isSelf)
+      const fingerprint = this.buildFingerprint(snapshot.contact, message.content, message.isSelf, message.uiId)
+      latestFingerprintByContent.set(contentFingerprint, fingerprint)
+    }
+    return latestFingerprintByContent
   }
 
   private buildCustomerReplyFingerprint(contact: string, content: string): string {
