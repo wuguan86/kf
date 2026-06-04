@@ -32,7 +32,7 @@ export const Toast: React.FC<ToastProps> = ({
   return (
     <div className={`${styles.toast} ${styles[type]}`}>
       <span className={styles.icon}>
-        {type === 'success' && '✓'}
+        {type === 'success' && 'OK'}
         {type === 'error' && '!'}
         {type === 'info' && 'i'}
       </span>

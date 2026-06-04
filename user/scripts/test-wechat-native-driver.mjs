@@ -292,6 +292,81 @@ async function testSpecialConversationGetsExitedAfterOpen() {
   assert.deepEqual(exits, ['exit'])
 }
 
+async function testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=current',
+      png: Buffer.from(`duplicate-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-duplicate-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'duplicate-customer',
+        messages: [
+          { content: 'same customer text', isSelf: false, uiId: `customer-floating-${parseCount}` }
+        ],
+        snapshotDigest: `digest-duplicate-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const firstResult = await driver.poll()
+  driver.lastPollAt = 0
+  const secondResult = await driver.poll()
+
+  assert.equal(firstResult.messages.length, 1)
+  assert.deepEqual(secondResult.messages, [])
+}
+
+async function testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=current',
+      png: Buffer.from(`old-visible-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-old-visible-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'old-visible-customer',
+        messages: [
+          { content: 'old visible customer text', isSelf: false, uiId: `old-visible-floating-${parseCount}` }
+        ],
+        snapshotDigest: `digest-old-visible-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const firstResult = await driver.poll()
+  for (const key of driver.recentMessageContentFingerprints.keys()) {
+    driver.recentMessageContentFingerprints.set(key, Date.now() - 1)
+  }
+  driver.lastPollAt = 0
+  const secondResult = await driver.poll()
+
+  assert.equal(firstResult.messages.length, 1)
+  assert.deepEqual(secondResult.messages, [])
+}
+
 async function testNativeSendReturnsSelfMessageForDisplay() {
   const { WeChatNativeDriver } = loadNativeDriver({
     findWeChatWindow: async () => testWindow,
@@ -316,4 +391,6 @@ await testSpecialConversationGetsSkippedBeforeClick()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
 await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testSpecialConversationGetsExitedAfterOpen()
+await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
+await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testNativeSendReturnsSelfMessageForDisplay()

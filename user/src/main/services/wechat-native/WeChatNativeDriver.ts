@@ -26,6 +26,7 @@ const MAX_CONSECUTIVE_VISION_FAILURES = 3
 const UNREAD_SWITCH_SETTLE_MIN_MS = 320
 const UNREAD_SWITCH_SETTLE_MAX_MS = 760
 const SKIPPED_CANDIDATE_TTL_MS = 60_000
+const MAX_RECENT_MESSAGE_CONTENT_FINGERPRINTS = 1000
 
 const wait = (milliseconds: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -40,6 +41,7 @@ export class WeChatNativeDriver {
   private running = false
   private managedMode: ManagedMode = 'full'
   private seenMessageFingerprints = new Set<string>()
+  private recentMessageContentFingerprints = new Map<string, number>()
   private repliedCustomerFingerprints = new Set<string>()
   private repliedCustomerFingerprintOrder: string[] = []
   private lastWindow: WindowBounds | null = null
@@ -86,6 +88,7 @@ export class WeChatNativeDriver {
     this.running = true
     this.runGeneration += 1
     this.seenMessageFingerprints.clear()
+    this.recentMessageContentFingerprints.clear()
     this.lastPollAt = 0
     this.lastScreenshotPng = null
     this.lastSnapshotDigest = ''
@@ -108,6 +111,7 @@ export class WeChatNativeDriver {
     this.running = false
     this.runGeneration += 1
     this.seenMessageFingerprints.clear()
+    this.recentMessageContentFingerprints.clear()
     this.lastScreenshotPng = null
     this.lastSnapshotDigest = ''
     this.visionRequestRunning = false
@@ -170,10 +174,23 @@ export class WeChatNativeDriver {
     const snapshotSessionKey = this.buildSessionKey(snapshot.contact)
 
     const messages: NativeDriverMessage[] = []
+    const observedContentFingerprints = new Set<string>()
     let hasNewReplyTrigger = false
     for (const parsedMessage of snapshot.messages) {
       const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf, parsedMessage.uiId)
+      const contentFingerprint = this.buildContentFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf)
+      observedContentFingerprints.add(contentFingerprint)
       if (this.seenMessageFingerprints.has(fingerprint)) {
+        continue
+      }
+      if (this.recentMessageContentFingerprints.has(contentFingerprint)) {
+        this.seenMessageFingerprints.add(fingerprint)
+        console.info('新方式识别到疑似重复消息，已按内容指纹跳过', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          isSelf: parsedMessage.isSelf,
+          uiId: parsedMessage.uiId
+        })
         continue
       }
       this.seenMessageFingerprints.add(fingerprint)
@@ -221,6 +238,9 @@ export class WeChatNativeDriver {
         skip_auto_reply: snapshot.skipAutoReply,
         skip_reason: snapshot.skipReason
       })
+    }
+    for (const contentFingerprint of observedContentFingerprints) {
+      this.markRecentMessageContentFingerprint(contentFingerprint)
     }
 
     if (messages.length > 0) {
@@ -522,6 +542,17 @@ export class WeChatNativeDriver {
     return `${candidate.id}:${String(contact || '').trim()}`
   }
 
+  private markRecentMessageContentFingerprint(fingerprint: string): void {
+    this.recentMessageContentFingerprints.set(fingerprint, Date.now())
+    while (this.recentMessageContentFingerprints.size > MAX_RECENT_MESSAGE_CONTENT_FINGERPRINTS) {
+      const oldestFingerprint = this.recentMessageContentFingerprints.keys().next().value
+      if (!oldestFingerprint) {
+        break
+      }
+      this.recentMessageContentFingerprints.delete(oldestFingerprint)
+    }
+  }
+
   private buildSessionKey(contact: string): string {
     return String(contact || '').trim()
   }
@@ -590,6 +621,10 @@ export class WeChatNativeDriver {
       return `${contact}:${isSelf ? 'self' : 'customer'}:${normalizedUiId}:${normalizedContent}`
     }
     return `${contact}:${isSelf ? 'self' : 'customer'}:${normalizedContent}`
+  }
+
+  private buildContentFingerprint(contact: string, content: string, isSelf: boolean): string {
+    return `${contact}:${isSelf ? 'self' : 'customer'}:${this.normalizeFingerprintContent(content)}`
   }
 
   private buildSentSelfMessage(target: unknown, content: string): NativeDriverMessage {

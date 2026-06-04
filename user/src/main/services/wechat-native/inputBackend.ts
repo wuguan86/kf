@@ -82,6 +82,9 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 160 -Maximum 320)
 [System.Windows.Forms.SendKeys]::SendWait("^v")
 Start-Sleep -Milliseconds (Get-Random -Minimum 420 -Maximum 760)
 Click-HumanLike ${sendX} ${sendY}
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
 `
 
   try {

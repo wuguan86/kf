@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, desktopCapturer, screen, session } from 'electron'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -7,6 +7,31 @@ import { WeChatNativeDriver } from './services/wechat-native/WeChatNativeDriver'
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 const wechatNativeDriver = new WeChatNativeDriver()
+
+const buildDevRendererUrl = (hash?: string): string => {
+  const rendererUrl = process.env['ELECTRON_RENDERER_URL']
+  if (!rendererUrl) {
+    return ''
+  }
+  const url = new URL(rendererUrl)
+  url.searchParams.set('devCacheBust', String(Date.now()))
+  if (hash) {
+    url.hash = hash.startsWith('#') ? hash : `#${hash}`
+  }
+  return url.toString()
+}
+
+const clearDevRendererCache = async (): Promise<void> => {
+  if (!is.dev) {
+    return
+  }
+  try {
+    await session.defaultSession.clearCache()
+    console.info('开发模式已清理 Electron 渲染缓存，避免加载旧的 Vite 模块')
+  } catch (error) {
+    console.warn('开发模式清理 Electron 渲染缓存失败，将继续启动', error)
+  }
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -49,7 +74,7 @@ function createWindow(): void {
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    mainWindow.loadURL(buildDevRendererUrl())
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
@@ -86,7 +111,7 @@ function createCaptureWindow(): void {
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    captureWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/capture`)
+    captureWindow.loadURL(buildDevRendererUrl('/capture'))
   } else {
     captureWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'capture' })
   }
@@ -272,6 +297,7 @@ ipcMain.handle(
 app.whenReady().then(async () => {
   console.info('微信交互方式已固定为新方式')
   electronApp.setAppUserModelId('com.electron')
+  await clearDevRendererCache()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
