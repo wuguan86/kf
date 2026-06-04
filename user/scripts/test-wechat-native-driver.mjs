@@ -367,6 +367,45 @@ async function testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow(
   assert.deepEqual(secondResult.messages, [])
 }
 
+async function testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=replied-restart',
+      png: Buffer.from(`replied-restart-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-replied-restart-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'replied-restart-customer',
+        messages: [
+          { content: 'already replied text', isSelf: false, uiId: `replied-floating-${parseCount}` }
+        ],
+        snapshotDigest: `digest-replied-restart-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+
+  const firstDriver = new WeChatNativeDriver()
+  await firstDriver.start()
+  const firstResult = await firstDriver.poll()
+
+  const secondDriver = new WeChatNativeDriver()
+  await secondDriver.start()
+  const secondResult = await secondDriver.poll()
+
+  assert.equal(firstResult.messages.length, 1)
+  assert.equal(firstResult.messages[0].trigger_reply, true)
+  assert.deepEqual(secondResult.messages, [])
+}
+
 async function testMinorCurrentChatChangeStillTriggersVisionParsing() {
   let parseCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -428,5 +467,6 @@ await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testSpecialConversationGetsExitedAfterOpen()
 await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
+await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()

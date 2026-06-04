@@ -180,6 +180,7 @@ export class WeChatNativeDriver {
     for (const parsedMessage of snapshot.messages) {
       const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf, parsedMessage.uiId)
       const contentFingerprint = this.buildContentFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf)
+      const customerReplyFingerprint = this.buildCustomerReplyFingerprint(snapshot.contact, parsedMessage.content)
       observedContentFingerprints.add(contentFingerprint)
       if (this.seenMessageFingerprints.has(fingerprint)) {
         continue
@@ -207,12 +208,12 @@ export class WeChatNativeDriver {
       const shouldTriggerReply = !parsedMessage.isSelf &&
         fingerprint === latestCustomerKey &&
         this.managedMode === 'full' &&
-        !this.repliedCustomerFingerprints.has(fingerprint)
+        !this.repliedCustomerFingerprints.has(customerReplyFingerprint)
 
       if (shouldTriggerReply) {
         hasNewReplyTrigger = true
         this.pendingReplySessionKey = snapshotSessionKey
-        await this.markCustomerMessageReplied(fingerprint)
+        await this.markCustomerMessageReplied(customerReplyFingerprint)
       }
       if (!shouldTriggerReply && !hadPreviousBaseline) {
         console.info('新方式首次扫描跳过当前可见历史消息', {
@@ -592,12 +593,11 @@ export class WeChatNativeDriver {
       const raw = await readFile(this.getRepliedStorePath(), 'utf-8')
       const parsed = JSON.parse(raw) as Partial<RepliedMessageStore>
       const fingerprints = Array.isArray(parsed.fingerprints) ? parsed.fingerprints : []
-      this.repliedCustomerFingerprintOrder = fingerprints
-        .map((item) => String(item || '').trim())
-        .filter(Boolean)
-        .slice(-MAX_PERSISTED_REPLIED_MESSAGES)
+      this.repliedCustomerFingerprintOrder = this.normalizePersistedRepliedFingerprints(fingerprints)
       this.repliedCustomerFingerprints = new Set(this.repliedCustomerFingerprintOrder)
-      console.info('新方式已加载客户消息回复记录', { count: this.repliedCustomerFingerprints.size })
+      console.info('新方式已加载客户消息回复记录', {
+        count: this.repliedCustomerFingerprints.size
+      })
     } catch (error: any) {
       if (error?.code !== 'ENOENT') {
         console.warn('新方式加载客户消息回复记录失败，将从空记录继续', error)
@@ -635,6 +635,58 @@ export class WeChatNativeDriver {
 
   private buildContentFingerprint(contact: string, content: string, isSelf: boolean): string {
     return `${contact}:${isSelf ? 'self' : 'customer'}:${this.normalizeFingerprintContent(content)}`
+  }
+
+  private buildCustomerReplyFingerprint(contact: string, content: string): string {
+    return this.buildContentFingerprint(contact, content, false)
+  }
+
+  private normalizePersistedRepliedFingerprints(fingerprints: unknown[]): string[] {
+    const normalized: string[] = []
+    const seen = new Set<string>()
+    const addFingerprint = (fingerprint: string): void => {
+      const value = String(fingerprint || '').trim()
+      if (!value || seen.has(value)) {
+        return
+      }
+      seen.add(value)
+      normalized.push(value)
+    }
+
+    for (const item of fingerprints) {
+      const fingerprint = String(item || '').trim()
+      addFingerprint(fingerprint)
+      addFingerprint(this.convertLegacyReplyFingerprintToContentFingerprint(fingerprint))
+    }
+
+    return normalized.slice(-MAX_PERSISTED_REPLIED_MESSAGES)
+  }
+
+  private convertLegacyReplyFingerprintToContentFingerprint(fingerprint: string): string {
+    const customerMarker = ':customer:'
+    const markerIndex = fingerprint.indexOf(customerMarker)
+    if (markerIndex < 0) {
+      return ''
+    }
+
+    const contact = fingerprint.slice(0, markerIndex)
+    const payload = fingerprint.slice(markerIndex + customerMarker.length)
+    const separatorIndex = payload.indexOf(':')
+    if (!contact || separatorIndex < 0) {
+      return ''
+    }
+
+    const uiId = payload.slice(0, separatorIndex)
+    const content = payload.slice(separatorIndex + 1)
+    if (!this.looksLikeLegacyMessageUiId(uiId) || !content) {
+      return ''
+    }
+
+    return this.buildCustomerReplyFingerprint(contact, content)
+  }
+
+  private looksLikeLegacyMessageUiId(uiId: string): boolean {
+    return /^(vlm|msg|message|customer|native|duplicate|old-visible|minor|replied|bubble|floating)[\w-]*$/i.test(uiId) || /^\d+$/.test(uiId)
   }
 
   private buildSentSelfMessage(target: unknown, content: string): NativeDriverMessage {
