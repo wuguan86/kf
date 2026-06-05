@@ -1095,6 +1095,43 @@ async function testRecentlySentSelfReplyMisreadAsCustomerIsNotReported() {
   assert.deepEqual(result.messages, [])
 }
 
+async function testEllipsizedSelfReplyMisreadAsCustomerIsNotReported() {
+  let parseCount = 0
+  const sentReply = '那挺爽啊 周末还能包场 😅 适合躺平发呆'
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=ellipsized-self-reply',
+      png: Buffer.from(`ellipsized-self-reply-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-ellipsized-self-reply-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: '客户A',
+        messages: [
+          { content: '那挺爽啊 周末还能包场 😅 ...', isSelf: false, uiId: `ellipsized-self-reply-${parseCount}` }
+        ],
+        snapshotDigest: `digest-ellipsized-self-reply-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.send({ target: '客户A', content: sentReply })
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+}
+
 await testStopDiscardsInFlightPollMessages()
 await testSpecialConversationGetsSkippedBeforeClick()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
@@ -1116,3 +1153,4 @@ await testRepliedImageWithChangedUiIdAndBoundsDoesNotTriggerAgain()
 await testCustomerImageFollowedBySelfRepliesDoesNotTrigger()
 await testDifferentImageSignatureCanTriggerAfterPreviousImageReply()
 await testRecentlySentSelfReplyMisreadAsCustomerIsNotReported()
+await testEllipsizedSelfReplyMisreadAsCustomerIsNotReported()

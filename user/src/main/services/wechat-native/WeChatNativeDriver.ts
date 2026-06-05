@@ -717,7 +717,8 @@ export class WeChatNativeDriver {
   private isRecentSentSelfReplyContent(contact: string, content: string): boolean {
     const normalizedContact = String(contact || '').trim()
     const normalizedContent = this.normalizeFingerprintContent(content)
-    if (!normalizedContent || normalizedContent.length < MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH) {
+    const normalizedMatchContent = this.normalizeSelfReplyMatchContent(content)
+    if (!normalizedContent || normalizedMatchContent.length < MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH) {
       return false
     }
     this.cleanupRecentSentSelfReplyContents(Date.now())
@@ -725,13 +726,17 @@ export class WeChatNativeDriver {
       if (item.contact !== normalizedContact) {
         continue
       }
+      const sentMatchContent = this.normalizeSelfReplyMatchContent(item.content)
       if (item.content === normalizedContent) {
         return true
       }
-      if (item.content.length >= MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH && item.content.includes(normalizedContent)) {
+      if (sentMatchContent === normalizedMatchContent) {
         return true
       }
-      if (normalizedContent.length >= MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH && normalizedContent.includes(item.content)) {
+      if (sentMatchContent.length >= MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH && sentMatchContent.includes(normalizedMatchContent)) {
+        return true
+      }
+      if (normalizedMatchContent.length >= MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH && normalizedMatchContent.includes(sentMatchContent)) {
         return true
       }
     }
@@ -1271,5 +1276,11 @@ export class WeChatNativeDriver {
 
   private normalizeFingerprintContent(content: string): string {
     return content.replace(/\s+/g, ' ').trim()
+  }
+
+  private normalizeSelfReplyMatchContent(content: string): string {
+    return this.normalizeFingerprintContent(content)
+      .replace(/\s*(?:\.{2,}|…+|。{2,})\s*$/g, '')
+      .trim()
   }
 }
