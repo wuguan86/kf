@@ -10,6 +10,7 @@ import { findUnreadConversationCandidates } from './unreadDetector'
 import { parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } from './visionClient'
 import { findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
 import { applyMessageVisionGuard, type MessageVisionGuardContext } from './messageVisionGuard'
+import { getSpecialConversationRule } from './specialConversationGuard'
 import type {
   ConversationListItemRecognition,
   MarketingMomentCandidate,
@@ -264,7 +265,13 @@ export class WeChatNativeDriver {
       })
       return { ok: true, messages: [] }
     }
-    if (snapshot.skipAutoReply) {
+    const snapshotSpecialRule = getSpecialConversationRule(snapshot.contact, snapshot.accountCategory, snapshot.skipReason)
+    if (snapshot.skipAutoReply || snapshotSpecialRule) {
+      if (snapshotSpecialRule) {
+        snapshot.accountCategory = snapshotSpecialRule.accountCategory
+        snapshot.skipReason = snapshotSpecialRule.skipReason
+        snapshot.skipAutoReply = true
+      }
       await this.handleSkippedSnapshot(window, snapshot)
       return { ok: true, messages: [] }
     }
@@ -1078,13 +1085,15 @@ export class WeChatNativeDriver {
         return false
       }
       const confidence = typeof recognized.confidence === 'number' ? recognized.confidence : 0
-      const hitFixedRule = recognized.accountCategory === 'FILE_HELPER'
-        || recognized.accountCategory === 'TENCENT_NEWS'
-        || recognized.accountCategory === 'OFFICIAL_ACCOUNT'
-        || recognized.accountCategory === 'SERVICE_ACCOUNT'
-      const shouldSkip = recognized.skipAutoReply || (hitFixedRule && confidence >= 0.5)
+      const specialRule = getSpecialConversationRule(recognized.contact, recognized.accountCategory, recognized.skipReason)
+      const shouldSkip = recognized.skipAutoReply || (specialRule?.source === 'contact') || (specialRule?.source === 'category' && confidence >= 0.5)
       if (!shouldSkip) {
         return false
+      }
+      if (specialRule) {
+        recognized.accountCategory = specialRule.accountCategory
+        recognized.skipReason = specialRule.skipReason
+        recognized.skipAutoReply = true
       }
       this.markCandidateSkipped(candidate, recognized)
       console.info('新方式点击前命中特殊会话过滤规则，直接跳过', {

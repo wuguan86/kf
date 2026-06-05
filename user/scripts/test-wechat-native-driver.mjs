@@ -84,6 +84,9 @@ function loadNativeDriver(mocks = {}) {
     if (id === './messageVisionGuard') {
       return loadTranspiledTsModule('messageVisionGuard.ts')
     }
+    if (id === './specialConversationGuard') {
+      return loadTranspiledTsModule('specialConversationGuard.ts')
+    }
     if (id === './conversationListRecognizer') {
       return { recognizeUnreadConversationCandidate: mocks.recognizeUnreadConversationCandidate || (async () => null) }
     }
@@ -178,6 +181,58 @@ async function testSpecialConversationGetsSkippedBeforeClick() {
       skipAutoReply: true,
       skipReason: '命中文件传输助手固定过滤规则',
       confidence: 0.99
+    }),
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'digest-1',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(clickedCandidates, [])
+}
+
+async function testSpecialConversationNameFallbackSkipsBeforeClick() {
+  const clickedCandidates = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=current',
+      png: Buffer.from('same-window-special-name'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-special-name-unchanged', changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-tencent-news',
+      x: 82,
+      y: 132,
+      width: 14,
+      height: 14,
+      centerX: 89,
+      centerY: 139,
+      score: 16
+    }],
+    recognizeUnreadConversationCandidate: async () => ({
+      contact: '\u817e\u8baf\u65b0\u95fb',
+      conversationType: 'SINGLE',
+      accountCategory: 'UNKNOWN',
+      skipAutoReply: false,
+      skipReason: '',
+      confidence: 0.2
     }),
     clickConversationCandidate: async (_window, candidate) => {
       clickedCandidates.push(candidate.id)
@@ -321,6 +376,40 @@ async function testSpecialConversationGetsExitedAfterOpen() {
   const driver = new WeChatNativeDriver()
 
   await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(exits, ['exit'])
+}
+
+async function testSpecialConversationNameFallbackExitsAfterOpen() {
+  const exits = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64=current', png: Buffer.from('current'), width: 1, height: 1 }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-special-name', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '\u817e\u8baf\u65b0\u95fb',
+      messages: [
+        { content: '\u4eca\u65e5\u8981\u95fb', isSelf: false, uiId: 'tencent-news-1' }
+      ],
+      snapshotDigest: 'digest-special-name-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'UNKNOWN',
+      skipAutoReply: false,
+      skipReason: ''
+    }),
+    exitConversationToList: async () => {
+      exits.push('exit')
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  disableStartupBaselineForTest(driver)
   const result = await driver.poll()
 
   assert.equal(result.ok, true)
@@ -1735,9 +1824,11 @@ async function testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails() {
 
 await testStopDiscardsInFlightPollMessages()
 await testSpecialConversationGetsSkippedBeforeClick()
+await testSpecialConversationNameFallbackSkipsBeforeClick()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
 await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testSpecialConversationGetsExitedAfterOpen()
+await testSpecialConversationNameFallbackExitsAfterOpen()
 await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
