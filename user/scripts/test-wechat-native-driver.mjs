@@ -819,6 +819,73 @@ async function testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv() {
   assert.deepEqual(result.messages, [])
 }
 
+async function testUnboundedCustomerTextDoesNotTriggerWhenPixelGuardIsAvailable() {
+  let parseCount = 0
+  const bitmap = createBitmap(
+    900,
+    700,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 560, y: 160, width: 180, height: 48, color: { red: 149, green: 236, blue: 105 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=unbounded-customer-text-window',
+      png: Buffer.from(`unbounded-customer-text-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-unbounded-customer-text-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'unbounded-customer-text-customer',
+        messages: parseCount === 1
+          ? [
+              {
+                content: 'self baseline text',
+                isSelf: true,
+                uiId: 'unbounded-self-baseline',
+                type: 'text',
+                bounds: { x: 560, y: 160, w: 180, h: 48 }
+              }
+            ]
+          : [
+              {
+                content: 'unbounded customer text',
+                isSelf: false,
+                uiId: 'unbounded-customer-text',
+                type: 'text'
+              }
+            ],
+        snapshotDigest: `digest-unbounded-customer-text-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    nativeImage: {
+      createFromBuffer: () => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => bitmap
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].trigger_reply, false)
+}
+
 async function testBlankLargeImageHallucinationIsIgnored() {
   let parseCount = 0
   const bitmap = createBitmap(
@@ -1367,6 +1434,7 @@ await testNativeSendReturnsSelfMessageForDisplay()
 await testImageMessageCanBeCroppedFromLatestSnapshot()
 await testSmallAvatarMisreadAsImageMessageIsIgnored()
 await testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv()
+await testUnboundedCustomerTextDoesNotTriggerWhenPixelGuardIsAvailable()
 await testBlankLargeImageHallucinationIsIgnored()
 await testOversizedImageBoundsAreTightenedBeforeCrop()
 await testDarkImageContentIsKeptWhenTighteningCrop()

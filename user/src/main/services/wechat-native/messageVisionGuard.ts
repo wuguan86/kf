@@ -15,6 +15,8 @@ export type MessageVisionGuardResult = {
 const MIN_CUSTOMER_IMAGE_BOUNDS_WIDTH_PX = 72
 const MIN_CUSTOMER_IMAGE_BOUNDS_HEIGHT_PX = 72
 const SELF_GREEN_RATIO_THRESHOLD = 0.12
+const SELF_SIDE_LEFT_RATIO_THRESHOLD = 0.5
+const SELF_SIDE_CENTER_RATIO_THRESHOLD = 0.62
 const BLANK_IMAGE_CONTENT_RATIO_THRESHOLD = 0.015
 const BLANK_IMAGE_LIGHT_RATIO_THRESHOLD = 0.95
 const SAMPLE_STEP_PX = 3
@@ -24,7 +26,7 @@ export const applyMessageVisionGuard = (
   context: MessageVisionGuardContext | null
 ): MessageVisionGuardResult => {
   const correctedMessage = { ...message }
-  if (context && correctedMessage.bounds && isLikelySelfGreenBubble(correctedMessage, context)) {
+  if (context && correctedMessage.bounds && isLikelySelfOwnedBubble(correctedMessage, context)) {
     correctedMessage.isSelf = true
   }
   if (!correctedMessage.isSelf && correctedMessage.type === 'image') {
@@ -43,7 +45,7 @@ export const applyMessageVisionGuard = (
   }
 }
 
-const isLikelySelfGreenBubble = (
+const isLikelySelfOwnedBubble = (
   message: ParsedWeChatMessage,
   context: MessageVisionGuardContext
 ): boolean => {
@@ -56,7 +58,11 @@ const isLikelySelfGreenBubble = (
     return false
   }
   const stats = collectPixelStats(context, bounds)
-  return stats.total > 0 && stats.selfGreenRatio >= SELF_GREEN_RATIO_THRESHOLD
+  if (stats.total > 0 && stats.selfGreenRatio >= SELF_GREEN_RATIO_THRESHOLD) {
+    return true
+  }
+  return bounds.x >= context.imageWidth * SELF_SIDE_LEFT_RATIO_THRESHOLD ||
+    centerX >= context.imageWidth * SELF_SIDE_CENTER_RATIO_THRESHOLD
 }
 
 const isPlausibleCustomerImageMessage = (

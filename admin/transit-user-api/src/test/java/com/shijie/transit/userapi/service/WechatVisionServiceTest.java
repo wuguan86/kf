@@ -122,7 +122,7 @@ class WechatVisionServiceTest {
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
     server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
         .andExpect(content().string(Matchers.containsString("type=image")))
-        .andExpect(content().string(Matchers.containsString("bounds 是该图片/表情包气泡在当前截图内的坐标")))
+        .andExpect(content().string(Matchers.containsString("type=text、type=image 或 type=sticker 都必须输出 bounds")))
         .andRespond(withSuccess("""
             {
               "choices": [

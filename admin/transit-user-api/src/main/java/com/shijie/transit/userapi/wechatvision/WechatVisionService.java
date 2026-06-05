@@ -273,11 +273,11 @@ public class WechatVisionService {
         - 只识别当前打开会话里的可见聊天气泡。
         - messages 必须严格按聊天气泡在截图中的视觉顺序输出：从上到下，也就是从旧到新。
         - 最底部可见聊天气泡必须是 messages 的最后一项。
-        - 文本气泡输出 type=text。
+        - 文本气泡输出 type=text，必须同时输出 bounds。
         - 对方发送的普通图片输出 type=image，content 固定为 [图片]。
         - 对方发送的静态表情包、动态表情包或 GIF 表情输出 type=sticker，content 固定为 [表情包]。
-        - type=image 或 type=sticker 时必须输出 bounds，bounds 是该图片/表情包气泡在当前截图内的坐标，字段为 x、y、w、h，单位是截图像素，原点是截图左上角。
-        - bounds 只包住图片或表情包主体，不能包含输入框、聊天列表、头像或其他消息。
+        - type=text、type=image 或 type=sticker 都必须输出 bounds，bounds 是该聊天气泡在当前截图内的坐标，字段为 x、y、w、h，单位是截图像素，原点是截图左上角。
+        - bounds 只包住当前这一条聊天气泡主体，不能包含输入框、聊天列表、头像或其他消息。
         - 不要把头像、空白卡片、输入框、聊天列表缩略图或装饰区域输出为图片消息。
         - 如果文字、图片或归属不确定，请降低 confidence；不要为了补全 JSON 而猜测新消息。
         - 群聊名称通常会显示成员数量、多个成员头像或群聊标题，请输出 conversationType=GROUP。

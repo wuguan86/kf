@@ -119,6 +119,7 @@ export class WeChatNativeDriver {
   private pendingReplySessionKey = ''
   private skippedConversationCandidates = new Map<string, number>()
   private latestSnapshotScreenshot: WeChatScreenshot | null = null
+  private latestSnapshotHasPixelGuard = false
   private cachedImageMessages = new Map<string, CachedImageMessage>()
 
   configure(config: Partial<WeChatVisionRuntimeConfig>): NativeDriverResult {
@@ -161,6 +162,7 @@ export class WeChatNativeDriver {
     this.pendingReplySessionKey = ''
     this.skippedConversationCandidates.clear()
     this.latestSnapshotScreenshot = null
+    this.latestSnapshotHasPixelGuard = false
     this.cachedImageMessages.clear()
     console.info('新方式微信视觉驱动已启动', {
       title: window.title,
@@ -185,6 +187,7 @@ export class WeChatNativeDriver {
     this.activeReplySessionKey = ''
     this.pendingReplySessionKey = ''
     this.latestSnapshotScreenshot = null
+    this.latestSnapshotHasPixelGuard = false
     this.cachedImageMessages.clear()
     console.info('新方式微信视觉驱动已停止')
     return { ok: true, mode: 'native' }
@@ -294,8 +297,20 @@ export class WeChatNativeDriver {
         continue
       }
 
+      const hasReliableCustomerTriggerGeometry = this.hasReliableCustomerTriggerGeometry(parsedMessage)
+      if (!hasReliableCustomerTriggerGeometry) {
+        console.info('微信视觉解析跳过无可信坐标的客户消息触发，仅保留为可见消息', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          uiId: parsedMessage.uiId,
+          type: parsedMessageType,
+          bounds: parsedMessage.bounds
+        })
+      }
+
       const shouldTriggerReply = !parsedMessage.isSelf &&
         fingerprint === latestVisibleCustomerKey &&
+        hasReliableCustomerTriggerGeometry &&
         this.managedMode === 'full' &&
         !this.hasRepliedCustomerFingerprint(customerReplyFingerprint)
 
@@ -601,6 +616,7 @@ export class WeChatNativeDriver {
 
   private applySnapshotVisionGuard(snapshot: ParsedWeChatSnapshot, screenshot: WeChatScreenshot): ParsedWeChatSnapshot {
     const guardContext = this.buildMessageVisionGuardContext(screenshot)
+    this.latestSnapshotHasPixelGuard = !!guardContext?.bitmap
     const guardedMessages: ParsedWeChatMessage[] = []
     for (const message of snapshot.messages) {
       const result = applyMessageVisionGuard(message, guardContext)
@@ -631,6 +647,13 @@ export class WeChatNativeDriver {
       ...snapshot,
       messages: guardedMessages
     }
+  }
+
+  private hasReliableCustomerTriggerGeometry(message: ParsedWeChatMessage): boolean {
+    if (message.bounds) {
+      return true
+    }
+    return !this.latestSnapshotHasPixelGuard
   }
 
   private buildMessageVisionGuardContext(screenshot: WeChatScreenshot): MessageVisionGuardContext | null {
