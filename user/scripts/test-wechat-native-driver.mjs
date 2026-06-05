@@ -652,6 +652,65 @@ async function testImageMessageCanBeCroppedFromLatestSnapshot() {
   ])
 }
 
+async function testSmallAvatarMisreadAsImageMessageIsIgnored() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=avatar-misread-window',
+      png: Buffer.from(`avatar-misread-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-avatar-misread-window-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'avatar-misread-customer',
+        messages: parseCount === 1
+          ? [
+              {
+                content: '上一条己方消息',
+                isSelf: true,
+                uiId: 'avatar-misread-self-baseline',
+                type: 'text'
+              }
+            ]
+          : [
+              {
+                content: '[图片]',
+                isSelf: false,
+                uiId: 'avatar-misread-image',
+                type: 'image',
+                bounds: { x: 320, y: 230, w: 42, h: 42 }
+              },
+              {
+                content: '这就别想了，但是可以买',
+                isSelf: false,
+                uiId: 'avatar-misread-text',
+                type: 'text'
+              }
+            ],
+        snapshotDigest: `digest-avatar-misread-window-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content, '这就别想了，但是可以买')
+  assert.equal(result.messages[0].type, 'text')
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
 function createBitmap(width, height, fill, regions = []) {
   const bitmap = Buffer.alloc(width * height * 4)
   const paintPixel = (x, y, color) => {
@@ -1146,6 +1205,7 @@ await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
 await testImageMessageCanBeCroppedFromLatestSnapshot()
+await testSmallAvatarMisreadAsImageMessageIsIgnored()
 await testOversizedImageBoundsAreTightenedBeforeCrop()
 await testDarkImageContentIsKeptWhenTighteningCrop()
 await testShortImageBoundsAreExpandedToFullImageBody()

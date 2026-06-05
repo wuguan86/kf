@@ -36,6 +36,8 @@ const RECENT_SENT_SELF_REPLY_TTL_MS = 5 * 60_000
 const MAX_RECENT_MESSAGE_CONTENT_FINGERPRINTS = 1000
 const MAX_RECENT_SENT_SELF_REPLY_CONTENTS = 120
 const MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH = 8
+const MIN_CUSTOMER_IMAGE_BOUNDS_WIDTH_PX = 72
+const MIN_CUSTOMER_IMAGE_BOUNDS_HEIGHT_PX = 72
 const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
 const IMAGE_MESSAGE_CACHE_TTL_MS = 2 * 60_000
 const IMAGE_CROP_PADDING_PX = 6
@@ -252,6 +254,16 @@ export class WeChatNativeDriver {
       const contentFingerprint = this.buildParsedMessageContentFingerprint(snapshot.contact, parsedMessage)
       const customerReplyFingerprint = this.buildCustomerReplyFingerprint(snapshot.contact, parsedMessage)
       observedContentFingerprints.add(contentFingerprint)
+      if (!parsedMessage.isSelf && parsedMessageType === 'image' && !this.isPlausibleCustomerImageMessage(parsedMessage)) {
+        this.seenMessageFingerprints.add(fingerprint)
+        console.info('新方式识别到疑似头像或误报图片消息，已跳过显示和触发', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          uiId: parsedMessage.uiId,
+          bounds: parsedMessage.bounds
+        })
+        continue
+      }
       if (currentSnapshotLatestFingerprintByContent.get(contentFingerprint) !== fingerprint) {
         this.seenMessageFingerprints.add(fingerprint)
         console.info('新方式识别到同一轮重复消息，已保留最新气泡并跳过较早重复项', {
@@ -971,6 +983,15 @@ export class WeChatNativeDriver {
       return message.type
     }
     return 'text'
+  }
+
+  private isPlausibleCustomerImageMessage(message: ParsedWeChatMessage): boolean {
+    const bounds = message.bounds
+    if (!bounds) {
+      return false
+    }
+    return bounds.w >= MIN_CUSTOMER_IMAGE_BOUNDS_WIDTH_PX &&
+      bounds.h >= MIN_CUSTOMER_IMAGE_BOUNDS_HEIGHT_PX
   }
 
   private cacheImageMessage(contact: string, message: ParsedWeChatMessage): void {
