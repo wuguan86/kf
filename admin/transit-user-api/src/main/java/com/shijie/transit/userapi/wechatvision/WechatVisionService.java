@@ -268,6 +268,8 @@ public class WechatVisionService {
         accountCategory 只能是 NORMAL、FILE_HELPER、TENCENT_NEWS、OFFICIAL_ACCOUNT、SERVICE_ACCOUNT、UNKNOWN。
         messages 是数组，每项字段固定为 content、isSelf、uiId、type、bounds、confidence。
         如果图片是聊天窗口：
+        - 只输出候选消息：你负责识别可见聊天气泡里的文字、粗略类型和粗略位置，不要推理不可见内容。
+        - isSelf 只做粗略左右判断；最终归属和图片可信度会由客户端本地视觉守卫复核。
         - 只识别当前打开会话里的可见聊天气泡。
         - messages 必须严格按聊天气泡在截图中的视觉顺序输出：从上到下，也就是从旧到新。
         - 最底部可见聊天气泡必须是 messages 的最后一项。
@@ -276,11 +278,8 @@ public class WechatVisionService {
         - 对方发送的静态表情包、动态表情包或 GIF 表情输出 type=sticker，content 固定为 [表情包]。
         - type=image 或 type=sticker 时必须输出 bounds，bounds 是该图片/表情包气泡在当前截图内的坐标，字段为 x、y、w、h，单位是截图像素，原点是截图左上角。
         - bounds 只包住图片或表情包主体，不能包含输入框、聊天列表、头像或其他消息。
-        - 右侧绿色或右侧头像消息必须是 isSelf=true。
-        - 自动回复内容如果出现在右侧绿色气泡，必须视为己方消息。
-        - 禁止把右侧绿色气泡中的整句或片段识别成客户消息。
-        - 左侧灰白色或左侧头像消息必须是 isSelf=false。
-        - 如果文字归属不确定，请降低 confidence，不要猜测成客户消息。
+        - 不要把头像、空白卡片、输入框、聊天列表缩略图或装饰区域输出为图片消息。
+        - 如果文字、图片或归属不确定，请降低 confidence；不要为了补全 JSON 而猜测新消息。
         - 群聊名称通常会显示成员数量、多个成员头像或群聊标题，请输出 conversationType=GROUP。
         - 单聊请输出 conversationType=SINGLE。
         - 文件传输助手请输出 accountCategory=FILE_HELPER。

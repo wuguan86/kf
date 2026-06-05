@@ -36,6 +36,20 @@ function loadNativeDriver(mocks = {}) {
     }
   }).outputText
   const module = { exports: {} }
+  const loadTranspiledTsModule = (relativePath) => {
+    const moduleSource = readFileSync(resolve('src/main/services/wechat-native', relativePath), 'utf8')
+    const moduleCompiled = ts.transpileModule(moduleSource, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2020,
+        esModuleInterop: true
+      }
+    }).outputText
+    const childModule = { exports: {} }
+    const childRun = new Function('require', 'module', 'exports', moduleCompiled)
+    childRun(localRequire, childModule, childModule.exports)
+    return childModule.exports
+  }
   const localRequire = (id) => {
     if (id === 'electron') {
       return {
@@ -65,6 +79,9 @@ function loadNativeDriver(mocks = {}) {
         parseWeChatSnapshotWithVision: mocks.parseWeChatSnapshotWithVision,
         recognizeConversationListItemWithVision: mocks.recognizeConversationListItemWithVision
       }
+    }
+    if (id === './messageVisionGuard') {
+      return loadTranspiledTsModule('messageVisionGuard.ts')
     }
     if (id === './conversationListRecognizer') {
       return { recognizeUnreadConversationCandidate: mocks.recognizeUnreadConversationCandidate || (async () => null) }
@@ -735,6 +752,149 @@ function createBitmap(width, height, fill, regions = []) {
   return bitmap
 }
 
+async function testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv() {
+  let parseCount = 0
+  const bitmap = createBitmap(
+    900,
+    700,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 560, y: 220, width: 210, height: 82, color: { red: 149, green: 236, blue: 105 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=right-green-misread-window',
+      png: Buffer.from(`right-green-misread-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-right-green-misread-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'right-green-customer',
+        messages: parseCount === 1
+          ? [
+              {
+                content: '上一条客户消息',
+                isSelf: false,
+                uiId: 'right-green-baseline',
+                type: 'text',
+                bounds: { x: 318, y: 140, w: 160, h: 48 }
+              }
+            ]
+          : [
+              {
+                content: '这是右侧自己的自动回复',
+                isSelf: false,
+                uiId: 'right-green-misread',
+                type: 'text',
+                bounds: { x: 560, y: 220, w: 210, h: 82 }
+              }
+            ],
+        snapshotDigest: `digest-right-green-misread-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    nativeImage: {
+      createFromBuffer: () => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => bitmap
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+}
+
+async function testBlankLargeImageHallucinationIsIgnored() {
+  let parseCount = 0
+  const bitmap = createBitmap(
+    900,
+    700,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 315, y: 225, width: 130, height: 96, color: { red: 248, green: 248, blue: 248 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=blank-image-hallucination-window',
+      png: Buffer.from(`blank-image-hallucination-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-blank-image-hallucination-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'blank-image-hallucination-customer',
+        messages: parseCount === 1
+          ? [
+              {
+                content: '上一条己方消息',
+                isSelf: true,
+                uiId: 'blank-image-self-baseline',
+                type: 'text',
+                bounds: { x: 560, y: 150, w: 160, h: 48 }
+              }
+            ]
+          : [
+              {
+                content: '[图片]',
+                isSelf: false,
+                uiId: 'blank-image-hallucination',
+                type: 'image',
+                bounds: { x: 315, y: 225, w: 130, h: 96 }
+              },
+              {
+                content: '这就别想了，但是可以买',
+                isSelf: false,
+                uiId: 'blank-image-real-text',
+                type: 'text',
+                bounds: { x: 365, y: 370, w: 220, h: 45 }
+              }
+            ],
+        snapshotDigest: `digest-blank-image-hallucination-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    nativeImage: {
+      createFromBuffer: () => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => bitmap
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content, '这就别想了，但是可以买')
+  assert.equal(result.messages[0].type, 'text')
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
 async function testOversizedImageBoundsAreTightenedBeforeCrop() {
   const cropRects = []
   const bitmap = createBitmap(
@@ -1206,6 +1366,8 @@ await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
 await testImageMessageCanBeCroppedFromLatestSnapshot()
 await testSmallAvatarMisreadAsImageMessageIsIgnored()
+await testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv()
+await testBlankLargeImageHallucinationIsIgnored()
 await testOversizedImageBoundsAreTightenedBeforeCrop()
 await testDarkImageContentIsKeptWhenTighteningCrop()
 await testShortImageBoundsAreExpandedToFullImageBody()

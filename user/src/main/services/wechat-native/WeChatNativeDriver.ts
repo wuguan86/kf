@@ -8,6 +8,7 @@ import { comparePngSnapshots } from './snapshotDiff'
 import { findUnreadConversationCandidates } from './unreadDetector'
 import { parseWeChatSnapshotWithVision } from './visionClient'
 import { findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
+import { applyMessageVisionGuard, type MessageVisionGuardContext } from './messageVisionGuard'
 import type {
   ConversationListItemRecognition,
   ManagedMode,
@@ -36,8 +37,6 @@ const RECENT_SENT_SELF_REPLY_TTL_MS = 5 * 60_000
 const MAX_RECENT_MESSAGE_CONTENT_FINGERPRINTS = 1000
 const MAX_RECENT_SENT_SELF_REPLY_CONTENTS = 120
 const MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH = 8
-const MIN_CUSTOMER_IMAGE_BOUNDS_WIDTH_PX = 72
-const MIN_CUSTOMER_IMAGE_BOUNDS_HEIGHT_PX = 72
 const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
 const IMAGE_MESSAGE_CACHE_TTL_MS = 2 * 60_000
 const IMAGE_CROP_PADDING_PX = 6
@@ -254,16 +253,6 @@ export class WeChatNativeDriver {
       const contentFingerprint = this.buildParsedMessageContentFingerprint(snapshot.contact, parsedMessage)
       const customerReplyFingerprint = this.buildCustomerReplyFingerprint(snapshot.contact, parsedMessage)
       observedContentFingerprints.add(contentFingerprint)
-      if (!parsedMessage.isSelf && parsedMessageType === 'image' && !this.isPlausibleCustomerImageMessage(parsedMessage)) {
-        this.seenMessageFingerprints.add(fingerprint)
-        console.info('新方式识别到疑似头像或误报图片消息，已跳过显示和触发', {
-          contact: snapshot.contact,
-          content: parsedMessage.content.slice(0, 40),
-          uiId: parsedMessage.uiId,
-          bounds: parsedMessage.bounds
-        })
-        continue
-      }
       if (currentSnapshotLatestFingerprintByContent.get(contentFingerprint) !== fingerprint) {
         this.seenMessageFingerprints.add(fingerprint)
         console.info('新方式识别到同一轮重复消息，已保留最新气泡并跳过较早重复项', {
@@ -584,10 +573,11 @@ export class WeChatNativeDriver {
         this.runtimeConfig
       )
       this.latestSnapshotScreenshot = screenshot
+      const guardedSnapshot = this.applySnapshotVisionGuard(snapshot, screenshot)
       this.lastSnapshotDigest = snapshot.snapshotDigest || diff.digest
       this.consecutiveVisionFailures = 0
       this.lastVisionErrorMessage = ''
-      return snapshot
+      return guardedSnapshot
     } catch (error: any) {
       this.consecutiveVisionFailures += 1
       const errorMessage = error?.message || String(error)
@@ -607,6 +597,71 @@ export class WeChatNativeDriver {
   private async readSnapshot(window: WindowBounds): Promise<ParsedWeChatSnapshot> {
     const snapshot = await this.readSnapshotIfChanged(window)
     return snapshot || { contact: window.title || '微信', messages: [] }
+  }
+
+  private applySnapshotVisionGuard(snapshot: ParsedWeChatSnapshot, screenshot: WeChatScreenshot): ParsedWeChatSnapshot {
+    const guardContext = this.buildMessageVisionGuardContext(screenshot)
+    const guardedMessages: ParsedWeChatMessage[] = []
+    for (const message of snapshot.messages) {
+      const result = applyMessageVisionGuard(message, guardContext)
+      if (!result.message) {
+        console.info('新方式本地视觉守卫跳过疑似模型误报消息', {
+          contact: snapshot.contact,
+          content: message.content.slice(0, 40),
+          uiId: message.uiId,
+          type: message.type,
+          bounds: message.bounds,
+          reason: result.skipReason
+        })
+        continue
+      }
+      if (result.correctedIsSelf) {
+        console.info('新方式本地视觉守卫已按气泡颜色和位置纠正消息归属', {
+          contact: snapshot.contact,
+          content: message.content.slice(0, 40),
+          uiId: message.uiId,
+          fromIsSelf: message.isSelf,
+          toIsSelf: result.message.isSelf,
+          bounds: message.bounds
+        })
+      }
+      guardedMessages.push(result.message)
+    }
+    return {
+      ...snapshot,
+      messages: guardedMessages
+    }
+  }
+
+  private buildMessageVisionGuardContext(screenshot: WeChatScreenshot): MessageVisionGuardContext | null {
+    try {
+      const sourceImage = nativeImage.createFromBuffer(screenshot.png)
+      if (sourceImage.isEmpty() || typeof sourceImage.toBitmap !== 'function') {
+        return {
+          imageWidth: screenshot.width,
+          imageHeight: screenshot.height
+        }
+      }
+      const size = sourceImage.getSize()
+      const bitmap = sourceImage.toBitmap()
+      if (!bitmap || bitmap.length < size.width * size.height * 4) {
+        return {
+          imageWidth: size.width,
+          imageHeight: size.height
+        }
+      }
+      return {
+        bitmap,
+        imageWidth: size.width,
+        imageHeight: size.height
+      }
+    } catch (error) {
+      console.warn('新方式本地视觉守卫读取截图像素失败，降级为仅使用模型结果', error)
+      return {
+        imageWidth: screenshot.width,
+        imageHeight: screenshot.height
+      }
+    }
   }
 
   private async shouldSkipUnreadCandidate(
@@ -983,15 +1038,6 @@ export class WeChatNativeDriver {
       return message.type
     }
     return 'text'
-  }
-
-  private isPlausibleCustomerImageMessage(message: ParsedWeChatMessage): boolean {
-    const bounds = message.bounds
-    if (!bounds) {
-      return false
-    }
-    return bounds.w >= MIN_CUSTOMER_IMAGE_BOUNDS_WIDTH_PX &&
-      bounds.h >= MIN_CUSTOMER_IMAGE_BOUNDS_HEIGHT_PX
   }
 
   private cacheImageMessage(contact: string, message: ParsedWeChatMessage): void {
