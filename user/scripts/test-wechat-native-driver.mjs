@@ -651,7 +651,7 @@ async function testOversizedImageBoundsAreTightenedBeforeCrop() {
     }),
     comparePngSnapshots: () => ({ changed: true, digest: 'digest-oversized-image-window', changedRatio: 1 }),
     parseWeChatSnapshotWithVision: async () => ({
-      contact: 'image-customer',
+      contact: 'dark-image-customer',
       messages: [
         {
           content: '[image]',
@@ -696,6 +696,319 @@ async function testOversizedImageBoundsAreTightenedBeforeCrop() {
       rect: { x: 120, y: 220, width: 192, height: 132 }
     }
   ])
+}
+
+async function testDarkImageContentIsKeptWhenTighteningCrop() {
+  const cropRects = []
+  const bitmap = createBitmap(
+    900,
+    700,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 126, y: 226, width: 180, height: 35, color: { red: 8, green: 8, blue: 8 } },
+      { x: 126, y: 261, width: 180, height: 50, color: { red: 70, green: 135, blue: 190 } },
+      { x: 126, y: 311, width: 180, height: 35, color: { red: 10, green: 10, blue: 10 } },
+      { x: 120, y: 390, width: 500, height: 210, color: { red: 255, green: 255, blue: 255 } },
+      { x: 120, y: 620, width: 500, height: 20, color: { red: 15, green: 15, blue: 15 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=dark-image-window',
+      png: Buffer.from('dark-image-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-dark-image-window', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'image-customer',
+      messages: [
+        {
+          content: '[image]',
+          isSelf: false,
+          uiId: 'dark-image-message',
+          type: 'image',
+          bounds: { x: 120, y: 220, w: 500, h: 430 }
+        }
+      ],
+      snapshotDigest: 'digest-dark-image-window-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    nativeImage: {
+      createFromBuffer: (buffer) => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => bitmap,
+        crop: (rect) => {
+          cropRects.push({ buffer: buffer.toString('utf8'), rect })
+          return {
+            isEmpty: () => false,
+            getSize: () => ({ width: rect.width, height: rect.height }),
+            toDataURL: () => `data:image/png;base64=cropped-${rect.x}-${rect.y}-${rect.width}-${rect.height}`
+          }
+        }
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  const imageResult = await driver.copyImageMessage({ messageUiId: 'dark-image-message' })
+
+  assert.equal(imageResult.ok, true)
+  assert.equal(imageResult.dataUrl, 'data:image/png;base64=cropped-120-220-192-132')
+  assert.deepEqual(cropRects, [
+    {
+      buffer: 'dark-image-window',
+      rect: { x: 120, y: 220, width: 192, height: 132 }
+    }
+  ])
+}
+
+async function testShortImageBoundsAreExpandedToFullImageBody() {
+  const cropRects = []
+  const bitmap = createBitmap(
+    900,
+    700,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 126, y: 226, width: 180, height: 90, color: { red: 80, green: 140, blue: 80 } },
+      { x: 126, y: 316, width: 180, height: 150, color: { red: 95, green: 135, blue: 75 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=short-bounds-image-window',
+      png: Buffer.from('short-bounds-image-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-short-bounds-image-window', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'short-bounds-image-customer',
+      messages: [
+        {
+          content: '[image]',
+          isSelf: false,
+          uiId: 'short-bounds-image-message',
+          type: 'image',
+          bounds: { x: 120, y: 220, w: 180, h: 120 }
+        }
+      ],
+      snapshotDigest: 'digest-short-bounds-image-window-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    nativeImage: {
+      createFromBuffer: (buffer) => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => bitmap,
+        crop: (rect) => {
+          cropRects.push({ buffer: buffer.toString('utf8'), rect })
+          return {
+            isEmpty: () => false,
+            getSize: () => ({ width: rect.width, height: rect.height }),
+            toDataURL: () => `data:image/png;base64=cropped-${rect.x}-${rect.y}-${rect.width}-${rect.height}`
+          }
+        }
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  const imageResult = await driver.copyImageMessage({ messageUiId: 'short-bounds-image-message' })
+
+  assert.equal(imageResult.ok, true)
+  assert.equal(imageResult.dataUrl, 'data:image/png;base64=cropped-120-220-192-252')
+  assert.deepEqual(cropRects, [
+    {
+      buffer: 'short-bounds-image-window',
+      rect: { x: 120, y: 220, width: 192, height: 252 }
+    }
+  ])
+}
+
+async function testRepliedImageWithChangedUiIdAndBoundsDoesNotTriggerAgain() {
+  let parseCount = 0
+  let nowMs = 1_800_000_000_000
+  const originalDateNow = Date.now
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=repeated-image-window',
+      png: Buffer.from(`repeated-image-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-repeated-image-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'repeated-image-customer',
+        messages: [
+          {
+            content: '[图片]',
+            isSelf: false,
+            uiId: `repeated-image-${parseCount}`,
+            type: 'image',
+            bounds: { x: 120, y: 220 - parseCount * 3, w: 180, h: 120 }
+          }
+        ],
+        snapshotDigest: `digest-repeated-image-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  try {
+    Date.now = () => nowMs
+    await driver.start()
+    const firstResult = await driver.poll()
+    nowMs += 10 * 60 * 1000
+    driver.lastPollAt = 0
+    const secondResult = await driver.poll()
+
+    assert.equal(firstResult.messages.length, 1)
+    assert.equal(firstResult.messages[0].trigger_reply, true)
+    assert.deepEqual(secondResult.messages, [])
+  } finally {
+    Date.now = originalDateNow
+  }
+}
+
+async function testCustomerImageFollowedBySelfRepliesDoesNotTrigger() {
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=image-with-self-replies',
+      png: Buffer.from('image-with-self-replies'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-image-with-self-replies', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'image-self-replies-customer',
+      messages: [
+        {
+          content: '[图片]',
+          isSelf: false,
+          uiId: 'old-image-message',
+          type: 'image',
+          bounds: { x: 120, y: 220, w: 180, h: 120 }
+        },
+        {
+          content: '这是第一次自动回复',
+          isSelf: true,
+          uiId: 'self-reply-1',
+          type: 'text'
+        },
+        {
+          content: '这是第二次自动回复',
+          isSelf: true,
+          uiId: 'self-reply-2',
+          type: 'text'
+        },
+        {
+          content: '这是第三次自动回复',
+          isSelf: true,
+          uiId: 'self-reply-3',
+          type: 'text'
+        }
+      ],
+      snapshotDigest: 'digest-image-with-self-replies-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.deepEqual(result.messages, [])
+}
+
+async function testDifferentImageSignatureCanTriggerAfterPreviousImageReply() {
+  let parseCount = 0
+  let nowMs = 1_800_000_500_000
+  const originalDateNow = Date.now
+  const firstBitmap = createBitmap(900, 700, { red: 242, green: 242, blue: 242 }, [
+    { x: 126, y: 226, width: 180, height: 120, color: { red: 60, green: 130, blue: 190 } }
+  ])
+  const secondBitmap = createBitmap(900, 700, { red: 242, green: 242, blue: 242 }, [
+    { x: 126, y: 226, width: 180, height: 120, color: { red: 190, green: 90, blue: 60 } }
+  ])
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=different-image-window',
+      png: Buffer.from(`different-image-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-different-image-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'different-image-customer',
+        messages: [
+          {
+            content: '[图片]',
+            isSelf: false,
+            uiId: `different-image-${parseCount}`,
+            type: 'image',
+            bounds: { x: 120, y: 220, w: 180, h: 120 }
+          }
+        ],
+        snapshotDigest: `digest-different-image-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    nativeImage: {
+      createFromBuffer: (buffer) => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => buffer.toString('utf8').endsWith('-0') ? firstBitmap : secondBitmap,
+        crop: (rect) => ({
+          isEmpty: () => false,
+          getSize: () => ({ width: rect.width, height: rect.height }),
+          toDataURL: () => `data:image/png;base64=cropped-${rect.x}-${rect.y}-${rect.width}-${rect.height}`
+        })
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  try {
+    Date.now = () => nowMs
+    await driver.start()
+    const firstResult = await driver.poll()
+    nowMs += 30 * 1000
+    driver.lastPollAt = 0
+    const secondResult = await driver.poll()
+
+    assert.equal(firstResult.messages.length, 1)
+    assert.equal(firstResult.messages[0].trigger_reply, true)
+    assert.equal(secondResult.messages.length, 1)
+    assert.equal(secondResult.messages[0].trigger_reply, true)
+  } finally {
+    Date.now = originalDateNow
+  }
 }
 
 async function testRecentlySentSelfReplyMisreadAsCustomerIsNotReported() {
@@ -749,4 +1062,9 @@ await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
 await testImageMessageCanBeCroppedFromLatestSnapshot()
 await testOversizedImageBoundsAreTightenedBeforeCrop()
+await testDarkImageContentIsKeptWhenTighteningCrop()
+await testShortImageBoundsAreExpandedToFullImageBody()
+await testRepliedImageWithChangedUiIdAndBoundsDoesNotTriggerAgain()
+await testCustomerImageFollowedBySelfRepliesDoesNotTrigger()
+await testDifferentImageSignatureCanTriggerAfterPreviousImageReply()
 await testRecentlySentSelfReplyMisreadAsCustomerIsNotReported()

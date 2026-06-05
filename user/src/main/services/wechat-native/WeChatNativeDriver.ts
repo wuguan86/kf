@@ -26,6 +26,7 @@ import type {
 
 const MAX_PERSISTED_REPLIED_MESSAGES = 200
 const REPLIED_CUSTOMER_FINGERPRINT_TTL_MS = 2 * 60_000
+const IMAGE_REPLIED_CUSTOMER_FINGERPRINT_TTL_MS = 24 * 60 * 60_000
 const NATIVE_POLL_INTERVAL_MS = 1500
 const MAX_CONSECUTIVE_VISION_FAILURES = 3
 const UNREAD_SWITCH_SETTLE_MIN_MS = 320
@@ -45,6 +46,12 @@ const IMAGE_CROP_REFINEMENT_MIN_HEIGHT_RATIO = 0.35
 const IMAGE_CROP_REFINEMENT_MIN_WIDTH_PX = 360
 const IMAGE_CROP_REFINEMENT_MIN_HEIGHT_PX = 320
 const IMAGE_CROP_CONTENT_DENSE_RATIO = 0.04
+const IMAGE_CROP_SEARCH_HORIZONTAL_PADDING_PX = 24
+const IMAGE_CROP_SEARCH_TOP_PADDING_PX = 24
+const IMAGE_CROP_SEARCH_BOTTOM_MIN_EXTENSION_PX = 180
+const IMAGE_CROP_SEARCH_BOTTOM_RATIO = 1.4
+const IMAGE_REPLY_SIGNATURE_GRID_SIZE = 8
+const IMAGE_REPLY_SIGNATURE_COLOR_BUCKET_SIZE = 32
 
 const wait = (milliseconds: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -227,9 +234,9 @@ export class WeChatNativeDriver {
     }
 
     const hadPreviousBaseline = this.seenMessageFingerprints.size > 0
-    const latestCustomerMessage = [...snapshot.messages].reverse().find((message) => !message.isSelf)
-    const latestCustomerKey = latestCustomerMessage
-      ? this.buildFingerprint(snapshot.contact, latestCustomerMessage.content, latestCustomerMessage.isSelf, latestCustomerMessage.uiId)
+    const latestVisibleMessage = snapshot.messages[snapshot.messages.length - 1]
+    const latestVisibleCustomerKey = latestVisibleMessage && !latestVisibleMessage.isSelf
+      ? this.buildFingerprint(snapshot.contact, latestVisibleMessage.content, latestVisibleMessage.isSelf, latestVisibleMessage.uiId)
       : ''
     const snapshotSessionKey = this.buildSessionKey(snapshot.contact)
 
@@ -287,7 +294,7 @@ export class WeChatNativeDriver {
       }
 
       const shouldTriggerReply = !parsedMessage.isSelf &&
-        fingerprint === latestCustomerKey &&
+        fingerprint === latestVisibleCustomerKey &&
         this.managedMode === 'full' &&
         !this.hasRepliedCustomerFingerprint(customerReplyFingerprint)
 
@@ -424,7 +431,8 @@ export class WeChatNativeDriver {
     }
     const sourceSize = sourceImage.getSize()
     const initialCropRect = this.buildImageCropRect(cached.bounds, sourceSize.width, sourceSize.height)
-    const cropRect = this.refineImageCropRect(sourceImage, initialCropRect)
+    const searchCropRect = this.buildExpandedImageSearchRect(cached.bounds, sourceSize.width, sourceSize.height)
+    const cropRect = this.refineImageCropRect(sourceImage, initialCropRect, true, searchCropRect)
     const croppedImage = sourceImage.crop(cropRect)
     if (croppedImage.isEmpty()) {
       return { ok: false, error: 'native_image_crop_empty', message: '微信图片裁剪结果为空' }
@@ -748,7 +756,7 @@ export class WeChatNativeDriver {
 
   private async markCustomerMessageReplied(fingerprint: string): Promise<void> {
     this.cleanupExpiredRepliedCustomerFingerprints(Date.now())
-    const expiresAt = Date.now() + REPLIED_CUSTOMER_FINGERPRINT_TTL_MS
+    const expiresAt = Date.now() + this.getCustomerReplyFingerprintTtlMs(fingerprint)
     if (!this.repliedCustomerFingerprints.has(fingerprint)) {
       this.repliedCustomerFingerprintOrder.push(fingerprint)
     }
@@ -842,10 +850,7 @@ export class WeChatNativeDriver {
   private buildParsedMessageContentFingerprint(contact: string, message: ParsedWeChatMessage): string {
     const type = this.normalizeMessageType(message)
     if (type === 'image' || type === 'sticker') {
-      const boundsKey = message.bounds
-        ? `${Math.round(message.bounds.x)},${Math.round(message.bounds.y)},${Math.round(message.bounds.w)},${Math.round(message.bounds.h)}`
-        : ''
-      return `${contact}:${message.isSelf ? 'self' : 'customer'}:${type}:${String(message.uiId || '').trim()}:${boundsKey}:${this.normalizeFingerprintContent(message.content)}`
+      return this.buildImageMessageStableFingerprint(contact, message, message.isSelf)
     }
     return this.buildContentFingerprint(contact, message.content, message.isSelf)
   }
@@ -853,9 +858,102 @@ export class WeChatNativeDriver {
   private buildCustomerReplyFingerprint(contact: string, message: ParsedWeChatMessage): string {
     const type = this.normalizeMessageType(message)
     if (type === 'image' || type === 'sticker') {
-      return this.buildParsedMessageContentFingerprint(contact, { ...message, isSelf: false })
+      return this.buildImageMessageStableFingerprint(contact, message, false)
     }
     return this.buildContentFingerprint(contact, message.content, false)
+  }
+
+  private buildImageMessageStableFingerprint(contact: string, message: ParsedWeChatMessage, isSelf: boolean): string {
+    const type = this.normalizeMessageType(message)
+    const imageSignature = this.buildImageReplySignature(message)
+    const fallbackSignature = `placeholder:${this.normalizeFingerprintContent(message.content)}`
+    return `${contact}:${isSelf ? 'self' : 'customer'}:${type}:${imageSignature || fallbackSignature}`
+  }
+
+  private getCustomerReplyFingerprintTtlMs(fingerprint: string): number {
+    if (fingerprint.includes(':customer:image:') || fingerprint.includes(':customer:sticker:')) {
+      return IMAGE_REPLIED_CUSTOMER_FINGERPRINT_TTL_MS
+    }
+    return REPLIED_CUSTOMER_FINGERPRINT_TTL_MS
+  }
+
+  private buildImageReplySignature(message: ParsedWeChatMessage): string {
+    if (!this.latestSnapshotScreenshot || !message.bounds) {
+      return ''
+    }
+    try {
+      const sourceImage = nativeImage.createFromBuffer(this.latestSnapshotScreenshot.png)
+      if (sourceImage.isEmpty()) {
+        return ''
+      }
+      const sourceSize = sourceImage.getSize()
+      const initialCropRect = this.buildImageCropRect(message.bounds, sourceSize.width, sourceSize.height)
+      const searchCropRect = this.buildExpandedImageSearchRect(message.bounds, sourceSize.width, sourceSize.height)
+      const cropRect = this.refineImageCropRect(sourceImage, initialCropRect, false, searchCropRect)
+      const bitmap = sourceImage.toBitmap()
+      if (!bitmap || bitmap.length < sourceSize.width * sourceSize.height * 4) {
+        return ''
+      }
+      return this.buildImageReplySignatureFromBitmap(bitmap, sourceSize.width, sourceSize.height, cropRect)
+    } catch {
+      return ''
+    }
+  }
+
+  private buildImageReplySignatureFromBitmap(
+    bitmap: Buffer,
+    imageWidth: number,
+    imageHeight: number,
+    cropRect: ImageCropRect
+  ): string {
+    const left = Math.max(0, cropRect.x)
+    const top = Math.max(0, cropRect.y)
+    const right = Math.min(imageWidth, cropRect.x + cropRect.width)
+    const bottom = Math.min(imageHeight, cropRect.y + cropRect.height)
+    if (right <= left || bottom <= top) {
+      return ''
+    }
+    const cells: string[] = []
+    for (let cellY = 0; cellY < IMAGE_REPLY_SIGNATURE_GRID_SIZE; cellY += 1) {
+      const sampleTop = top + Math.floor(((bottom - top) * cellY) / IMAGE_REPLY_SIGNATURE_GRID_SIZE)
+      const sampleBottom = top + Math.floor(((bottom - top) * (cellY + 1)) / IMAGE_REPLY_SIGNATURE_GRID_SIZE)
+      for (let cellX = 0; cellX < IMAGE_REPLY_SIGNATURE_GRID_SIZE; cellX += 1) {
+        const sampleLeft = left + Math.floor(((right - left) * cellX) / IMAGE_REPLY_SIGNATURE_GRID_SIZE)
+        const sampleRight = left + Math.floor(((right - left) * (cellX + 1)) / IMAGE_REPLY_SIGNATURE_GRID_SIZE)
+        cells.push(this.buildImageReplySignatureCell(bitmap, imageWidth, sampleLeft, sampleTop, sampleRight, sampleBottom))
+      }
+    }
+    return cells.join('')
+  }
+
+  private buildImageReplySignatureCell(
+    bitmap: Buffer,
+    imageWidth: number,
+    left: number,
+    top: number,
+    right: number,
+    bottom: number
+  ): string {
+    let redTotal = 0
+    let greenTotal = 0
+    let blueTotal = 0
+    let count = 0
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const index = (y * imageWidth + x) * 4
+        blueTotal += bitmap[index]
+        greenTotal += bitmap[index + 1]
+        redTotal += bitmap[index + 2]
+        count += 1
+      }
+    }
+    if (count <= 0) {
+      return '000'
+    }
+    const redBucket = Math.min(7, Math.floor((redTotal / count) / IMAGE_REPLY_SIGNATURE_COLOR_BUCKET_SIZE))
+    const greenBucket = Math.min(7, Math.floor((greenTotal / count) / IMAGE_REPLY_SIGNATURE_COLOR_BUCKET_SIZE))
+    const blueBucket = Math.min(7, Math.floor((blueTotal / count) / IMAGE_REPLY_SIGNATURE_COLOR_BUCKET_SIZE))
+    return `${redBucket}${greenBucket}${blueBucket}`
   }
 
   private hasRepliedCustomerFingerprint(fingerprint: string): boolean {
@@ -924,23 +1022,58 @@ export class WeChatNativeDriver {
     }
   }
 
-  private refineImageCropRect(sourceImage: NativeImage, cropRect: ImageCropRect): ImageCropRect {
+  private buildExpandedImageSearchRect(
+    bounds: WeChatMessageBounds,
+    imageWidth: number,
+    imageHeight: number
+  ): ImageCropRect {
+    const left = Math.max(0, Math.floor(bounds.x - IMAGE_CROP_SEARCH_HORIZONTAL_PADDING_PX))
+    const top = Math.max(0, Math.floor(bounds.y - IMAGE_CROP_SEARCH_TOP_PADDING_PX))
+    const bottomExtension = Math.max(
+      IMAGE_CROP_SEARCH_BOTTOM_MIN_EXTENSION_PX,
+      Math.floor(bounds.h * IMAGE_CROP_SEARCH_BOTTOM_RATIO)
+    )
+    const right = Math.min(imageWidth, Math.ceil(bounds.x + bounds.w + IMAGE_CROP_SEARCH_HORIZONTAL_PADDING_PX))
+    const bottom = Math.min(imageHeight, Math.ceil(bounds.y + bounds.h + bottomExtension))
+    return {
+      x: left,
+      y: top,
+      width: Math.max(1, right - left),
+      height: Math.max(1, bottom - top)
+    }
+  }
+
+  private refineImageCropRect(
+    sourceImage: NativeImage,
+    cropRect: ImageCropRect,
+    shouldLog = true,
+    searchCropRect: ImageCropRect = cropRect
+  ): ImageCropRect {
     const size = sourceImage.getSize()
-    if (!this.shouldRefineImageCropRect(cropRect, size.width, size.height)) {
+    const shouldSearchExpandedRegion = searchCropRect.x !== cropRect.x ||
+      searchCropRect.y !== cropRect.y ||
+      searchCropRect.width !== cropRect.width ||
+      searchCropRect.height !== cropRect.height
+    if (!shouldSearchExpandedRegion && !this.shouldRefineImageCropRect(cropRect, size.width, size.height)) {
+      return cropRect
+    }
+    if (typeof sourceImage.toBitmap !== 'function') {
       return cropRect
     }
     let bitmap: Buffer
     try {
       bitmap = sourceImage.toBitmap()
     } catch (error) {
-      console.warn('新方式微信图片裁剪二次收紧失败，保留视觉模型原始区域', error)
+      if (shouldLog) {
+        console.warn('新方式微信图片裁剪二次收紧失败，保留视觉模型原始区域', error)
+      }
       return cropRect
     }
     if (!bitmap || bitmap.length < size.width * size.height * 4) {
       return cropRect
     }
 
-    const contentBounds = this.findImageContentBounds(bitmap, size.width, size.height, cropRect)
+    const contentBounds = this.findImageContentBounds(bitmap, size.width, size.height, searchCropRect)
     if (!contentBounds) {
       return cropRect
     }
@@ -956,17 +1089,21 @@ export class WeChatNativeDriver {
     )
     const originalArea = cropRect.width * cropRect.height
     const refinedArea = refinedRect.width * refinedRect.height
+    const isUsefulExpansion = refinedRect.width > cropRect.width + IMAGE_CROP_PADDING_PX ||
+      refinedRect.height > cropRect.height + IMAGE_CROP_PADDING_PX
     if (
       refinedRect.width < IMAGE_CROP_REFINEMENT_MIN_SIZE_PX ||
       refinedRect.height < IMAGE_CROP_REFINEMENT_MIN_SIZE_PX ||
-      refinedArea >= originalArea * IMAGE_CROP_REFINEMENT_KEEP_ORIGINAL_RATIO
+      (!isUsefulExpansion && refinedArea >= originalArea * IMAGE_CROP_REFINEMENT_KEEP_ORIGINAL_RATIO)
     ) {
       return cropRect
     }
-    console.info('新方式已二次收紧微信图片裁剪区域', {
-      originalCropRect: cropRect,
-      refinedCropRect: refinedRect
-    })
+    if (shouldLog) {
+      console.info('新方式已二次收紧微信图片裁剪区域', {
+        originalCropRect: cropRect,
+        refinedCropRect: refinedRect
+      })
+    }
     return refinedRect
   }
 
@@ -997,7 +1134,6 @@ export class WeChatNativeDriver {
     }
 
     const rowCounts = new Array(bottom - top + 1).fill(0)
-    const columnCounts = new Array(right - left + 1).fill(0)
     for (let y = top; y <= bottom; y += 1) {
       for (let x = left; x <= right; x += 1) {
         const index = (y * imageWidth + x) * 4
@@ -1006,16 +1142,34 @@ export class WeChatNativeDriver {
         const red = bitmap[index + 2]
         if (this.isLikelyImageContentPixel(red, green, blue)) {
           rowCounts[y - top] += 1
-          columnCounts[x - left] += 1
         }
       }
     }
 
     const rowThreshold = Math.max(8, Math.floor((right - left + 1) * IMAGE_CROP_CONTENT_DENSE_RATIO))
-    const columnThreshold = Math.max(8, Math.floor((bottom - top + 1) * IMAGE_CROP_CONTENT_DENSE_RATIO))
     const rowSpan = this.findLargestDenseSpan(rowCounts, rowThreshold)
+    if (!rowSpan) {
+      return null
+    }
+
+    const rowSpanTop = top + rowSpan.start
+    const rowSpanBottom = top + rowSpan.end
+    const columnCounts = new Array(right - left + 1).fill(0)
+    for (let y = rowSpanTop; y <= rowSpanBottom; y += 1) {
+      for (let x = left; x <= right; x += 1) {
+        const index = (y * imageWidth + x) * 4
+        const blue = bitmap[index]
+        const green = bitmap[index + 1]
+        const red = bitmap[index + 2]
+        if (this.isLikelyImageContentPixel(red, green, blue)) {
+          columnCounts[x - left] += 1
+        }
+      }
+    }
+
+    const columnThreshold = Math.max(8, Math.floor((rowSpanBottom - rowSpanTop + 1) * IMAGE_CROP_CONTENT_DENSE_RATIO))
     const columnSpan = this.findLargestDenseSpan(columnCounts, columnThreshold)
-    if (!rowSpan || !columnSpan) {
+    if (!columnSpan) {
       return null
     }
     return {
@@ -1050,8 +1204,7 @@ export class WeChatNativeDriver {
     const minChannel = Math.min(red, green, blue)
     const channelSpread = maxChannel - minChannel
     const isLightWechatBackground = red >= 225 && green >= 225 && blue >= 225 && channelSpread <= 28
-    const isDarkInputChrome = red <= 35 && green <= 35 && blue <= 35 && channelSpread <= 12
-    return !isLightWechatBackground && !isDarkInputChrome
+    return !isLightWechatBackground
   }
 
   private cleanupExpiredRepliedCustomerFingerprints(now: number): void {
