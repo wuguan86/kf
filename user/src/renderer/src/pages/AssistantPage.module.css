@@ -203,6 +203,8 @@
 
 .messageImage {
   display: block;
+  width: min(260px, 100%);
+  height: auto;
   max-width: 260px;
   max-height: 320px;
   border-radius: 8px;

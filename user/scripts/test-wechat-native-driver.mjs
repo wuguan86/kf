@@ -103,6 +103,10 @@ function loadNativeDriver(mocks = {}) {
   return module.exports
 }
 
+function disableStartupBaselineForTest(driver) {
+  driver.startupBaselinePending = false
+}
+
 const testWindow = {
   hwnd: 100,
   title: '客户A',
@@ -819,6 +823,65 @@ async function testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv() {
   assert.deepEqual(result.messages, [])
 }
 
+async function testStartupVisibleHistoryIsOnlyUsedAsBaselineWithPixelGuard() {
+  const bitmap = createBitmap(
+    900,
+    700,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 320, y: 180, width: 160, height: 48, color: { red: 255, green: 255, blue: 255 } },
+      { x: 560, y: 260, width: 190, height: 60, color: { red: 149, green: 236, blue: 105 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=startup-history-window',
+      png: Buffer.from('startup-history-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-startup-history', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'startup-history-customer',
+      messages: [
+        {
+          content: 'old customer text',
+          isSelf: false,
+          uiId: 'startup-old-customer',
+          type: 'text',
+          bounds: { x: 320, y: 180, w: 160, h: 48 }
+        },
+        {
+          content: 'old self reply',
+          isSelf: true,
+          uiId: 'startup-old-self',
+          type: 'text',
+          bounds: { x: 560, y: 260, w: 190, h: 60 }
+        }
+      ],
+      snapshotDigest: 'digest-startup-history-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    nativeImage: {
+      createFromBuffer: () => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => bitmap
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+}
+
 async function testUnboundedCustomerTextDoesNotTriggerWhenPixelGuardIsAvailable() {
   let parseCount = 0
   const bitmap = createBitmap(
@@ -1018,6 +1081,7 @@ async function testOversizedImageBoundsAreTightenedBeforeCrop() {
   const driver = new WeChatNativeDriver()
 
   await driver.start()
+  disableStartupBaselineForTest(driver)
   await driver.poll()
   const imageResult = await driver.copyImageMessage({ messageUiId: 'oversized-image-message' })
 
@@ -1089,6 +1153,7 @@ async function testDarkImageContentIsKeptWhenTighteningCrop() {
   const driver = new WeChatNativeDriver()
 
   await driver.start()
+  disableStartupBaselineForTest(driver)
   await driver.poll()
   const imageResult = await driver.copyImageMessage({ messageUiId: 'dark-image-message' })
 
@@ -1157,6 +1222,7 @@ async function testShortImageBoundsAreExpandedToFullImageBody() {
   const driver = new WeChatNativeDriver()
 
   await driver.start()
+  disableStartupBaselineForTest(driver)
   await driver.poll()
   const imageResult = await driver.copyImageMessage({ messageUiId: 'short-bounds-image-message' })
 
@@ -1208,6 +1274,7 @@ async function testRepliedImageWithChangedUiIdAndBoundsDoesNotTriggerAgain() {
   try {
     Date.now = () => nowMs
     await driver.start()
+    disableStartupBaselineForTest(driver)
     const firstResult = await driver.poll()
     nowMs += 10 * 60 * 1000
     driver.lastPollAt = 0
@@ -1330,6 +1397,7 @@ async function testDifferentImageSignatureCanTriggerAfterPreviousImageReply() {
   try {
     Date.now = () => nowMs
     await driver.start()
+    disableStartupBaselineForTest(driver)
     const firstResult = await driver.poll()
     nowMs += 30 * 1000
     driver.lastPollAt = 0
@@ -1434,6 +1502,7 @@ await testNativeSendReturnsSelfMessageForDisplay()
 await testImageMessageCanBeCroppedFromLatestSnapshot()
 await testSmallAvatarMisreadAsImageMessageIsIgnored()
 await testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv()
+await testStartupVisibleHistoryIsOnlyUsedAsBaselineWithPixelGuard()
 await testUnboundedCustomerTextDoesNotTriggerWhenPixelGuardIsAvailable()
 await testBlankLargeImageHallucinationIsIgnored()
 await testOversizedImageBoundsAreTightenedBeforeCrop()

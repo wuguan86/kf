@@ -120,6 +120,8 @@ export class WeChatNativeDriver {
   private skippedConversationCandidates = new Map<string, number>()
   private latestSnapshotScreenshot: WeChatScreenshot | null = null
   private latestSnapshotHasPixelGuard = false
+  private startupBaselinePending = false
+  private latestSnapshotFromUnreadSwitch = false
   private cachedImageMessages = new Map<string, CachedImageMessage>()
 
   configure(config: Partial<WeChatVisionRuntimeConfig>): NativeDriverResult {
@@ -163,6 +165,8 @@ export class WeChatNativeDriver {
     this.skippedConversationCandidates.clear()
     this.latestSnapshotScreenshot = null
     this.latestSnapshotHasPixelGuard = false
+    this.startupBaselinePending = true
+    this.latestSnapshotFromUnreadSwitch = false
     this.cachedImageMessages.clear()
     console.info('新方式微信视觉驱动已启动', {
       title: window.title,
@@ -188,6 +192,8 @@ export class WeChatNativeDriver {
     this.pendingReplySessionKey = ''
     this.latestSnapshotScreenshot = null
     this.latestSnapshotHasPixelGuard = false
+    this.startupBaselinePending = false
+    this.latestSnapshotFromUnreadSwitch = false
     this.cachedImageMessages.clear()
     console.info('新方式微信视觉驱动已停止')
     return { ok: true, mode: 'native' }
@@ -234,8 +240,20 @@ export class WeChatNativeDriver {
       return { ok: true, messages: [] }
     }
     if (snapshot.messages.length === 0) {
+      this.startupBaselinePending = false
       return { ok: true, messages: [] }
     }
+
+    if (this.startupBaselinePending && !this.latestSnapshotFromUnreadSwitch && this.latestSnapshotHasPixelGuard) {
+      this.markSnapshotAsBaseline(snapshot)
+      this.startupBaselinePending = false
+      console.info('微信视觉启动基线已建立，当前可见历史消息不进入实时消息列表', {
+        contact: snapshot.contact,
+        messageCount: snapshot.messages.length
+      })
+      return { ok: true, messages: [] }
+    }
+    this.startupBaselinePending = false
 
     const hadPreviousBaseline = this.seenMessageFingerprints.size > 0
     const latestVisibleMessage = snapshot.messages[snapshot.messages.length - 1]
@@ -502,12 +520,17 @@ export class WeChatNativeDriver {
   private async refreshBaseline(window: WindowBounds): Promise<void> {
     try {
       const snapshot = await this.readSnapshot(window)
-      for (const message of snapshot.messages) {
-        this.seenMessageFingerprints.add(this.buildFingerprint(snapshot.contact, message.content, message.isSelf, message.uiId))
-      }
+      this.markSnapshotAsBaseline(snapshot)
       console.info('新方式已建立当前会话消息基线', { count: snapshot.messages.length })
     } catch (error) {
       console.warn('新方式建立消息基线失败，后续轮询会继续尝试', error)
+    }
+  }
+
+  private markSnapshotAsBaseline(snapshot: ParsedWeChatSnapshot): void {
+    for (const message of snapshot.messages) {
+      this.seenMessageFingerprints.add(this.buildFingerprint(snapshot.contact, message.content, message.isSelf, message.uiId))
+      this.markRecentMessageContentFingerprint(this.buildParsedMessageContentFingerprint(snapshot.contact, message))
     }
   }
 
@@ -515,6 +538,7 @@ export class WeChatNativeDriver {
     let screenshot = await captureWeChatWindow(window)
     let diff = comparePngSnapshots(this.lastScreenshotPng, screenshot.png)
     this.lastScreenshotPng = screenshot.png
+    this.latestSnapshotFromUnreadSwitch = false
     const shouldRetryFailedVision = this.consecutiveVisionFailures > 0
     const shouldParseMinorCurrentChatChange = !diff.changed &&
       !shouldRetryFailedVision &&
@@ -589,6 +613,7 @@ export class WeChatNativeDriver {
       )
       this.latestSnapshotScreenshot = screenshot
       const guardedSnapshot = this.applySnapshotVisionGuard(snapshot, screenshot)
+      this.latestSnapshotFromUnreadSwitch = switchedUnreadConversation
       this.lastSnapshotDigest = snapshot.snapshotDigest || diff.digest
       this.consecutiveVisionFailures = 0
       this.lastVisionErrorMessage = ''

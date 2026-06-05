@@ -1562,6 +1562,11 @@ function AssistantPage(props: Props): JSX.Element {
       console.info('微信新方式启动成功')
       await syncManagedModeToBridge(managedModeRef.current)
       pollFailureCountRef.current = 0
+      setMessages([])
+      setProcessItems([])
+      setDifyResponse('')
+      lastProcessedByContactRef.current.clear()
+      contactQueueRef.current.clear()
       setIsRunning(true)
     } catch (e: any) {
       console.error(e)
