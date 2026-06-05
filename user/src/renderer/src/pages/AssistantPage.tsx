@@ -1512,10 +1512,21 @@ function AssistantPage(props: Props): JSX.Element {
     }
   }
 
+  const buildStartupFailureMessage = (error: any) => {
+    const rawMessage = String(error?.message || error?.error || error || '').trim()
+    const errorCode = String(error?.error || error?.code || '').trim()
+
+    if (errorCode === 'wechat_window_not_found' || rawMessage.includes('未找到微信窗口') || rawMessage.includes('未找到可信微信窗口')) {
+      return '未识别到微信窗口，请先打开并登录微信，并确保微信窗口显示在桌面上'
+    }
+
+    return rawMessage || '未知错误'
+  }
+
   const toggleRunning = async () => {
     const api = (window as any).api
     if (!api?.startWeChatBridge) {
-      alert('无法调用微信桥接：Electron API 未找到')
+      showToast('启动失败：无法调用微信桥接，请重启客户端后再试', 'error')
       return
     }
     if (isRunningRef.current) {
@@ -1580,7 +1591,7 @@ function AssistantPage(props: Props): JSX.Element {
 
       const startRes = await api.startWeChatBridge()
       if (!startRes?.ok) {
-        throw new Error(startRes?.message || startRes?.error || '启动失败')
+        throw startRes
       }
       console.info('微信新方式启动成功')
       await syncManagedModeToBridge(managedModeRef.current)
@@ -1592,8 +1603,10 @@ function AssistantPage(props: Props): JSX.Element {
       contactQueueRef.current.clear()
       setIsRunning(true)
     } catch (e: any) {
-      console.error(e)
-      setDifyResponse('启动失败: ' + (e?.message || String(e)))
+      const failureMessage = buildStartupFailureMessage(e)
+      console.error('启动微信自动化失败', { reason: failureMessage, error: e })
+      setDifyResponse('启动失败: ' + failureMessage)
+      showToast(`启动失败：${failureMessage}`, 'error')
       setIsRunning(false)
     } finally {
       setIsConnecting(false)

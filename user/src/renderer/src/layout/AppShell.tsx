@@ -78,9 +78,12 @@ function AppShell(props: Props): JSX.Element {
     eventBus.emit('assistant-toggle')
   }
 
+  const navigationDisabled = isRunning || isConnecting
+
   const handleNavClick = (route: AppRoute) => {
-    if (isRunning && route !== 'assistant') {
-      return // Disable navigation when running
+    if (navigationDisabled && route !== 'assistant') {
+      // 启动连接阶段和运行阶段都需要锁定菜单，避免用户切换页面打断自动化接管流程。
+      return
     }
     onNavigate(route)
   }
@@ -128,7 +131,7 @@ function AppShell(props: Props): JSX.Element {
             <span className={styles.navLabel}>运营助手</span>
           </div>
           <div
-            className={`${styles.navItem} ${activeRoute === 'settings' ? styles.active : ''} ${isRunning ? styles.disabled : ''}`}
+            className={`${styles.navItem} ${activeRoute === 'settings' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}
             onClick={() => handleNavClick('settings')}
           >
             <span className={styles.navIcon}>
@@ -137,7 +140,7 @@ function AppShell(props: Props): JSX.Element {
             <span className={styles.navLabel}>角色配置</span>
           </div>
           <div
-            className={`${styles.navItem} ${activeRoute === 'knowledge' ? styles.active : ''} ${isRunning ? styles.disabled : ''}`}
+            className={`${styles.navItem} ${activeRoute === 'knowledge' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}
             onClick={() => handleNavClick('knowledge')}
           >
             <span className={styles.navIcon}>
@@ -146,7 +149,7 @@ function AppShell(props: Props): JSX.Element {
             <span className={styles.navLabel}>知识库管理</span>
           </div>
           <div
-            className={`${styles.navItem} ${activeRoute === 'session-management' ? styles.active : ''} ${isRunning ? styles.disabled : ''}`}
+            className={`${styles.navItem} ${activeRoute === 'session-management' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}
             onClick={() => handleNavClick('session-management')}
           >
             <span className={styles.navIcon}>
@@ -155,7 +158,7 @@ function AppShell(props: Props): JSX.Element {
             <span className={styles.navLabel}>会话管理</span>
           </div>
           <div
-            className={`${styles.navItem} ${activeRoute === 'marketing' ? styles.active : ''} ${isRunning ? styles.disabled : ''}`}
+            className={`${styles.navItem} ${activeRoute === 'marketing' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}
             onClick={() => handleNavClick('marketing')}
           >
             <span className={styles.navIcon}>
@@ -164,7 +167,7 @@ function AppShell(props: Props): JSX.Element {
             <span className={styles.navLabel}>营销管理</span>
           </div>
           <div
-            className={`${styles.navItem} ${activeRoute === 'data-statistics' ? styles.active : ''} ${isRunning ? styles.disabled : ''}`}
+            className={`${styles.navItem} ${activeRoute === 'data-statistics' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}
             onClick={() => handleNavClick('data-statistics')}
           >
             <span className={styles.navIcon}>
@@ -176,7 +179,7 @@ function AppShell(props: Props): JSX.Element {
         
         <div className={styles.appNavFooter}>
           <div
-            className={`${styles.navItem} ${activeRoute === 'system-settings' ? styles.active : ''} ${isRunning ? styles.disabled : ''}`}
+            className={`${styles.navItem} ${activeRoute === 'system-settings' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}
             onClick={() => handleNavClick('system-settings')}
             style={{ marginBottom: '6px' }}
           >
@@ -187,7 +190,7 @@ function AppShell(props: Props): JSX.Element {
           </div>
 
           <div
-            className={`${styles.navItem} ${activeRoute === 'me' ? styles.active : ''} ${isRunning ? styles.disabled : ''}`}
+            className={`${styles.navItem} ${activeRoute === 'me' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}
             onClick={() => handleNavClick('me')}
           >
             <div className={styles.navAvatar}>
