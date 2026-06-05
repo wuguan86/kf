@@ -1370,10 +1370,15 @@ function AssistantPage(props: Props): JSX.Element {
           if (managedModeRef.current === 'full') {
             const api = (window as any).api
             if (api?.executeWeChatCommand) {
-              await api.executeWeChatCommand({
-                action: 'marketing_like',
-                config: likeConfig
-              })
+              const result = await enqueueNativeWeChatSend(() =>
+                api.executeWeChatCommand({
+                  action: 'marketing_like',
+                  config: likeConfig
+                })
+              )
+              if (result?.skipped) {
+                console.info('朋友圈自动点赞本轮跳过', { reason: result.error, message: result.message })
+              }
             }
           }
         }
@@ -1420,15 +1425,20 @@ function AssistantPage(props: Props): JSX.Element {
             const api = (window as any).api
             if (api?.executeWeChatCommand) {
               console.log('开始朋友圈自动评论任务', { enabled: commentConfig.enabled })
-              await api.executeWeChatCommand({
-                action: 'marketing_comment',
-                config: {
-                  ...commentConfig,
-                  backendUrl: baseURL,
-                  token: token,
-                  tenantId: tenantId
-                }
-              })
+              const result = await enqueueNativeWeChatSend(() =>
+                api.executeWeChatCommand({
+                  action: 'marketing_comment',
+                  config: {
+                    ...commentConfig,
+                    backendUrl: baseURL,
+                    token: token,
+                    tenantId: tenantId
+                  }
+                })
+              )
+              if (result?.skipped) {
+                console.info('朋友圈自动评论本轮跳过', { reason: result.error, message: result.message })
+              }
               eventBus.emit('points-updated')
             }
           }

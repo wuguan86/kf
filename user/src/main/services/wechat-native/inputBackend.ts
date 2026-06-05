@@ -11,3 +11,5 @@ const inputBackend = createInputBackend({
 export const pasteAndSendText = inputBackend.pasteAndSendText
 export const clickConversationCandidate = inputBackend.clickConversationCandidate
 export const exitConversationToList = inputBackend.exitConversationToList
+export const clickMarketingPoint = inputBackend.clickMarketingPoint
+export const pasteMarketingComment = inputBackend.pasteMarketingComment

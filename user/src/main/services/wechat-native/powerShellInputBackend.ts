@@ -1,6 +1,6 @@
 import { clipboard } from 'electron'
 import { spawn } from 'child_process'
-import type { UnreadConversationCandidate, WindowBounds } from './types'
+import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
 import type { WeChatInputBackend } from './inputBackendTypes'
 
 const runPowerShell = async (script: string, timeoutMs = 10000): Promise<void> => {
@@ -205,6 +205,90 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
         processName: bounds.processName
       })
       return true
+    },
+
+    async clickMarketingPoint(bounds: WindowBounds, point: MarketingMomentPoint): Promise<boolean> {
+      const clickX = Math.round(bounds.x + point.x + Math.random() * 8 - 4)
+      const clickY = Math.round(bounds.y + point.y + Math.random() * 8 - 4)
+      const script = `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class NativeMarketingClick {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+function Move-HumanLike([int]$targetX, [int]$targetY) {
+  $current = [System.Windows.Forms.Cursor]::Position
+  $steps = Get-Random -Minimum 4 -Maximum 9
+  for ($i = 1; $i -le $steps; $i++) {
+    $ratio = [double]$i / [double]$steps
+    $nextX = [int]($current.X + (($targetX - $current.X) * $ratio) + (Get-Random -Minimum -2 -Maximum 3))
+    $nextY = [int]($current.Y + (($targetY - $current.Y) * $ratio) + (Get-Random -Minimum -2 -Maximum 3))
+    [void][NativeMarketingClick]::SetCursorPos($nextX, $nextY)
+    Start-Sleep -Milliseconds (Get-Random -Minimum 18 -Maximum 52)
+  }
+  [void][NativeMarketingClick]::SetCursorPos($targetX, $targetY)
+}
+$hwnd = [IntPtr]${Math.round(bounds.hwnd)}
+[void][NativeMarketingClick]::SetForegroundWindow($hwnd)
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 360)
+Move-HumanLike ${clickX} ${clickY}
+Start-Sleep -Milliseconds (Get-Random -Minimum 90 -Maximum 190)
+[NativeMarketingClick]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
+[NativeMarketingClick]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+`
+
+      await runPowerShell(script, 8000)
+      console.info('PowerShell 输入后端已点击朋友圈营销候选点', {
+        clickX,
+        clickY,
+        processName: bounds.processName
+      })
+      return true
+    },
+
+    async pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
+      const originalClipboardText = clipboard.readText()
+      clipboard.writeText(content)
+      const script = `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class NativeMarketingComment {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+$hwnd = [IntPtr]${Math.round(bounds.hwnd)}
+[void][NativeMarketingComment]::SetForegroundWindow($hwnd)
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+[System.Windows.Forms.SendKeys]::SendWait("^v")
+Start-Sleep -Milliseconds (Get-Random -Minimum 360 -Maximum 680)
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+`
+
+      try {
+        await runPowerShell(script, 12000)
+        console.info('PowerShell 输入后端已粘贴并发送朋友圈评论', {
+          contentLength: Array.from(content).length,
+          processName: bounds.processName
+        })
+        return true
+      } finally {
+        try {
+          clipboard.writeText(originalClipboardText)
+        } catch (error) {
+          console.warn('PowerShell 输入后端恢复剪贴板失败', error)
+        }
+      }
     }
   }
 }

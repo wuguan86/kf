@@ -1,4 +1,4 @@
-import type { UnreadConversationCandidate, WindowBounds } from './types'
+import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
 import type { InputBackendLogger, WeChatInputBackend } from './inputBackendTypes'
 
 type InputBackendOptions = {
@@ -8,7 +8,12 @@ type InputBackendOptions = {
   logger?: InputBackendLogger
 }
 
-type BackendAction = 'pasteAndSendText' | 'clickConversationCandidate' | 'exitConversationToList'
+type BackendAction =
+  | 'pasteAndSendText'
+  | 'clickConversationCandidate'
+  | 'exitConversationToList'
+  | 'clickMarketingPoint'
+  | 'pasteMarketingComment'
 
 const runWithFallback = async (
   action: BackendAction,
@@ -63,6 +68,22 @@ export const createInputBackend = (rawOptions: InputBackendOptions): WeChatInput
         options,
         () => options.nativeBackend.exitConversationToList(bounds),
         () => options.fallbackBackend.exitConversationToList(bounds)
+      )
+    },
+    clickMarketingPoint(bounds: WindowBounds, point: MarketingMomentPoint): Promise<boolean> {
+      return runWithFallback(
+        'clickMarketingPoint',
+        options,
+        () => options.nativeBackend.clickMarketingPoint(bounds, point),
+        () => options.fallbackBackend.clickMarketingPoint(bounds, point)
+      )
+    },
+    pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
+      return runWithFallback(
+        'pasteMarketingComment',
+        options,
+        () => options.nativeBackend.pasteMarketingComment(bounds, content),
+        () => options.fallbackBackend.pasteMarketingComment(bounds, content)
       )
     }
   }

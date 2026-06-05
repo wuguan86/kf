@@ -1,5 +1,7 @@
 import type {
   ConversationListItemRecognition,
+  MarketingMomentCandidate,
+  MarketingMomentsRecognition,
   ParsedWeChatMessage,
   ParsedWeChatSnapshot,
   WeChatAccountCategory,
@@ -22,6 +24,7 @@ type VisionMessage = {
 type VisionResponse = {
   contact?: unknown
   messages?: VisionMessage[]
+  moments?: unknown
   snapshotDigest?: unknown
   changed?: unknown
   conversationType?: unknown
@@ -58,12 +61,27 @@ export const recognizeConversationListItemWithVision = async (
   }
 }
 
+export const recognizeMarketingMomentsWithVision = async (
+  imageDataUrl: string,
+  window: WindowBounds,
+  previousDigest: string,
+  config: WeChatVisionRuntimeConfig
+): Promise<MarketingMomentsRecognition> => {
+  const parsed = await requestVisionRecognition(imageDataUrl, window, previousDigest, config, 'MARKETING_MOMENTS')
+  return {
+    moments: parsed.moments || [],
+    snapshotDigest: parsed.snapshotDigest,
+    changed: parsed.changed,
+    confidence: typeof parsed.confidence === 'number' ? parsed.confidence : null
+  }
+}
+
 const requestVisionRecognition = async (
   imageDataUrl: string,
   window: WindowBounds,
   previousDigest: string,
   config: WeChatVisionRuntimeConfig,
-  sceneHint: 'CHAT' | 'CONVERSATION_LIST'
+  sceneHint: 'CHAT' | 'CONVERSATION_LIST' | 'MARKETING_MOMENTS'
 ): Promise<ParsedWeChatSnapshot> => {
   if (!config.backendBaseUrl || !config.token) {
     throw new Error('新方式缺少后端地址或登录凭证，请重新登录后再启动')
@@ -118,6 +136,7 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
     skipAutoReply: data?.skipAutoReply === true,
     skipReason: String(data?.skipReason || '').trim(),
     confidence: typeof data?.confidence === 'number' ? data.confidence : null,
+    moments: normalizeMarketingMoments(data?.moments),
     messages: messages
       .map((message, index): ParsedWeChatMessage | null => {
         const type = normalizeMessageType(message?.type)
@@ -142,6 +161,46 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
       })
       .filter((message): message is ParsedWeChatMessage => !!message)
   }
+}
+
+const normalizeMarketingMoments = (value: unknown): MarketingMomentCandidate[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value
+    .map((item): MarketingMomentCandidate | null => {
+      if (!item || typeof item !== 'object') {
+        return null
+      }
+      const raw = item as Record<string, unknown>
+      const author = String(raw.author || '').trim()
+      const content = String(raw.content || '').trim()
+      if (!author && !content) {
+        return null
+      }
+      return {
+        author,
+        content,
+        postBounds: normalizeBounds(raw.postBounds || raw.bounds),
+        likePoint: normalizePoint(raw.likePoint),
+        commentPoint: normalizePoint(raw.commentPoint),
+        confidence: typeof raw.confidence === 'number' ? raw.confidence : null
+      }
+    })
+    .filter((item): item is MarketingMomentCandidate => !!item)
+}
+
+const normalizePoint = (value: unknown): { x: number; y: number } | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  const x = Number(raw.x)
+  const y = Number(raw.y)
+  if (![x, y].every(Number.isFinite)) {
+    return undefined
+  }
+  return { x, y }
 }
 
 const normalizeMessageType = (value: unknown): WeChatMessageType => {

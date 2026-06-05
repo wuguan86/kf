@@ -77,7 +77,8 @@ function loadNativeDriver(mocks = {}) {
     if (id === './visionClient') {
       return {
         parseWeChatSnapshotWithVision: mocks.parseWeChatSnapshotWithVision,
-        recognizeConversationListItemWithVision: mocks.recognizeConversationListItemWithVision
+        recognizeConversationListItemWithVision: mocks.recognizeConversationListItemWithVision,
+        recognizeMarketingMomentsWithVision: mocks.recognizeMarketingMomentsWithVision
       }
     }
     if (id === './messageVisionGuard') {
@@ -90,7 +91,9 @@ function loadNativeDriver(mocks = {}) {
       return {
         pasteAndSendText: mocks.pasteAndSendText,
         clickConversationCandidate: mocks.clickConversationCandidate,
-        exitConversationToList: mocks.exitConversationToList || (async () => true)
+        exitConversationToList: mocks.exitConversationToList || (async () => true),
+        clickMarketingPoint: mocks.clickMarketingPoint || (async () => true),
+        pasteMarketingComment: mocks.pasteMarketingComment || (async () => true)
       }
     }
     if (id === './unreadDetector') {
@@ -1485,6 +1488,251 @@ async function testEllipsizedSelfReplyMisreadAsCustomerIsNotReported() {
   assert.deepEqual(result.messages, [])
 }
 
+async function testMarketingLikeIsSkippedDuringActiveReplySession() {
+  const clickedPoints = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=marketing-busy',
+      png: Buffer.from('marketing-busy'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-busy', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'marketing-busy',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: '客户A',
+          content: '今天新品到店',
+          postBounds: { x: 180, y: 120, w: 520, h: 180 },
+          likePoint: { x: 650, y: 270 },
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (_window, point) => {
+      clickedPoints.push(point)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.command({ action: 'reply_session_started', sessionKey: '客户A' })
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.equal(result.error, 'busy_not_idle')
+  assert.deepEqual(clickedPoints, [])
+}
+
+async function testMarketingLikeClicksSafeCandidateAndDedupesPost() {
+  const clickedPoints = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=marketing-like',
+      png: Buffer.from('marketing-like'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-like', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'marketing-like',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: '客户A',
+          content: '今天新品到店',
+          postBounds: { x: 180, y: 120, w: 520, h: 180 },
+          likePoint: { x: 650, y: 270 },
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (_window, point) => {
+      clickedPoints.push(point)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const firstResult = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+  const secondResult = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(firstResult.ok, true)
+  assert.equal(firstResult.performed, true)
+  assert.equal(firstResult.author, '客户A')
+  assert.deepEqual(clickedPoints, [{ x: 650, y: 270 }])
+  assert.equal(secondResult.ok, true)
+  assert.equal(secondResult.skipped, true)
+  assert.equal(secondResult.error, 'duplicate_post')
+}
+
+async function testMarketingLikeRejectsLowConfidenceCandidateWithoutClicking() {
+  const clickedPoints = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=marketing-low-confidence',
+      png: Buffer.from('marketing-low-confidence'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-low-confidence', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'marketing-low-confidence',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: '客户A',
+          content: '模型不确定的动态',
+          postBounds: { x: 180, y: 120, w: 520, h: 180 },
+          likePoint: { x: 650, y: 270 },
+          confidence: 0.5
+        }
+      ],
+      confidence: 0.5
+    }),
+    clickMarketingPoint: async (_window, point) => {
+      clickedPoints.push(point)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.equal(result.error, 'vision_low_confidence')
+  assert.deepEqual(clickedPoints, [])
+}
+
+async function testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails() {
+  const clickedPoints = []
+  const comments = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => {
+    throw new Error('generate failed')
+  }
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=marketing-comment',
+      png: Buffer.from('marketing-comment'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-comment', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'marketing-comment',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: '客户A',
+          content: '今天新品到店',
+          postBounds: { x: 180, y: 120, w: 520, h: 180 },
+          commentPoint: { x: 690, y: 270 },
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (_window, point) => {
+      clickedPoints.push(point)
+      return true
+    },
+    pasteMarketingComment: async (_window, content) => {
+      comments.push(content)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  try {
+    await driver.start()
+    const result = await driver.command({
+      action: 'marketing_comment',
+      config: {
+        enabled: true,
+        maxDailyCommentsPerFriend: 5,
+        maxDailyTotalComments: 100,
+        backendUrl: 'http://127.0.0.1:18080',
+        token: 'token',
+        tenantId: '1'
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.skipped, true)
+    assert.equal(result.error, 'comment_generation_failed')
+    assert.deepEqual(clickedPoints, [])
+    assert.deepEqual(comments, [])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
 await testStopDiscardsInFlightPollMessages()
 await testSpecialConversationGetsSkippedBeforeClick()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
@@ -1512,3 +1760,7 @@ await testCustomerImageFollowedBySelfRepliesDoesNotTrigger()
 await testDifferentImageSignatureCanTriggerAfterPreviousImageReply()
 await testRecentlySentSelfReplyMisreadAsCustomerIsNotReported()
 await testEllipsizedSelfReplyMisreadAsCustomerIsNotReported()
+await testMarketingLikeIsSkippedDuringActiveReplySession()
+await testMarketingLikeClicksSafeCandidateAndDedupesPost()
+await testMarketingLikeRejectsLowConfidenceCandidateWithoutClicking()
+await testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails()

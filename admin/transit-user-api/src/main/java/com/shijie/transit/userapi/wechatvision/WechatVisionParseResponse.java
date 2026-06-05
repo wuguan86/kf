@@ -5,6 +5,7 @@ import java.util.List;
 public record WechatVisionParseResponse(
     String contact,
     List<WechatVisionMessage> messages,
+    List<WechatMarketingMoment> moments,
     String snapshotDigest,
     boolean changed,
     String conversationType,

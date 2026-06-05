@@ -49,6 +49,16 @@ function createBackend(name, calls, behavior = {}) {
       calls.push(`${name}:exit`)
       if (behavior.exitError) throw new Error(behavior.exitError)
       return behavior.exitResult ?? true
+    },
+    clickMarketingPoint: async () => {
+      calls.push(`${name}:marketing-click`)
+      if (behavior.marketingClickError) throw new Error(behavior.marketingClickError)
+      return behavior.marketingClickResult ?? true
+    },
+    pasteMarketingComment: async () => {
+      calls.push(`${name}:marketing-comment`)
+      if (behavior.marketingCommentError) throw new Error(behavior.marketingCommentError)
+      return behavior.marketingCommentResult ?? true
     }
   }
 }

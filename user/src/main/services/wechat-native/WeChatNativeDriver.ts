@@ -1,16 +1,19 @@
 import { app, nativeImage, type NativeImage } from 'electron'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
+import { createHash } from 'crypto'
 import { recognizeUnreadConversationCandidate } from './conversationListRecognizer'
-import { clickConversationCandidate, exitConversationToList, pasteAndSendText } from './inputBackend'
+import { clickConversationCandidate, clickMarketingPoint, exitConversationToList, pasteAndSendText, pasteMarketingComment } from './inputBackend'
 import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshots } from './snapshotDiff'
 import { findUnreadConversationCandidates } from './unreadDetector'
-import { parseWeChatSnapshotWithVision } from './visionClient'
+import { parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } from './visionClient'
 import { findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
 import { applyMessageVisionGuard, type MessageVisionGuardContext } from './messageVisionGuard'
 import type {
   ConversationListItemRecognition,
+  MarketingMomentCandidate,
+  MarketingMomentPoint,
   ManagedMode,
   NativeDriverMessage,
   NativeDriverResult,
@@ -53,6 +56,10 @@ const IMAGE_CROP_SEARCH_BOTTOM_MIN_EXTENSION_PX = 180
 const IMAGE_CROP_SEARCH_BOTTOM_RATIO = 1.4
 const IMAGE_REPLY_SIGNATURE_GRID_SIZE = 8
 const IMAGE_REPLY_SIGNATURE_COLOR_BUCKET_SIZE = 32
+const MARKETING_IDLE_COOLDOWN_MS = 15_000
+const MARKETING_MIN_CONFIDENCE = 0.78
+const MAX_MARKETING_RECORDS = 2000
+const MAX_MARKETING_COMMENT_LENGTH = 120
 
 const wait = (milliseconds: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -96,6 +103,21 @@ type CachedImageMessage = {
   expiresAt: number
 }
 
+type MarketingActionType = 'like' | 'comment'
+
+type MarketingActionRecord = {
+  date: string
+  action: MarketingActionType
+  author: string
+  postFingerprint: string
+  createdAt: number
+}
+
+type MarketingActionStore = {
+  version: number
+  records?: MarketingActionRecord[]
+}
+
 export class WeChatNativeDriver {
   private running = false
   private managedMode: ManagedMode = 'full'
@@ -123,6 +145,10 @@ export class WeChatNativeDriver {
   private startupBaselinePending = false
   private latestSnapshotFromUnreadSwitch = false
   private cachedImageMessages = new Map<string, CachedImageMessage>()
+  private marketingCommandRunning = false
+  private marketingActionStoreLoaded = false
+  private marketingActionRecords: MarketingActionRecord[] = []
+  private lastWechatActivityAt = 0
 
   configure(config: Partial<WeChatVisionRuntimeConfig>): NativeDriverResult {
     const nextChannel: WeChatChannel = config.channel === 'enterprise' ? 'enterprise' : 'personal'
@@ -168,6 +194,8 @@ export class WeChatNativeDriver {
     this.startupBaselinePending = true
     this.latestSnapshotFromUnreadSwitch = false
     this.cachedImageMessages.clear()
+    this.marketingCommandRunning = false
+    this.lastWechatActivityAt = 0
     console.info('新方式微信视觉驱动已启动', {
       title: window.title,
       className: window.className,
@@ -195,6 +223,7 @@ export class WeChatNativeDriver {
     this.startupBaselinePending = false
     this.latestSnapshotFromUnreadSwitch = false
     this.cachedImageMessages.clear()
+    this.marketingCommandRunning = false
     console.info('新方式微信视觉驱动已停止')
     return { ok: true, mode: 'native' }
   }
@@ -386,6 +415,7 @@ export class WeChatNativeDriver {
     }
 
     if (messages.length > 0) {
+      this.lastWechatActivityAt = Date.now()
       console.info('新方式读取到微信消息', {
         contact: snapshot.contact,
         count: messages.length,
@@ -413,6 +443,7 @@ export class WeChatNativeDriver {
       return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到可信微信窗口，无法发送消息' }
     }
     this.lastWindow = window
+    this.lastWechatActivityAt = Date.now()
     await focusWindow(window.hwnd)
     const success = await pasteAndSendText(window, content)
     const targetContact = String(payload.target || window.title || '微信').trim() || '微信'
@@ -450,8 +481,11 @@ export class WeChatNativeDriver {
     if (action === 'reply_session_finished') {
       return this.markReplySessionFinished(payload?.sessionKey)
     }
-    if (action === 'marketing_like' || action === 'marketing_comment') {
-      return { ok: false, error: 'native_marketing_unsupported', message: '新方式暂不支持朋友圈营销任务' }
+    if (action === 'marketing_like') {
+      return this.runMarketingCommand('like', payload?.config || payload)
+    }
+    if (action === 'marketing_comment') {
+      return this.runMarketingCommand('comment', payload?.config || payload)
     }
     if (payload?.target && payload?.content) {
       return this.send({ target: String(payload.target), content: String(payload.content) })
@@ -529,6 +563,313 @@ export class WeChatNativeDriver {
     this.activeReplySessionKey = ''
     this.pendingReplySessionKey = ''
     return { ok: true }
+  }
+
+  private async runMarketingCommand(action: MarketingActionType, rawConfig: Record<string, any>): Promise<NativeDriverResult> {
+    if (rawConfig?.enabled === false) {
+      return this.skipMarketingAction('marketing_disabled', '朋友圈营销配置未启用')
+    }
+    const busyReason = this.getMarketingBusyReason()
+    if (busyReason) {
+      return this.skipMarketingAction(busyReason, '当前微信窗口不适合执行朋友圈互动')
+    }
+    this.marketingCommandRunning = true
+    try {
+      await this.loadMarketingActionRecords()
+      const window = await findWeChatWindow(this.channel)
+      if (!window || !isPlausibleWeChatWindow(window, this.channel)) {
+        return this.skipMarketingAction('wechat_window_not_found', '未找到可信个人微信窗口')
+      }
+      this.lastWindow = window
+      const screenshot = await captureWeChatWindow(window)
+      const recognition = await recognizeMarketingMomentsWithVision(
+        screenshot.dataUrl,
+        window,
+        this.lastSnapshotDigest,
+        this.runtimeConfig
+      )
+      const selection = this.selectMarketingCandidate(action, recognition.moments, screenshot, rawConfig)
+      if (!selection.candidate) {
+        return this.skipMarketingAction(selection.error || 'no_candidate', '没有可安全互动的朋友圈动态')
+      }
+      const candidate = selection.candidate
+      const postFingerprint = this.buildMarketingPostFingerprint(candidate)
+      const limitError = this.getMarketingLimitError(action, rawConfig, candidate.author, postFingerprint)
+      if (limitError) {
+        return this.skipMarketingAction(limitError, '朋友圈互动已达到配置上限或已处理过该动态', candidate.author)
+      }
+
+      let commentContent = ''
+      if (action === 'comment') {
+        commentContent = await this.generateMarketingComment(candidate, rawConfig)
+        if (!commentContent) {
+          return this.skipMarketingAction('comment_generation_failed', '评论生成失败，已跳过本轮朋友圈评论', candidate.author)
+        }
+      }
+
+      const point = action === 'like' ? candidate.likePoint : candidate.commentPoint
+      if (!point) {
+        return this.skipMarketingAction('missing_action_point', '朋友圈互动点位缺失', candidate.author)
+      }
+      await focusWindow(window.hwnd)
+      const clicked = await clickMarketingPoint(window, point)
+      if (!clicked) {
+        return this.skipMarketingAction('click_failed', '朋友圈互动点位点击失败', candidate.author)
+      }
+      if (action === 'comment') {
+        await wait(420 + Math.floor(Math.random() * 520))
+        const commented = await pasteMarketingComment(window, commentContent)
+        if (!commented) {
+          return this.skipMarketingAction('comment_send_failed', '朋友圈评论发送失败', candidate.author)
+        }
+      }
+
+      await this.recordMarketingAction(action, candidate, postFingerprint)
+      console.info('个人微信朋友圈互动已执行', {
+        action,
+        author: candidate.author,
+        confidence: candidate.confidence,
+        postFingerprint
+      })
+      return { ok: true, performed: true, action, author: candidate.author, postFingerprint }
+    } catch (error: any) {
+      console.warn('个人微信朋友圈互动执行异常，已跳过本轮', {
+        action,
+        error: error?.message || String(error)
+      })
+      return this.skipMarketingAction('marketing_action_failed', '朋友圈互动执行异常')
+    } finally {
+      this.marketingCommandRunning = false
+    }
+  }
+
+  private getMarketingBusyReason(): string {
+    if (!this.running) {
+      return 'bridge_not_running'
+    }
+    if (this.channel !== 'personal') {
+      return 'unsupported_channel'
+    }
+    if (this.managedMode !== 'full') {
+      return 'unsupported_managed_mode'
+    }
+    if (this.activeReplySessionKey || this.pendingReplySessionKey || this.visionRequestRunning || this.marketingCommandRunning) {
+      return 'busy_not_idle'
+    }
+    if (this.lastWechatActivityAt > 0 && Date.now() - this.lastWechatActivityAt < MARKETING_IDLE_COOLDOWN_MS) {
+      return 'busy_not_idle'
+    }
+    return ''
+  }
+
+  private skipMarketingAction(error: string, message: string, author = ''): NativeDriverResult {
+    console.info('个人微信朋友圈互动跳过', { error, message, author })
+    return { ok: true, skipped: true, error, message, author }
+  }
+
+  private selectMarketingCandidate(
+    action: MarketingActionType,
+    candidates: MarketingMomentCandidate[],
+    screenshot: WeChatScreenshot,
+    rawConfig: Record<string, any>
+  ): { candidate: MarketingMomentCandidate | null; error: string } {
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return { candidate: null, error: 'no_candidate' }
+    }
+    let firstError = ''
+    for (const candidate of candidates) {
+      const error = this.getMarketingCandidateError(action, candidate, screenshot, rawConfig)
+      if (!error) {
+        return { candidate, error: '' }
+      }
+      firstError = firstError || error
+    }
+    return { candidate: null, error: firstError || 'no_candidate' }
+  }
+
+  private getMarketingCandidateError(
+    action: MarketingActionType,
+    candidate: MarketingMomentCandidate,
+    screenshot: WeChatScreenshot,
+    rawConfig: Record<string, any>
+  ): string {
+    const confidence = typeof candidate.confidence === 'number' ? candidate.confidence : 0
+    if (confidence < MARKETING_MIN_CONFIDENCE) {
+      return 'vision_low_confidence'
+    }
+    const actionPoint = action === 'like' ? candidate.likePoint : candidate.commentPoint
+    if (!candidate.postBounds || !actionPoint) {
+      return 'missing_action_point'
+    }
+    if (!this.isPointInsideScreenshot(actionPoint, screenshot) || !this.isPointInsideBounds(actionPoint, candidate.postBounds)) {
+      return 'action_point_out_of_bounds'
+    }
+    if (this.hasMarketingKeywordHit(rawConfig?.keywordFilter, candidate)) {
+      return 'keyword_filtered'
+    }
+    return ''
+  }
+
+  private isPointInsideScreenshot(point: MarketingMomentPoint, screenshot: WeChatScreenshot): boolean {
+    return point.x >= 0 && point.y >= 0 && point.x <= screenshot.width && point.y <= screenshot.height
+  }
+
+  private isPointInsideBounds(point: MarketingMomentPoint, bounds: WeChatMessageBounds): boolean {
+    const padding = 16
+    return point.x >= bounds.x - padding &&
+      point.y >= bounds.y - padding &&
+      point.x <= bounds.x + bounds.w + padding &&
+      point.y <= bounds.y + bounds.h + padding
+  }
+
+  private hasMarketingKeywordHit(keywordFilter: unknown, candidate: MarketingMomentCandidate): boolean {
+    if (!Array.isArray(keywordFilter)) {
+      return false
+    }
+    const sourceText = `${candidate.author}\n${candidate.content}`.toLowerCase()
+    return keywordFilter
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter(Boolean)
+      .some((keyword) => sourceText.includes(keyword))
+  }
+
+  private getMarketingLimitError(
+    action: MarketingActionType,
+    rawConfig: Record<string, any>,
+    author: string,
+    postFingerprint: string
+  ): string {
+    const today = this.getMarketingDateKey()
+    const todayRecords = this.marketingActionRecords.filter((record) => record.date === today && record.action === action)
+    if (todayRecords.some((record) => record.postFingerprint === postFingerprint)) {
+      return 'duplicate_post'
+    }
+    const totalLimit = this.readMarketingTotalLimit(action, rawConfig)
+    if (totalLimit > 0 && todayRecords.length >= totalLimit) {
+      return 'daily_total_limit'
+    }
+    const friendLimit = this.readMarketingFriendLimit(action, rawConfig)
+    const normalizedAuthor = String(author || '').trim()
+    const friendCount = todayRecords.filter((record) => record.author === normalizedAuthor).length
+    if (friendLimit > 0 && friendCount >= friendLimit) {
+      return 'daily_friend_limit'
+    }
+    return ''
+  }
+
+  private readMarketingTotalLimit(action: MarketingActionType, rawConfig: Record<string, any>): number {
+    const key = action === 'like' ? 'maxDailyTotalLikes' : 'maxDailyTotalComments'
+    return Math.max(1, Number(rawConfig?.[key] ?? 1) || 1)
+  }
+
+  private readMarketingFriendLimit(action: MarketingActionType, rawConfig: Record<string, any>): number {
+    const key = action === 'like' ? 'maxDailyLikesPerFriend' : 'maxDailyCommentsPerFriend'
+    return Math.max(1, Number(rawConfig?.[key] ?? 1) || 1)
+  }
+
+  private async generateMarketingComment(candidate: MarketingMomentCandidate, rawConfig: Record<string, any>): Promise<string> {
+    const backendUrl = String(rawConfig?.backendUrl || this.runtimeConfig.backendBaseUrl || '').replace(/\/api\/?$/, '').replace(/\/$/, '')
+    const token = String(rawConfig?.token || this.runtimeConfig.token || '').trim()
+    const tenantId = String(rawConfig?.tenantId || this.runtimeConfig.tenantId || '1').trim() || '1'
+    if (!backendUrl || !token || typeof fetch !== 'function') {
+      return ''
+    }
+    try {
+      const response = await fetch(`${backendUrl}/api/user/marketing/comment/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Tenant-Id': tenantId
+        },
+        body: JSON.stringify({
+          postContent: candidate.content,
+          userNickname: candidate.author
+        })
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || !payload || payload.code !== 0) {
+        return ''
+      }
+      const content = String(payload.data || '').replace(/^["']|["']$/g, '').trim()
+      if (!content || Array.from(content).length > MAX_MARKETING_COMMENT_LENGTH) {
+        return ''
+      }
+      return content
+    } catch (error) {
+      console.warn('个人微信朋友圈评论生成失败，已跳过本轮评论', { author: candidate.author, error })
+      return ''
+    }
+  }
+
+  private async loadMarketingActionRecords(): Promise<void> {
+    if (this.marketingActionStoreLoaded) {
+      return
+    }
+    try {
+      const raw = await readFile(this.getMarketingStorePath(), 'utf-8')
+      const parsed = JSON.parse(raw) as MarketingActionStore
+      this.marketingActionRecords = Array.isArray(parsed.records) ? parsed.records : []
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        console.warn('个人微信朋友圈互动记录加载失败，将从空记录继续', error)
+      }
+      this.marketingActionRecords = []
+    }
+    this.marketingActionStoreLoaded = true
+    this.cleanupMarketingActionRecords()
+  }
+
+  private async recordMarketingAction(
+    action: MarketingActionType,
+    candidate: MarketingMomentCandidate,
+    postFingerprint: string
+  ): Promise<void> {
+    this.marketingActionRecords.push({
+      date: this.getMarketingDateKey(),
+      action,
+      author: String(candidate.author || '').trim(),
+      postFingerprint,
+      createdAt: Date.now()
+    })
+    this.cleanupMarketingActionRecords()
+    const store: MarketingActionStore = {
+      version: 1,
+      records: this.marketingActionRecords.slice(-MAX_MARKETING_RECORDS)
+    }
+    try {
+      await mkdir(dirname(this.getMarketingStorePath()), { recursive: true })
+      await writeFile(this.getMarketingStorePath(), `${JSON.stringify(store, null, 2)}\n`, 'utf-8')
+    } catch (error) {
+      console.warn('个人微信朋友圈互动记录保存失败', error)
+    }
+  }
+
+  private cleanupMarketingActionRecords(): void {
+    const today = this.getMarketingDateKey()
+    this.marketingActionRecords = this.marketingActionRecords
+      .filter((record) => record && record.date === today && record.action && record.postFingerprint)
+      .slice(-MAX_MARKETING_RECORDS)
+  }
+
+  private getMarketingStorePath(): string {
+    return join(app.getPath('userData'), 'wechat-native-marketing-actions.json')
+  }
+
+  private getMarketingDateKey(): string {
+    const now = new Date()
+    const month = `${now.getMonth() + 1}`.padStart(2, '0')
+    const day = `${now.getDate()}`.padStart(2, '0')
+    return `${now.getFullYear()}-${month}-${day}`
+  }
+
+  private buildMarketingPostFingerprint(candidate: MarketingMomentCandidate): string {
+    const source = [
+      String(candidate.author || '').trim(),
+      this.normalizeFingerprintContent(candidate.content || ''),
+      candidate.postBounds ? `${Math.round(candidate.postBounds.x)}:${Math.round(candidate.postBounds.y)}:${Math.round(candidate.postBounds.w)}:${Math.round(candidate.postBounds.h)}` : ''
+    ].join('|')
+    return createHash('sha256').update(source).digest('hex').slice(0, 24)
   }
 
   private async refreshBaseline(window: WindowBounds): Promise<void> {

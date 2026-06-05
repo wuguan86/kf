@@ -1,6 +1,6 @@
 import { clipboard } from 'electron'
 import { createRequire } from 'module'
-import type { UnreadConversationCandidate, WindowBounds } from './types'
+import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
 import type { WeChatInputBackend } from './inputBackendTypes'
 
 type Win32Api = {
@@ -133,6 +133,43 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
         processName: bounds.processName
       })
       return true
+    },
+
+    async clickMarketingPoint(bounds: WindowBounds, point: MarketingMomentPoint): Promise<boolean> {
+      const api = loadWin32Api()
+      const clickX = Math.round(bounds.x + point.x)
+      const clickY = Math.round(bounds.y + point.y)
+      await focusWindow(api, bounds.hwnd)
+      await clickAt(api, clickX, clickY)
+      console.info('原生输入后端已点击朋友圈营销候选点', {
+        clickX,
+        clickY,
+        processName: bounds.processName
+      })
+      return true
+    },
+
+    async pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
+      const api = loadWin32Api()
+      const originalClipboardText = clipboard.readText()
+      try {
+        clipboard.writeText(content)
+        await focusWindow(api, bounds.hwnd)
+        await pressCtrlV(api)
+        await wait(80)
+        await pressKey(api, VK_ENTER)
+        console.info('原生输入后端已粘贴并发送朋友圈评论', {
+          contentLength: Array.from(content).length,
+          processName: bounds.processName
+        })
+        return true
+      } finally {
+        try {
+          clipboard.writeText(originalClipboardText)
+        } catch (error) {
+          console.warn('原生输入后端恢复剪贴板失败', error)
+        }
+      }
     }
   }
 }

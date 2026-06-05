@@ -235,6 +235,46 @@ class WechatVisionServiceTest {
     server.verify();
   }
 
+  @Test
+  void parseMarketingMomentsKeepsCandidatesAndActionPoints() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andExpect(content().string(Matchers.containsString("MARKETING_MOMENTS")))
+        .andExpect(content().string(Matchers.containsString("朋友圈")))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"contact\\":\\"朋友圈\\",\\"messages\\":[],\\"moments\\":[{\\"author\\":\\"客户A\\",\\"content\\":\\"今天新品到店\\",\\"postBounds\\":{\\"x\\":180,\\"y\\":120,\\"w\\":520,\\"h\\":180},\\"likePoint\\":{\\"x\\":650,\\"y\\":270},\\"commentPoint\\":{\\"x\\":690,\\"y\\":270},\\"confidence\\":0.93}],\\"changed\\":true,\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.9}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatVisionParseResponse response = service.parse(new WechatVisionParseRequest(
+        "data:image/png;base64,MOMENTS",
+        "微信",
+        "",
+        "native-personal",
+        "MARKETING_MOMENTS"));
+
+    assertEquals("朋友圈", response.contact());
+    assertEquals(0, response.messages().size());
+    assertEquals(1, response.moments().size());
+    assertEquals("客户A", response.moments().get(0).author());
+    assertEquals("今天新品到店", response.moments().get(0).content());
+    assertEquals(180D, response.moments().get(0).postBounds().x());
+    assertEquals(650D, response.moments().get(0).likePoint().x());
+    assertEquals(270D, response.moments().get(0).likePoint().y());
+    assertEquals(690D, response.moments().get(0).commentPoint().x());
+    assertEquals(0.93D, response.moments().get(0).confidence());
+    server.verify();
+  }
+
   private WechatVisionService createService(RestClient.Builder builder, String apiKey, String model) {
     return new WechatVisionService(
         objectMapper,

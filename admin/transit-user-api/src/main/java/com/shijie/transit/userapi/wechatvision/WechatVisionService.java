@@ -26,6 +26,7 @@ public class WechatVisionService {
   private static final int MAX_LOG_RESPONSE_LENGTH = 1000;
   private static final String SCENE_HINT_CHAT = "CHAT";
   private static final String SCENE_HINT_CONVERSATION_LIST = "CONVERSATION_LIST";
+  private static final String SCENE_HINT_MARKETING_MOMENTS = "MARKETING_MOMENTS";
 
   private final boolean modelConfigured;
   private final ObjectMapper objectMapper;
@@ -203,6 +204,7 @@ public class WechatVisionService {
         index++;
       }
     }
+    List<WechatMarketingMoment> moments = parseMarketingMoments(root.path("moments"));
 
     boolean changed = root.has("changed")
         ? root.path("changed").asBoolean(true)
@@ -217,6 +219,7 @@ public class WechatVisionService {
     return new WechatVisionParseResponse(
         contact.trim(),
         List.copyOf(messages),
+        List.copyOf(moments),
         snapshotDigest,
         changed,
         classification.conversationType(),
@@ -224,6 +227,28 @@ public class WechatVisionService {
         classification.skipAutoReply(),
         classification.skipReason(),
         classification.confidence());
+  }
+
+  private List<WechatMarketingMoment> parseMarketingMoments(JsonNode momentNodes) {
+    List<WechatMarketingMoment> moments = new ArrayList<>();
+    if (momentNodes == null || !momentNodes.isArray()) {
+      return moments;
+    }
+    for (JsonNode node : momentNodes) {
+      String author = text(node.path("author")).trim();
+      String content = text(node.path("content")).trim();
+      if (!StringUtils.hasText(author) && !StringUtils.hasText(content)) {
+        continue;
+      }
+      moments.add(new WechatMarketingMoment(
+          author,
+          content,
+          parseBounds(node.has("postBounds") ? node.path("postBounds") : node.path("bounds")),
+          parseMarketingPoint(node.path("likePoint")),
+          parseMarketingPoint(node.path("commentPoint")),
+          node.path("confidence").isNumber() ? node.path("confidence").asDouble() : null));
+    }
+    return moments;
   }
 
   private boolean isIgnoredSystemNotice(String content) {
@@ -292,6 +317,12 @@ public class WechatVisionService {
         - 重点识别 contact、conversationType、accountCategory、skipReason、confidence。
         - messages 返回空数组。
         - changed 固定返回 true。
+        如果场景是 MARKETING_MOMENTS 或截图是朋友圈：
+        - messages 返回空数组，重点输出 moments 数组。
+        - moments 每项字段固定为 author、content、postBounds、likePoint、commentPoint、confidence。
+        - 只识别当前截图真实可见的朋友圈动态，不要推测屏幕外动态，不要补全看不清的昵称或内容。
+        - postBounds 是整条动态主体区域坐标，likePoint 和 commentPoint 必须是该动态内可见的真实点赞/评论入口坐标。
+        - 如果没有把握、坐标不可见、按钮被遮挡或不在朋友圈页面，moments 返回空数组或降低 confidence。
         只输出真实可见内容，忽略搜索框、输入框、菜单、按钮、时间轴和其他系统控件。
         """;
   }
@@ -411,6 +442,18 @@ public class WechatVisionService {
     return new WechatVisionBounds(x, y, w, h);
   }
 
+  private WechatMarketingPoint parseMarketingPoint(JsonNode node) {
+    if (node == null || !node.isObject()) {
+      return null;
+    }
+    double x = readDouble(node.path("x"));
+    double y = readDouble(node.path("y"));
+    if (!Double.isFinite(x) || !Double.isFinite(y)) {
+      return null;
+    }
+    return new WechatMarketingPoint(x, y);
+  }
+
   private double readDouble(JsonNode node) {
     return node != null && node.isNumber() ? node.asDouble() : Double.NaN;
   }
@@ -419,6 +462,9 @@ public class WechatVisionService {
     String normalized = defaultString(rawValue).toUpperCase(Locale.ROOT);
     if (SCENE_HINT_CONVERSATION_LIST.equals(normalized)) {
       return SCENE_HINT_CONVERSATION_LIST;
+    }
+    if (SCENE_HINT_MARKETING_MOMENTS.equals(normalized)) {
+      return SCENE_HINT_MARKETING_MOMENTS;
     }
     return SCENE_HINT_CHAT;
   }

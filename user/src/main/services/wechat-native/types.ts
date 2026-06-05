@@ -11,6 +11,27 @@ export type WeChatMessageBounds = {
   h: number
 }
 
+export type MarketingMomentPoint = {
+  x: number
+  y: number
+}
+
+export type MarketingMomentCandidate = {
+  author: string
+  content: string
+  postBounds?: WeChatMessageBounds
+  likePoint?: MarketingMomentPoint
+  commentPoint?: MarketingMomentPoint
+  confidence?: number | null
+}
+
+export type MarketingMomentsRecognition = {
+  moments: MarketingMomentCandidate[]
+  snapshotDigest?: string
+  changed?: boolean
+  confidence?: number | null
+}
+
 export type NativeDriverMessage = {
   id: string
   contact: string
@@ -52,6 +73,7 @@ export type ParsedWeChatMessage = {
 export type ParsedWeChatSnapshot = {
   contact: string
   messages: ParsedWeChatMessage[]
+  moments?: MarketingMomentCandidate[]
   snapshotDigest?: string
   changed?: boolean
   conversationType?: WeChatConversationType
