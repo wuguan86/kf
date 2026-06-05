@@ -879,7 +879,30 @@ function AssistantPage(props: Props): JSX.Element {
       skipAutoReply,
       skipReason
     }
-    setMessages((prev) => [...prev, newMessage])
+    setMessages((prev) => {
+      if (!isSelf && imageDataUrl && (messageType === 'image' || messageType === 'sticker')) {
+        let recentImageIndex = -1
+        for (let index = prev.length - 1; index >= 0; index -= 1) {
+          const item = prev[index]
+          if (
+            item.sessionKey === sessionKey &&
+            !item.isSelf &&
+            !!item.imageDataUrl &&
+            (item.messageType === 'image' || item.messageType === 'sticker') &&
+            now - item.timestamp <= 3 * 60_000
+          ) {
+            recentImageIndex = index
+            break
+          }
+        }
+        if (recentImageIndex >= 0) {
+          const nextMessages = [...prev]
+          nextMessages[recentImageIndex] = newMessage
+          return nextMessages
+        }
+      }
+      return [...prev, newMessage]
+    })
 
     if (isSelf) return
 

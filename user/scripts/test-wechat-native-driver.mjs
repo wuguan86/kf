@@ -945,8 +945,7 @@ async function testUnboundedCustomerTextDoesNotTriggerWhenPixelGuardIsAvailable(
   const result = await driver.poll()
 
   assert.equal(result.ok, true)
-  assert.equal(result.messages.length, 1)
-  assert.equal(result.messages[0].trigger_reply, false)
+  assert.deepEqual(result.messages, [])
 }
 
 async function testBlankLargeImageHallucinationIsIgnored() {

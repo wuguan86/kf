@@ -326,11 +326,12 @@ export class WeChatNativeDriver {
         })
       }
 
-      const shouldTriggerReply = !parsedMessage.isSelf &&
-        fingerprint === latestVisibleCustomerKey &&
+      const isLatestVisibleCustomerMessage = fingerprint === latestVisibleCustomerKey
+      const hasRepliedCustomerMessage = this.hasRepliedCustomerFingerprint(customerReplyFingerprint)
+      const shouldDisplayCustomerMessage = isLatestVisibleCustomerMessage &&
         hasReliableCustomerTriggerGeometry &&
-        this.managedMode === 'full' &&
-        !this.hasRepliedCustomerFingerprint(customerReplyFingerprint)
+        !hasRepliedCustomerMessage
+      const shouldTriggerReply = shouldDisplayCustomerMessage && this.managedMode === 'full'
 
       if (shouldTriggerReply) {
         hasNewReplyTrigger = true
@@ -342,6 +343,19 @@ export class WeChatNativeDriver {
           contact: snapshot.contact,
           content: parsedMessage.content.slice(0, 40),
           isSelf: parsedMessage.isSelf
+        })
+        continue
+      }
+
+      if (!shouldDisplayCustomerMessage) {
+        console.info('微信视觉解析跳过非最新或已处理的客户可见消息，仅保留基线', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          uiId: parsedMessage.uiId,
+          type: parsedMessageType,
+          isLatestVisibleCustomerMessage,
+          hasReliableCustomerTriggerGeometry,
+          hasRepliedCustomerMessage
         })
         continue
       }
