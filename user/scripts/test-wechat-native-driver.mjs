@@ -38,7 +38,14 @@ function loadNativeDriver(mocks = {}) {
   const module = { exports: {} }
   const localRequire = (id) => {
     if (id === 'electron') {
-      return { app: { getPath: () => testUserDataPath } }
+      return {
+        app: { getPath: () => testUserDataPath },
+        nativeImage: mocks.nativeImage || {
+          createFromBuffer: () => ({
+            isEmpty: () => true
+          })
+        }
+      }
     }
     if (id === './windowLocator') {
       return {
@@ -538,6 +545,159 @@ async function testNativeSendReturnsSelfMessageForDisplay() {
   assert.equal(result.sentMessage.trigger_reply, false)
 }
 
+async function testImageMessageCanBeCroppedFromLatestSnapshot() {
+  const cropRects = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=image-window',
+      png: Buffer.from('image-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-image-window', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'image-customer',
+      messages: [
+        {
+          content: '[图片]',
+          isSelf: false,
+          uiId: 'image-message-1',
+          type: 'image',
+          bounds: { x: 120, y: 220, w: 180, h: 120 }
+        }
+      ],
+      snapshotDigest: 'digest-image-window-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    nativeImage: {
+      createFromBuffer: (buffer) => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        crop: (rect) => {
+          cropRects.push({ buffer: buffer.toString('utf8'), rect })
+          return {
+            isEmpty: () => false,
+            getSize: () => ({ width: rect.width, height: rect.height }),
+            toDataURL: () => `data:image/png;base64,cropped-${rect.x}-${rect.y}-${rect.width}-${rect.height}`
+          }
+        }
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const pollResult = await driver.poll()
+  const imageResult = await driver.copyImageMessage({ messageUiId: 'image-message-1' })
+
+  assert.equal(pollResult.messages.length, 1)
+  assert.equal(pollResult.messages[0].type, 'image')
+  assert.equal(imageResult.ok, true)
+  assert.equal(imageResult.dataUrl, 'data:image/png;base64,cropped-114-214-192-132')
+  assert.deepEqual(cropRects, [
+    {
+      buffer: 'image-window',
+      rect: { x: 114, y: 214, width: 192, height: 132 }
+    }
+  ])
+}
+
+function createBitmap(width, height, fill, regions = []) {
+  const bitmap = Buffer.alloc(width * height * 4)
+  const paintPixel = (x, y, color) => {
+    const index = (y * width + x) * 4
+    bitmap[index] = color.blue
+    bitmap[index + 1] = color.green
+    bitmap[index + 2] = color.red
+    bitmap[index + 3] = 255
+  }
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      paintPixel(x, y, fill)
+    }
+  }
+  for (const region of regions) {
+    for (let y = region.y; y < region.y + region.height; y += 1) {
+      for (let x = region.x; x < region.x + region.width; x += 1) {
+        paintPixel(x, y, region.color)
+      }
+    }
+  }
+  return bitmap
+}
+
+async function testOversizedImageBoundsAreTightenedBeforeCrop() {
+  const cropRects = []
+  const bitmap = createBitmap(
+    900,
+    700,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 126, y: 226, width: 180, height: 120, color: { red: 60, green: 130, blue: 190 } },
+      { x: 120, y: 390, width: 500, height: 210, color: { red: 255, green: 255, blue: 255 } },
+      { x: 120, y: 620, width: 500, height: 20, color: { red: 15, green: 15, blue: 15 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=oversized-image-window',
+      png: Buffer.from('oversized-image-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-oversized-image-window', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'image-customer',
+      messages: [
+        {
+          content: '[image]',
+          isSelf: false,
+          uiId: 'oversized-image-message',
+          type: 'image',
+          bounds: { x: 120, y: 220, w: 500, h: 430 }
+        }
+      ],
+      snapshotDigest: 'digest-oversized-image-window-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    nativeImage: {
+      createFromBuffer: (buffer) => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => bitmap,
+        crop: (rect) => {
+          cropRects.push({ buffer: buffer.toString('utf8'), rect })
+          return {
+            isEmpty: () => false,
+            getSize: () => ({ width: rect.width, height: rect.height }),
+            toDataURL: () => `data:image/png;base64=cropped-${rect.x}-${rect.y}-${rect.width}-${rect.height}`
+          }
+        }
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  const imageResult = await driver.copyImageMessage({ messageUiId: 'oversized-image-message' })
+
+  assert.equal(imageResult.ok, true)
+  assert.equal(imageResult.dataUrl, 'data:image/png;base64=cropped-120-220-192-132')
+  assert.deepEqual(cropRects, [
+    {
+      buffer: 'oversized-image-window',
+      rect: { x: 120, y: 220, width: 192, height: 132 }
+    }
+  ])
+}
+
 async function testRecentlySentSelfReplyMisreadAsCustomerIsNotReported() {
   let parseCount = 0
   const sentReply = '可以呀 公园空气好 走一万步刚好~ 记得穿双舒服的鞋'
@@ -587,4 +747,6 @@ await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
 await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
+await testImageMessageCanBeCroppedFromLatestSnapshot()
+await testOversizedImageBoundsAreTightenedBeforeCrop()
 await testRecentlySentSelfReplyMisreadAsCustomerIsNotReported()

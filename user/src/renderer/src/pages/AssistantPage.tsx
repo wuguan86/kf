@@ -227,7 +227,12 @@ const normalizeMessage = (text: string): string => {
 
 const isImagePlaceholderMessage = (text: string): boolean => {
   const normalized = normalizeMessage(String(text || ''))
-  return normalized === '[图片]' || normalized === '图片' || normalized === '[Image]'
+  return normalized === '[图片]' ||
+    normalized === '图片' ||
+    normalized === '[Image]' ||
+    normalized === '[表情包]' ||
+    normalized === '表情包' ||
+    normalized === '[动态表情]'
 }
 
 const resolveMessageTimestamp = (raw: unknown): number => {
@@ -1285,7 +1290,8 @@ function AssistantPage(props: Props): JSX.Element {
             return prev
           })
           for (const msg of res.messages) {
-            if (msg?.type === 'text' && msg?.content) {
+            const messageType = String(msg?.type || 'text').trim()
+            if ((messageType === 'text' || messageType === 'image' || messageType === 'sticker') && msg?.content) {
               enqueueIncoming({ ...msg, source: msg?.source === 'enterprise' ? 'enterprise' : currentChannel })
             }
           }

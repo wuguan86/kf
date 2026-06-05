@@ -4,6 +4,8 @@ import type {
   ParsedWeChatSnapshot,
   WeChatAccountCategory,
   WeChatConversationType,
+  WeChatMessageBounds,
+  WeChatMessageType,
   WeChatVisionRuntimeConfig,
   WindowBounds
 } from './types'
@@ -13,6 +15,7 @@ type VisionMessage = {
   isSelf?: unknown
   uiId?: unknown
   type?: unknown
+  bounds?: unknown
   confidence?: unknown
 }
 
@@ -117,7 +120,14 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
     confidence: typeof data?.confidence === 'number' ? data.confidence : null,
     messages: messages
       .map((message, index): ParsedWeChatMessage | null => {
-        const content = String(message?.content || '').trim()
+        const type = normalizeMessageType(message?.type)
+        let content = String(message?.content || '').trim()
+        if (!content && type === 'image') {
+          content = '[图片]'
+        }
+        if (!content && type === 'sticker') {
+          content = '[表情包]'
+        }
         if (!content) {
           return null
         }
@@ -125,11 +135,36 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
         return {
           content,
           isSelf: message?.isSelf === true,
-          uiId
+          uiId,
+          type,
+          bounds: normalizeBounds(message?.bounds)
         }
       })
       .filter((message): message is ParsedWeChatMessage => !!message)
   }
+}
+
+const normalizeMessageType = (value: unknown): WeChatMessageType => {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'image' || normalized === 'sticker') {
+    return normalized
+  }
+  return 'text'
+}
+
+const normalizeBounds = (value: unknown): WeChatMessageBounds | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  const x = Number(raw.x)
+  const y = Number(raw.y)
+  const w = Number(raw.w ?? raw.width)
+  const h = Number(raw.h ?? raw.height)
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) {
+    return undefined
+  }
+  return { x, y, w, h }
 }
 
 const normalizeConversationType = (value: unknown): WeChatConversationType => {

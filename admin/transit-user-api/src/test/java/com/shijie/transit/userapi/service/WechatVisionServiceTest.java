@@ -116,6 +116,43 @@ class WechatVisionServiceTest {
   }
 
   @Test
+  void parseKeepsImageMessageTypeAndBounds() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andExpect(content().string(Matchers.containsString("type=image")))
+        .andExpect(content().string(Matchers.containsString("bounds 是该图片/表情包气泡在当前截图内的坐标")))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"contact\\":\\"图片客户\\",\\"messages\\":[{\\"content\\":\\"[图片]\\",\\"isSelf\\":false,\\"uiId\\":\\"image-1\\",\\"type\\":\\"image\\",\\"bounds\\":{\\"x\\":120,\\"y\\":220,\\"w\\":180,\\"h\\":120},\\"confidence\\":0.91}],\\"changed\\":true,\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\"}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatVisionParseResponse response = service.parse(new WechatVisionParseRequest(
+        "data:image/png;base64,IMAGE",
+        "微信",
+        "",
+        "native",
+        "CHAT"));
+
+    assertEquals(1, response.messages().size());
+    assertEquals("[图片]", response.messages().get(0).content());
+    assertEquals("image", response.messages().get(0).type());
+    assertEquals(120D, response.messages().get(0).bounds().x());
+    assertEquals(220D, response.messages().get(0).bounds().y());
+    assertEquals(180D, response.messages().get(0).bounds().w());
+    assertEquals(120D, response.messages().get(0).bounds().h());
+    server.verify();
+  }
+
+  @Test
   void parseFiltersSelfRecallSystemNotice() {
     RestClient.Builder builder = RestClient.builder();
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();

@@ -281,7 +281,7 @@ ipcMain.handle(
   'wechat-wait-image',
   async (_, payload: { senderId?: string; messageUiId?: unknown; timestamp?: number | string; timeout?: number }) => {
     try {
-      return await wechatNativeDriver.copyImageMessage()
+      return await wechatNativeDriver.copyImageMessage(payload)
     } catch (error: any) {
       const errorMessage = error?.message || String(error)
       console.error('[主进程] wechat-wait-image 失败', { payload, error: error?.message || String(error) })

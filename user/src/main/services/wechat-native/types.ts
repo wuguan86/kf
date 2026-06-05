@@ -2,16 +2,25 @@ export type ManagedMode = 'full' | 'semi'
 export type WeChatChannel = 'personal' | 'enterprise'
 export type WeChatConversationType = 'SINGLE' | 'GROUP' | 'SYSTEM'
 export type WeChatAccountCategory = 'NORMAL' | 'FILE_HELPER' | 'TENCENT_NEWS' | 'OFFICIAL_ACCOUNT' | 'SERVICE_ACCOUNT' | 'UNKNOWN'
+export type WeChatMessageType = 'text' | 'image' | 'sticker'
+
+export type WeChatMessageBounds = {
+  x: number
+  y: number
+  w: number
+  h: number
+}
 
 export type NativeDriverMessage = {
   id: string
   contact: string
   content: string
   timestamp: number
-  type: 'text'
+  type: WeChatMessageType
   is_self: boolean
   trigger_reply: boolean
   ui_id?: string
+  bounds?: WeChatMessageBounds
   source?: WeChatChannel
   conversation_type?: WeChatConversationType
   account_category?: WeChatAccountCategory
@@ -36,6 +45,8 @@ export type ParsedWeChatMessage = {
   content: string
   isSelf: boolean
   uiId: string
+  type: WeChatMessageType
+  bounds?: WeChatMessageBounds
 }
 
 export type ParsedWeChatSnapshot = {

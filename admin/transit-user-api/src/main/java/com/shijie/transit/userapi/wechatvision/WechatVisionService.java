@@ -174,7 +174,14 @@ public class WechatVisionService {
     if (messageNodes.isArray()) {
       int index = 0;
       for (JsonNode node : messageNodes) {
+        String type = normalizeMessageType(text(node.path("type")));
         String content = text(node.path("content")).trim();
+        if (!StringUtils.hasText(content) && "image".equals(type)) {
+          content = "[图片]";
+        }
+        if (!StringUtils.hasText(content) && "sticker".equals(type)) {
+          content = "[表情包]";
+        }
         if (!StringUtils.hasText(content)) {
           continue;
         }
@@ -186,12 +193,12 @@ public class WechatVisionService {
         if (!StringUtils.hasText(uiId)) {
           uiId = "vlm-" + snapshotDigest.substring(0, 12) + "-" + index;
         }
-        String type = text(node.path("type"));
         messages.add(new WechatVisionMessage(
             content,
             node.path("isSelf").asBoolean(false),
             uiId.trim(),
-            StringUtils.hasText(type) ? type.trim() : "text",
+            type,
+            parseBounds(node.path("bounds")),
             node.path("confidence").isNumber() ? node.path("confidence").asDouble() : null));
         index++;
       }
@@ -259,12 +266,16 @@ public class WechatVisionService {
         contact、changed、messages、conversationType、accountCategory、skipReason、confidence。
         conversationType 只能是 SINGLE、GROUP、SYSTEM。
         accountCategory 只能是 NORMAL、FILE_HELPER、TENCENT_NEWS、OFFICIAL_ACCOUNT、SERVICE_ACCOUNT、UNKNOWN。
-        messages 是数组，每项字段固定为 content、isSelf、uiId、type、confidence。
+        messages 是数组，每项字段固定为 content、isSelf、uiId、type、bounds、confidence。
         如果图片是聊天窗口：
-        - 只识别当前打开会话里的可见聊天气泡文本。
+        - 只识别当前打开会话里的可见聊天气泡。
         - messages 必须严格按聊天气泡在截图中的视觉顺序输出：从上到下，也就是从旧到新。
         - 最底部可见聊天气泡必须是 messages 的最后一项。
-        - type 固定输出 text。
+        - 文本气泡输出 type=text。
+        - 对方发送的普通图片输出 type=image，content 固定为 [图片]。
+        - 对方发送的静态表情包、动态表情包或 GIF 表情输出 type=sticker，content 固定为 [表情包]。
+        - type=image 或 type=sticker 时必须输出 bounds，bounds 是该图片/表情包气泡在当前截图内的坐标，字段为 x、y、w、h，单位是截图像素，原点是截图左上角。
+        - bounds 只包住图片或表情包主体，不能包含输入框、聊天列表、头像或其他消息。
         - 右侧绿色或右侧头像消息必须是 isSelf=true。
         - 自动回复内容如果出现在右侧绿色气泡，必须视为己方消息。
         - 禁止把右侧绿色气泡中的整句或片段识别成客户消息。
@@ -377,6 +388,32 @@ public class WechatVisionService {
       case "NORMAL", "FILE_HELPER", "TENCENT_NEWS", "OFFICIAL_ACCOUNT", "SERVICE_ACCOUNT" -> normalized;
       default -> "UNKNOWN";
     };
+  }
+
+  private String normalizeMessageType(String rawValue) {
+    String normalized = defaultString(rawValue).toLowerCase(Locale.ROOT);
+    if ("image".equals(normalized) || "sticker".equals(normalized)) {
+      return normalized;
+    }
+    return "text";
+  }
+
+  private WechatVisionBounds parseBounds(JsonNode node) {
+    if (node == null || !node.isObject()) {
+      return null;
+    }
+    double x = readDouble(node.path("x"));
+    double y = readDouble(node.path("y"));
+    double w = readDouble(node.has("w") ? node.path("w") : node.path("width"));
+    double h = readDouble(node.has("h") ? node.path("h") : node.path("height"));
+    if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(w) || !Double.isFinite(h) || w <= 0D || h <= 0D) {
+      return null;
+    }
+    return new WechatVisionBounds(x, y, w, h);
+  }
+
+  private double readDouble(JsonNode node) {
+    return node != null && node.isNumber() ? node.asDouble() : Double.NaN;
   }
 
   private String normalizeSceneHint(String rawValue) {
