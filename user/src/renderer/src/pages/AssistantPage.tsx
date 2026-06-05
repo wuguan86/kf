@@ -9,6 +9,13 @@ import AssistantRunToolbar from '../components/AssistantRunToolbar'
 import { Toast, useToast } from '../components/Toast'
 import { eventBus } from '../utils/eventBus'
 import { calculateHumanReplyDelayMs } from '../utils/replyTiming'
+import {
+  buildMessageDisplayPayload,
+  normalizeIncomingMessageType,
+  normalizeMessage,
+  shouldExtractImageForIncomingMessage,
+  type IncomingMessageType
+} from './assistantMessageViewModel'
 import styles from './AssistantPage.module.css'
 import { AppConfig } from '../config'
 
@@ -42,6 +49,7 @@ type ChatMessage = {
   contact: string
   content: string
   isSelf: boolean
+  messageType: IncomingMessageType
   timestamp: number
   imageDataUrl?: string
   imageNotice?: string
@@ -219,20 +227,6 @@ const getCleanText = (items: any[], bounds: any, realImageSize?: { w: number; h:
   })
 
   return contentItems.map((item) => item.text).join('\n')
-}
-
-const normalizeMessage = (text: string): string => {
-  return text.replace(/\s+/g, ' ').replace(/\u200B/g, '').trim()
-}
-
-const isImagePlaceholderMessage = (text: string): boolean => {
-  const normalized = normalizeMessage(String(text || ''))
-  return normalized === '[图片]' ||
-    normalized === '图片' ||
-    normalized === '[Image]' ||
-    normalized === '[表情包]' ||
-    normalized === '表情包' ||
-    normalized === '[动态表情]'
 }
 
 const resolveMessageTimestamp = (raw: unknown): number => {
@@ -737,6 +731,7 @@ function AssistantPage(props: Props): JSX.Element {
     const contact = String(msg?.contact || '').trim()
     const text = String(msg?.content || '').trim()
     const isSelf = !!msg?.is_self
+    const messageType = normalizeIncomingMessageType(msg?.type || msg?.messageType)
     const triggerReply = !!msg?.trigger_reply
     const conversationType: 'SINGLE' | 'GROUP' | 'SYSTEM' =
       msg?.conversation_type === 'GROUP' || msg?.conversationType === 'GROUP'
@@ -764,10 +759,15 @@ function AssistantPage(props: Props): JSX.Element {
       }
       seenBridgeMessageIdsRef.current.add(bridgeMessageKey)
     }
-    const shouldWaitForImage = !isSelf && isImagePlaceholderMessage(text)
+    const shouldWaitForImage = shouldExtractImageForIncomingMessage({
+      content: text,
+      type: messageType,
+      isSelf
+    })
     console.log('[图片链路-DEBUG] 收到轮询消息', {
       contact,
       text,
+      messageType,
       isSelf,
       triggerReply,
       conversationType,
@@ -814,6 +814,7 @@ function AssistantPage(props: Props): JSX.Element {
           sessionKey,
           contact,
           text,
+          messageType,
           isSelf,
           triggerReply,
           imageDataUrl,
@@ -841,6 +842,7 @@ function AssistantPage(props: Props): JSX.Element {
     sessionKey: string,
     contact: string,
     text: string,
+    messageType: IncomingMessageType,
     isSelf: boolean,
     triggerReply: boolean,
     imageDataUrl?: string,
@@ -865,6 +867,7 @@ function AssistantPage(props: Props): JSX.Element {
       contact,
       content: normalizedText,
       isSelf,
+      messageType,
       timestamp: now,
       imageDataUrl: imageDataUrl || undefined,
       imageNotice: imageNotice || undefined,
@@ -1290,7 +1293,7 @@ function AssistantPage(props: Props): JSX.Element {
             return prev
           })
           for (const msg of res.messages) {
-            const messageType = String(msg?.type || 'text').trim()
+            const messageType = normalizeIncomingMessageType(msg?.type || msg?.messageType)
             if ((messageType === 'text' || messageType === 'image' || messageType === 'sticker') && msg?.content) {
               enqueueIncoming({ ...msg, source: msg?.source === 'enterprise' ? 'enterprise' : currentChannel })
             }
@@ -1669,7 +1672,7 @@ function AssistantPage(props: Props): JSX.Element {
                       )}
                     </div>
                   )}
-                   {groupedChatSessions.map((session) => (
+                  {groupedChatSessions.map((session) => (
                     <div key={session.sessionKey} className={styles.chatSessionGroup}>
                       <div className={styles.chatSessionHeader}>
                         <span>{session.contact || '未知客户'}</span>
@@ -1677,6 +1680,11 @@ function AssistantPage(props: Props): JSX.Element {
                       </div>
                       {session.messages.map((msg) => {
                         const isLatest = msg.id === messages[messages.length - 1]?.id
+                        const displayPayload = buildMessageDisplayPayload({
+                          content: msg.content,
+                          type: msg.messageType,
+                          imageDataUrl: msg.imageDataUrl
+                        })
                         return (
                           <div
                             key={msg.id}
@@ -1697,14 +1705,14 @@ function AssistantPage(props: Props): JSX.Element {
                             <div
                               className={`${styles.messageBubble} ${msg.isSelf ? styles.messageBubbleSelf : styles.messageBubbleOther}`}
                             >
-                              {msg.imageDataUrl ? (
+                              {displayPayload.imageDataUrl ? (
                                 <img
                                   className={styles.messageImage}
-                                  src={msg.imageDataUrl}
+                                  src={displayPayload.imageDataUrl}
                                   alt="微信图片"
                                 />
                               ) : (
-                                msg.content
+                                displayPayload.displayText
                               )}
                               {msg.imageNotice && (
                                 <div className={styles.messageNotice}>

@@ -451,6 +451,53 @@ async function testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterResta
   assert.deepEqual(secondResult.messages, [])
 }
 
+async function testRepliedTextCustomerMessageDoesNotTriggerAfterShortTtlExpired() {
+  let parseCount = 0
+  let nowMs = 1_800_002_000_000
+  const originalDateNow = Date.now
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=replied-text-after-ttl',
+      png: Buffer.from(`replied-text-after-ttl-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-replied-text-after-ttl-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'replied-text-after-ttl-customer',
+        messages: [
+          { content: 'already replied text after ttl', isSelf: false, uiId: `replied-text-after-ttl-${parseCount}` }
+        ],
+        snapshotDigest: `digest-replied-text-after-ttl-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+
+  try {
+    Date.now = () => nowMs
+    const firstDriver = new WeChatNativeDriver()
+    await firstDriver.start()
+    const firstResult = await firstDriver.poll()
+
+    nowMs += 15 * 60 * 1000
+    const secondDriver = new WeChatNativeDriver()
+    await secondDriver.start()
+    const secondResult = await secondDriver.poll()
+
+    assert.equal(firstResult.messages.length, 1)
+    assert.equal(firstResult.messages[0].trigger_reply, true)
+    assert.deepEqual(secondResult.messages, [])
+  } finally {
+    Date.now = originalDateNow
+  }
+}
+
 async function testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage() {
   let parseCount = 0
   writeRepliedMessageStore({
@@ -1057,6 +1104,7 @@ await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
+await testRepliedTextCustomerMessageDoesNotTriggerAfterShortTtlExpired()
 await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
