@@ -22,6 +22,22 @@ function loadSelector() {
   return module.exports
 }
 
+function loadWechatNativeModule(relativePath) {
+  const sourcePath = resolve('src/main/services/wechat-native', relativePath)
+  const source = readFileSync(sourcePath, 'utf8')
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      esModuleInterop: true
+    }
+  }).outputText
+  const module = { exports: {} }
+  const run = new Function('require', 'module', 'exports', compiled)
+  run(require, module, module.exports)
+  return module.exports
+}
+
 const testWindow = {
   hwnd: 100,
   title: '客户A',
@@ -49,6 +65,11 @@ function createBackend(name, calls, behavior = {}) {
       calls.push(`${name}:exit`)
       if (behavior.exitError) throw new Error(behavior.exitError)
       return behavior.exitResult ?? true
+    },
+    returnFromNestedConversation: async () => {
+      calls.push(`${name}:nested-return`)
+      if (behavior.nestedReturnError) throw new Error(behavior.nestedReturnError)
+      return behavior.nestedReturnResult ?? true
     },
     clickMarketingPoint: async () => {
       calls.push(`${name}:marketing-click`)
@@ -113,6 +134,62 @@ async function testUsesFallbackOutsideWindows() {
   assert.deepEqual(calls, ['fallback:click'])
 }
 
+async function testReturnsFromNestedConversationWithFallback() {
+  const { createInputBackend } = loadSelector()
+  const calls = []
+  const warnings = []
+  const backend = createInputBackend({
+    platform: 'win32',
+    nativeBackend: createBackend('native', calls, { nestedReturnError: 'native failed' }),
+    fallbackBackend: createBackend('fallback', calls),
+    logger: { warn: (...args) => warnings.push(args) }
+  })
+
+  const result = await backend.returnFromNestedConversation(testWindow)
+
+  assert.equal(result, true)
+  assert.deepEqual(calls, ['native:nested-return', 'fallback:nested-return'])
+  assert.equal(warnings.length, 1)
+}
+
+function testExitPointTargetsConversationListAndAvoidsWindowCloseButton() {
+  const { getConversationListExitPoint } = loadWechatNativeModule('conversationExitPoint.ts')
+
+  const point = getConversationListExitPoint(testWindow)
+
+  assert.equal(point.x, 174)
+  assert.equal(point.y, 116)
+  assert.ok(point.x < testWindow.x + 300)
+  assert.ok(point.y > testWindow.y + 80)
+  assert.ok(point.x < testWindow.x + testWindow.width - 120)
+  assert.ok(point.y > testWindow.y + 40)
+}
+
+function testNestedReturnPointTargetsTopLeftBackButton() {
+  const { getNestedConversationBackPoint } = loadWechatNativeModule('conversationExitPoint.ts')
+
+  const point = getNestedConversationBackPoint(testWindow)
+
+  assert.equal(point.x, 80)
+  assert.equal(point.y, 98)
+  assert.ok(point.x > testWindow.x + 60)
+  assert.ok(point.x < testWindow.x + 120)
+  assert.ok(point.y > testWindow.y + 80)
+  assert.ok(point.y < testWindow.y + 120)
+}
+
+function testExitBackendsDoNotSendEscBecauseWechatMinimizesToTray() {
+  const win32Source = readFileSync(resolve('src/main/services/wechat-native/win32InputBackend.ts'), 'utf8')
+  const powerShellSource = readFileSync(resolve('src/main/services/wechat-native/powerShellInputBackend.ts'), 'utf8')
+
+  assert.equal(win32Source.includes('VK_ESCAPE'), false)
+  assert.equal(powerShellSource.includes('SendWait("{ESC}")'), false)
+}
+
 await testUsesNativeBackendFirstOnWindows()
 await testFallsBackWhenNativeBackendThrows()
 await testUsesFallbackOutsideWindows()
+await testReturnsFromNestedConversationWithFallback()
+testExitPointTargetsConversationListAndAvoidsWindowCloseButton()
+testNestedReturnPointTargetsTopLeftBackButton()
+testExitBackendsDoNotSendEscBecauseWechatMinimizesToTray()

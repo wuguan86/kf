@@ -2,6 +2,7 @@ import { clipboard } from 'electron'
 import { createRequire } from 'module'
 import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
 import type { WeChatInputBackend } from './inputBackendTypes'
+import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
 
 type Win32Api = {
   setForegroundWindow: (hwnd: number) => boolean
@@ -18,7 +19,6 @@ const KEYEVENTF_KEYUP = 0x0002
 const VK_CONTROL = 0x11
 const VK_V = 0x56
 const VK_ENTER = 0x0d
-const VK_ESCAPE = 0x1b
 
 let cachedApi: Win32Api | null = null
 
@@ -121,15 +121,25 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
 
     async exitConversationToList(bounds: WindowBounds): Promise<boolean> {
       const api = loadWin32Api()
-      const listX = Math.round(bounds.x + bounds.width * 0.18)
-      const listY = Math.round(bounds.y + bounds.height * 0.16)
+      const exitPoint = getConversationListExitPoint(bounds)
       await focusWindow(api, bounds.hwnd)
-      await clickAt(api, listX, listY)
-      await wait(50)
-      await pressKey(api, VK_ESCAPE)
+      await clickAt(api, exitPoint.x, exitPoint.y)
       console.info('原生输入后端已返回微信会话列表', {
-        listX,
-        listY,
+        listX: exitPoint.x,
+        listY: exitPoint.y,
+        processName: bounds.processName
+      })
+      return true
+    },
+
+    async returnFromNestedConversation(bounds: WindowBounds): Promise<boolean> {
+      const api = loadWin32Api()
+      const backPoint = getNestedConversationBackPoint(bounds)
+      await focusWindow(api, bounds.hwnd)
+      await clickAt(api, backPoint.x, backPoint.y)
+      console.info('原生输入后端已点击微信内层会话返回按钮', {
+        backX: backPoint.x,
+        backY: backPoint.y,
         processName: bounds.processName
       })
       return true

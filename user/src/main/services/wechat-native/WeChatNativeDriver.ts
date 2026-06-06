@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { createHash } from 'crypto'
 import { recognizeUnreadConversationCandidate } from './conversationListRecognizer'
-import { clickConversationCandidate, clickMarketingPoint, exitConversationToList, pasteAndSendText, pasteMarketingComment } from './inputBackend'
+import { clickConversationCandidate, clickMarketingPoint, exitConversationToList, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
 import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshots } from './snapshotDiff'
 import { findUnreadConversationCandidates } from './unreadDetector'
@@ -1119,7 +1119,11 @@ export class WeChatNativeDriver {
       accountCategory: snapshot.accountCategory,
       skipReason: snapshot.skipReason
     })
-    await exitConversationToList(window)
+    if (snapshot.accountCategory === 'SERVICE_ACCOUNT' || snapshot.accountCategory === 'CUSTOMER_SERVICE') {
+      await returnFromNestedConversation(window)
+    } else {
+      await exitConversationToList(window)
+    }
     await wait(240)
     this.lastScreenshotPng = null
     this.lastSnapshotDigest = ''

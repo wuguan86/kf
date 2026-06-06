@@ -290,7 +290,7 @@ public class WechatVisionService {
         固定输出字段：
         contact、changed、messages、conversationType、accountCategory、skipReason、confidence。
         conversationType 只能是 SINGLE、GROUP、SYSTEM。
-        accountCategory 只能是 NORMAL、FILE_HELPER、TENCENT_NEWS、OFFICIAL_ACCOUNT、SERVICE_ACCOUNT、UNKNOWN。
+        accountCategory 只能是 NORMAL、FILE_HELPER、TENCENT_NEWS、OFFICIAL_ACCOUNT、SERVICE_ACCOUNT、CUSTOMER_SERVICE、UNKNOWN。
         messages 是数组，每项字段固定为 content、isSelf、uiId、type、bounds、confidence。
         如果图片是聊天窗口：
         - 只输出候选消息：你负责识别可见聊天气泡里的文字、粗略类型和粗略位置，不要推理不可见内容。
@@ -311,6 +311,7 @@ public class WechatVisionService {
         - 腾讯新闻请输出 accountCategory=TENCENT_NEWS。
         - 公众号请输出 accountCategory=OFFICIAL_ACCOUNT。
         - 服务号请输出 accountCategory=SERVICE_ACCOUNT。
+        - 客服消息、微信客服请输出 accountCategory=CUSTOMER_SERVICE。
         - 正常好友或客户会话请输出 accountCategory=NORMAL。
         - 如果会话本身不适合自动回复，请在 skipReason 写明原因。
         如果图片是左侧会话列表中的单个会话项：
@@ -374,16 +375,25 @@ public class WechatVisionService {
     if ("腾讯新闻".equals(normalizedContact) || lowerContact.contains("tencent news")) {
       return new ClassificationResult(conversationType, "TENCENT_NEWS", true, "命中腾讯新闻固定过滤规则", Math.max(confidence, 0.99D));
     }
+    if ("客服消息".equals(normalizedContact) || "微信客服".equals(normalizedContact)
+        || lowerContact.contains("customer service")) {
+      return new ClassificationResult(conversationType, "CUSTOMER_SERVICE", true, "命中客服消息固定过滤规则", Math.max(confidence, 0.99D));
+    }
     if ("OFFICIAL_ACCOUNT".equals(accountCategory)) {
       return new ClassificationResult(conversationType, accountCategory, true, ensureSkipReason(skipReason, "识别为公众号，按固定规则跳过"), Math.max(confidence, 0.9D));
     }
     if ("SERVICE_ACCOUNT".equals(accountCategory)) {
       return new ClassificationResult(conversationType, accountCategory, true, ensureSkipReason(skipReason, "识别为服务号，按固定规则跳过"), Math.max(confidence, 0.9D));
     }
+    if ("CUSTOMER_SERVICE".equals(accountCategory)) {
+      return new ClassificationResult(conversationType, accountCategory, true, ensureSkipReason(skipReason, "命中客服消息固定过滤规则"), Math.max(confidence, 0.9D));
+    }
     if ("UNKNOWN".equals(accountCategory) && normalizedContact.contains("公众号")) {
       accountCategory = "OFFICIAL_ACCOUNT";
     } else if ("UNKNOWN".equals(accountCategory) && normalizedContact.contains("服务号")) {
       accountCategory = "SERVICE_ACCOUNT";
+    } else if ("UNKNOWN".equals(accountCategory) && normalizedContact.contains("客服消息")) {
+      accountCategory = "CUSTOMER_SERVICE";
     } else if ("UNKNOWN".equals(accountCategory) && SCENE_HINT_CONVERSATION_LIST.equals(sceneHint) && normalizedContact.contains("腾讯")) {
       accountCategory = "TENCENT_NEWS";
     }
@@ -391,7 +401,8 @@ public class WechatVisionService {
     boolean skipAutoReply = "OFFICIAL_ACCOUNT".equals(accountCategory)
         || "SERVICE_ACCOUNT".equals(accountCategory)
         || "FILE_HELPER".equals(accountCategory)
-        || "TENCENT_NEWS".equals(accountCategory);
+        || "TENCENT_NEWS".equals(accountCategory)
+        || "CUSTOMER_SERVICE".equals(accountCategory);
     return new ClassificationResult(
         conversationType,
         accountCategory,
@@ -415,7 +426,7 @@ public class WechatVisionService {
   private String normalizeAccountCategory(String rawValue) {
     String normalized = defaultString(rawValue).toUpperCase(Locale.ROOT);
     return switch (normalized) {
-      case "NORMAL", "FILE_HELPER", "TENCENT_NEWS", "OFFICIAL_ACCOUNT", "SERVICE_ACCOUNT" -> normalized;
+      case "NORMAL", "FILE_HELPER", "TENCENT_NEWS", "OFFICIAL_ACCOUNT", "SERVICE_ACCOUNT", "CUSTOMER_SERVICE" -> normalized;
       default -> "UNKNOWN";
     };
   }

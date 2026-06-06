@@ -2,6 +2,7 @@ import { clipboard } from 'electron'
 import { spawn } from 'child_process'
 import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
 import type { WeChatInputBackend } from './inputBackendTypes'
+import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
 
 const runPowerShell = async (script: string, timeoutMs = 10000): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -157,8 +158,9 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
     },
 
     async exitConversationToList(bounds: WindowBounds): Promise<boolean> {
-      const listX = Math.round(bounds.x + bounds.width * 0.18 + Math.random() * 8 - 4)
-      const listY = Math.round(bounds.y + bounds.height * 0.16 + Math.random() * 12 - 6)
+      const exitPoint = getConversationListExitPoint(bounds)
+      const listX = Math.round(exitPoint.x + Math.random() * 8 - 4)
+      const listY = Math.round(exitPoint.y + Math.random() * 10 - 5)
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
@@ -195,13 +197,63 @@ $hwnd = [IntPtr]${Math.round(bounds.hwnd)}
 Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
 Click-HumanLike ${listX} ${listY}
 Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
-[System.Windows.Forms.SendKeys]::SendWait("{ESC}")
 `
 
       await runPowerShell(script, 8000)
       console.info('PowerShell 输入后端已返回微信会话列表', {
         listX,
         listY,
+        processName: bounds.processName
+      })
+      return true
+    },
+
+    async returnFromNestedConversation(bounds: WindowBounds): Promise<boolean> {
+      const backPoint = getNestedConversationBackPoint(bounds)
+      const backX = Math.round(backPoint.x + Math.random() * 6 - 3)
+      const backY = Math.round(backPoint.y + Math.random() * 6 - 3)
+      const script = `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class NativeNestedConversationBack {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+function Move-HumanLike([int]$targetX, [int]$targetY) {
+  $current = [System.Windows.Forms.Cursor]::Position
+  $steps = Get-Random -Minimum 4 -Maximum 8
+  for ($i = 1; $i -le $steps; $i++) {
+    $ratio = [double]$i / [double]$steps
+    $nextX = [int]($current.X + (($targetX - $current.X) * $ratio) + (Get-Random -Minimum -2 -Maximum 3))
+    $nextY = [int]($current.Y + (($targetY - $current.Y) * $ratio) + (Get-Random -Minimum -2 -Maximum 3))
+    [void][NativeNestedConversationBack]::SetCursorPos($nextX, $nextY)
+    Start-Sleep -Milliseconds (Get-Random -Minimum 16 -Maximum 46)
+  }
+  [void][NativeNestedConversationBack]::SetCursorPos($targetX, $targetY)
+}
+function Click-HumanLike([int]$targetX, [int]$targetY) {
+  Move-HumanLike $targetX $targetY
+  Start-Sleep -Milliseconds (Get-Random -Minimum 70 -Maximum 140)
+  [NativeNestedConversationBack]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds (Get-Random -Minimum 40 -Maximum 90)
+  [NativeNestedConversationBack]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+}
+$hwnd = [IntPtr]${Math.round(bounds.hwnd)}
+[void][NativeNestedConversationBack]::SetForegroundWindow($hwnd)
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+Click-HumanLike ${backX} ${backY}
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+`
+
+      await runPowerShell(script, 8000)
+      console.info('PowerShell 输入后端已点击微信内层会话返回按钮', {
+        backX,
+        backY,
         processName: bounds.processName
       })
       return true

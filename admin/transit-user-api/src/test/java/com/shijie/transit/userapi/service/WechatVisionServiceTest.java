@@ -236,6 +236,37 @@ class WechatVisionServiceTest {
   }
 
   @Test
+  void parseMarksCustomerServiceConversationAsSkip() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"contact\\":\\"客服消息\\",\\"messages\\":[{\\"content\\":\\"个人系统开发测试客服: 来了\\",\\"isSelf\\":false,\\"uiId\\":\\"msg-1\\"}],\\"changed\\":true,\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"UNKNOWN\\",\\"confidence\\":0.7}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatVisionParseResponse response = service.parse(new WechatVisionParseRequest(
+        "data:image/png;base64,EEEE",
+        "微信",
+        "",
+        "native",
+        "CHAT"));
+
+    assertEquals("CUSTOMER_SERVICE", response.accountCategory());
+    assertEquals(true, response.skipAutoReply());
+    assertEquals("命中客服消息固定过滤规则", response.skipReason());
+    server.verify();
+  }
+
+  @Test
   void parseMarketingMomentsKeepsCandidatesAndActionPoints() {
     RestClient.Builder builder = RestClient.builder();
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();

@@ -95,6 +95,7 @@ function loadNativeDriver(mocks = {}) {
         pasteAndSendText: mocks.pasteAndSendText,
         clickConversationCandidate: mocks.clickConversationCandidate,
         exitConversationToList: mocks.exitConversationToList || (async () => true),
+        returnFromNestedConversation: mocks.returnFromNestedConversation || (async () => true),
         clickMarketingPoint: mocks.clickMarketingPoint || (async () => true),
         pasteMarketingComment: mocks.pasteMarketingComment || (async () => true)
       }
@@ -228,6 +229,58 @@ async function testSpecialConversationNameFallbackSkipsBeforeClick() {
     }],
     recognizeUnreadConversationCandidate: async () => ({
       contact: '\u817e\u8baf\u65b0\u95fb',
+      conversationType: 'SINGLE',
+      accountCategory: 'UNKNOWN',
+      skipAutoReply: false,
+      skipReason: '',
+      confidence: 0.2
+    }),
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'digest-1',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(clickedCandidates, [])
+}
+
+async function testCustomerServiceConversationNameFallbackSkipsBeforeClick() {
+  const clickedCandidates = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=current',
+      png: Buffer.from('same-window-customer-service-name'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-customer-service-name-unchanged', changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-customer-service',
+      x: 82,
+      y: 132,
+      width: 14,
+      height: 14,
+      centerX: 89,
+      centerY: 139,
+      score: 16
+    }],
+    recognizeUnreadConversationCandidate: async () => ({
+      contact: '客服消息',
       conversationType: 'SINGLE',
       accountCategory: 'UNKNOWN',
       skipAutoReply: false,
@@ -415,6 +468,46 @@ async function testSpecialConversationNameFallbackExitsAfterOpen() {
   assert.equal(result.ok, true)
   assert.deepEqual(result.messages, [])
   assert.deepEqual(exits, ['exit'])
+}
+
+async function testCustomerServiceConversationNameFallbackExitsAfterOpen() {
+  const exits = []
+  const nestedReturns = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64=current', png: Buffer.from('current'), width: 1, height: 1 }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-customer-service-name', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客服消息',
+      messages: [
+        { content: '个人系统开发测试客服: 来了', isSelf: false, uiId: 'customer-service-1' }
+      ],
+      snapshotDigest: 'digest-customer-service-name-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'UNKNOWN',
+      skipAutoReply: false,
+      skipReason: ''
+    }),
+    exitConversationToList: async () => {
+      exits.push('exit')
+      return true
+    },
+    returnFromNestedConversation: async () => {
+      nestedReturns.push('return')
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  disableStartupBaselineForTest(driver)
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(exits, [])
+  assert.deepEqual(nestedReturns, ['return'])
 }
 
 async function testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain() {
@@ -1825,10 +1918,12 @@ async function testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails() {
 await testStopDiscardsInFlightPollMessages()
 await testSpecialConversationGetsSkippedBeforeClick()
 await testSpecialConversationNameFallbackSkipsBeforeClick()
+await testCustomerServiceConversationNameFallbackSkipsBeforeClick()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
 await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testSpecialConversationGetsExitedAfterOpen()
 await testSpecialConversationNameFallbackExitsAfterOpen()
+await testCustomerServiceConversationNameFallbackExitsAfterOpen()
 await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()

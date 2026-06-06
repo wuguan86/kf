@@ -1,7 +1,7 @@
 export type ManagedMode = 'full' | 'semi'
 export type WeChatChannel = 'personal' | 'enterprise'
 export type WeChatConversationType = 'SINGLE' | 'GROUP' | 'SYSTEM'
-export type WeChatAccountCategory = 'NORMAL' | 'FILE_HELPER' | 'TENCENT_NEWS' | 'OFFICIAL_ACCOUNT' | 'SERVICE_ACCOUNT' | 'UNKNOWN'
+export type WeChatAccountCategory = 'NORMAL' | 'FILE_HELPER' | 'TENCENT_NEWS' | 'OFFICIAL_ACCOUNT' | 'SERVICE_ACCOUNT' | 'CUSTOMER_SERVICE' | 'UNKNOWN'
 export type WeChatMessageType = 'text' | 'image' | 'sticker'
 
 export type WeChatMessageBounds = {

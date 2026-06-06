@@ -242,6 +242,7 @@ const normalizeAccountCategory = (value: unknown): WeChatAccountCategory => {
     case 'TENCENT_NEWS':
     case 'OFFICIAL_ACCOUNT':
     case 'SERVICE_ACCOUNT':
+    case 'CUSTOMER_SERVICE':
       return normalized
     default:
       return 'UNKNOWN'

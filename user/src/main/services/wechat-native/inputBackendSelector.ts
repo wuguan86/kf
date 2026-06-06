@@ -12,6 +12,7 @@ type BackendAction =
   | 'pasteAndSendText'
   | 'clickConversationCandidate'
   | 'exitConversationToList'
+  | 'returnFromNestedConversation'
   | 'clickMarketingPoint'
   | 'pasteMarketingComment'
 
@@ -68,6 +69,14 @@ export const createInputBackend = (rawOptions: InputBackendOptions): WeChatInput
         options,
         () => options.nativeBackend.exitConversationToList(bounds),
         () => options.fallbackBackend.exitConversationToList(bounds)
+      )
+    },
+    returnFromNestedConversation(bounds: WindowBounds): Promise<boolean> {
+      return runWithFallback(
+        'returnFromNestedConversation',
+        options,
+        () => options.nativeBackend.returnFromNestedConversation(bounds),
+        () => options.fallbackBackend.returnFromNestedConversation(bounds)
       )
     },
     clickMarketingPoint(bounds: WindowBounds, point: MarketingMomentPoint): Promise<boolean> {
