@@ -306,6 +306,43 @@ class WechatVisionServiceTest {
     server.verify();
   }
 
+  @Test
+  void parseMarketingMomentsKeepsSemanticLikeFields() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andExpect(content().string(Matchers.containsString("MARKETING_MOMENTS")))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"contact\\":\\"Moments\\",\\"messages\\":[],\\"moments\\":[{\\"author\\":\\"Alice\\",\\"content\\":\\"new product\\",\\"visualIndex\\":1,\\"suitableForLike\\":true,\\"verticalRange\\":{\\"y\\":120,\\"h\\":180},\\"confidence\\":0.93}],\\"changed\\":true,\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.9}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatVisionParseResponse response = service.parse(new WechatVisionParseRequest(
+        "data:image/png;base64,MOMENTS",
+        "微信",
+        "",
+        "native-personal",
+        "MARKETING_MOMENTS"));
+
+    assertEquals(1, response.moments().size());
+    assertEquals("Alice", response.moments().get(0).author());
+    assertEquals("new product", response.moments().get(0).content());
+    assertEquals(1, response.moments().get(0).visualIndex());
+    assertEquals(true, response.moments().get(0).suitableForLike());
+    assertEquals(120D, response.moments().get(0).verticalRange().y());
+    assertEquals(180D, response.moments().get(0).verticalRange().h());
+    assertEquals(0.93D, response.moments().get(0).confidence());
+    server.verify();
+  }
+
   private WechatVisionService createService(RestClient.Builder builder, String apiKey, String model) {
     return new WechatVisionService(
         objectMapper,

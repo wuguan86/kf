@@ -181,6 +181,9 @@ const normalizeMarketingMoments = (value: unknown): MarketingMomentCandidate[] =
       return {
         author,
         content,
+        visualIndex: normalizeVisualIndex(raw.visualIndex ?? raw.index ?? raw.order),
+        suitableForLike: typeof raw.suitableForLike === 'boolean' ? raw.suitableForLike : null,
+        verticalRange: normalizeVerticalRange(raw.verticalRange),
         postBounds: normalizeBounds(raw.postBounds || raw.bounds),
         likePoint: normalizePoint(raw.likePoint),
         commentPoint: normalizePoint(raw.commentPoint),
@@ -188,6 +191,27 @@ const normalizeMarketingMoments = (value: unknown): MarketingMomentCandidate[] =
       }
     })
     .filter((item): item is MarketingMomentCandidate => !!item)
+}
+
+const normalizeVisualIndex = (value: unknown): number | null => {
+  const index = Number(value)
+  if (!Number.isInteger(index) || index < 0) {
+    return null
+  }
+  return index
+}
+
+const normalizeVerticalRange = (value: unknown): { y: number; h: number } | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  const y = Number(raw.y ?? raw.top)
+  const h = Number(raw.h ?? raw.height ?? (Number(raw.bottom) - y))
+  if (![y, h].every(Number.isFinite) || h <= 0) {
+    return undefined
+  }
+  return { y, h }
 }
 
 const normalizePoint = (value: unknown): { x: number; y: number } | undefined => {

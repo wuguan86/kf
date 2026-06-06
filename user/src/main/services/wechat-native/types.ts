@@ -16,9 +16,17 @@ export type MarketingMomentPoint = {
   y: number
 }
 
+export type MarketingMomentVerticalRange = {
+  y: number
+  h: number
+}
+
 export type MarketingMomentCandidate = {
   author: string
   content: string
+  visualIndex?: number | null
+  suitableForLike?: boolean | null
+  verticalRange?: MarketingMomentVerticalRange
   postBounds?: WeChatMessageBounds
   likePoint?: MarketingMomentPoint
   commentPoint?: MarketingMomentPoint

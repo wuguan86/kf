@@ -188,6 +188,102 @@ $matches |
   }
 }
 
+export const findWeChatMomentsWindow = async (
+  sourceWindow: WindowBounds,
+  channel: WeChatChannel = 'personal'
+): Promise<WindowBounds | null> => {
+  if (process.platform !== 'win32') {
+    console.warn('新方式当前仅支持 Windows 朋友圈窗口识别')
+    return null
+  }
+  if (normalizeChannel(channel) !== 'personal') {
+    return null
+  }
+
+  const sourceHwnd = Math.round(sourceWindow.hwnd)
+  const script = `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$sourceHwnd = [Int64]${sourceHwnd}
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class Win32MomentsWindowSearch {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+}
+"@
+$foregroundHwnd = [Win32MomentsWindowSearch]::GetForegroundWindow().ToInt64()
+function Build-MomentsWindowInfo([IntPtr]$hwnd) {
+  if ($hwnd -eq [IntPtr]::Zero) { return $null }
+  if ($hwnd.ToInt64() -eq $sourceHwnd) { return $null }
+  $titleBuilder = New-Object System.Text.StringBuilder 512
+  $classBuilder = New-Object System.Text.StringBuilder 256
+  [void][Win32MomentsWindowSearch]::GetWindowTextW($hwnd, $titleBuilder, $titleBuilder.Capacity)
+  [void][Win32MomentsWindowSearch]::GetClassNameW($hwnd, $classBuilder, $classBuilder.Capacity)
+  [uint32]$windowProcessId = 0
+  [void][Win32MomentsWindowSearch]::GetWindowThreadProcessId($hwnd, [ref]$windowProcessId)
+  $processName = ""
+  try { $processName = (Get-Process -Id $windowProcessId -ErrorAction Stop).ProcessName } catch {}
+  if ($processName -notin @("Weixin", "WeChat", "WeChatAppEx")) { return $null }
+  $rect = New-Object Win32MomentsWindowSearch+RECT
+  [void][Win32MomentsWindowSearch]::GetWindowRect($hwnd, [ref]$rect)
+  $width = $rect.Right - $rect.Left
+  $height = $rect.Bottom - $rect.Top
+  if ($width -lt 300 -or $height -lt 320 -or $width -gt 1100 -or $height -gt 1200) { return $null }
+  $titleText = $titleBuilder.ToString()
+  [PSCustomObject]@{
+    hwnd = $hwnd.ToInt64()
+    title = $titleText
+    className = $classBuilder.ToString()
+    processName = $processName
+    x = $rect.Left
+    y = $rect.Top
+    width = $width
+    height = $height
+    foreground = $hwnd.ToInt64() -eq $foregroundHwnd
+    titleLooksLikeMoments = $titleText -like "*朋友圈*"
+  }
+}
+$matches = New-Object System.Collections.Generic.List[object]
+[Win32MomentsWindowSearch]::EnumWindows({
+  param([IntPtr]$hwnd, [IntPtr]$lparam)
+  if (-not [Win32MomentsWindowSearch]::IsWindowVisible($hwnd)) { return $true }
+  $info = Build-MomentsWindowInfo($hwnd)
+  if ($info) { $matches.Add($info) }
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+$matches |
+  Sort-Object @{ Expression = { if ($_.foreground) { 0 } else { 1 } } }, @{ Expression = { if ($_.titleLooksLikeMoments) { 0 } else { 1 } } }, @{ Expression = { [Math]::Abs($_.width - 440) } } |
+  Select-Object -First 1 |
+  ConvertTo-Json -Compress
+`
+
+  try {
+    const window = normalizeWindowBounds(await runPowerShellJson(script, 7000))
+    if (!window) {
+      return null
+    }
+    console.info('新方式已定位朋友圈独立窗口', {
+      title: window.title,
+      className: window.className,
+      processName: window.processName,
+      bounds: { x: window.x, y: window.y, width: window.width, height: window.height }
+    })
+    return window
+  } catch (error) {
+    console.warn('新方式朋友圈独立窗口识别失败', error)
+    return null
+  }
+}
+
 export const focusWindow = async (hwnd: number): Promise<boolean> => {
   if (process.platform !== 'win32' || !hwnd) {
     return false

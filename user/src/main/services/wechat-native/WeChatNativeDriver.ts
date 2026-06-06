@@ -8,7 +8,7 @@ import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshots } from './snapshotDiff'
 import { findUnreadConversationCandidates } from './unreadDetector'
 import { parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } from './visionClient'
-import { findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
+import { findWeChatMomentsWindow, findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
 import { applyMessageVisionGuard, type MessageVisionGuardContext } from './messageVisionGuard'
 import { getSpecialConversationRule } from './specialConversationGuard'
 import type {
@@ -61,10 +61,37 @@ const MARKETING_IDLE_COOLDOWN_MS = 15_000
 const MARKETING_MIN_CONFIDENCE = 0.78
 const MAX_MARKETING_RECORDS = 2000
 const MAX_MARKETING_COMMENT_LENGTH = 120
+const MARKETING_LIKE_MENU_SCAN_LEFT_PX = 180
+const MARKETING_LIKE_MENU_SCAN_RIGHT_PX = 30
+const MARKETING_LIKE_MENU_SCAN_VERTICAL_PX = 52
+const MARKETING_LIKE_MENU_MIN_DARK_PIXELS = 80
+const MARKETING_LIKE_MENU_MIN_WIDTH_PX = 48
+const MARKETING_LIKE_MENU_MIN_HEIGHT_PX = 20
+const MARKETING_LIKE_MENU_MIN_DARK_RATIO = 0.16
+const MARKETING_LIKE_MENU_RIGHT_EDGE_TOLERANCE_PX = 24
+const MARKETING_LIKE_POINT_RIGHT_EXTENSION_PX = 160
+const MARKETING_ACTION_POINT_PADDING_PX = 16
+const MARKETING_MENU_DOT_SCAN_START_RATIO = 0.55
+const MARKETING_MENU_DOT_SCAN_TOP_PX = 32
+const MARKETING_MENU_DOT_SCAN_BOTTOM_PADDING_PX = 24
+const MARKETING_MENU_DOT_RADIUS_PX = 3
+const MARKETING_MENU_DOT_MIN_PIXELS = 8
+const MARKETING_MENU_DOT_PAIR_SPACING_PX = 8
+const MARKETING_MENU_DOT_MERGE_X_PX = 18
+const MARKETING_MENU_DOT_MERGE_Y_PX = 10
+const MARKETING_BLUE_MENU_SCAN_START_RATIO = 0.62
+const MARKETING_BLUE_MENU_COMPONENT_MIN_PIXELS = 90
+const MARKETING_BLUE_MENU_COMPONENT_MIN_WIDTH_PX = 18
+const MARKETING_BLUE_MENU_COMPONENT_MIN_HEIGHT_PX = 16
+const MARKETING_BLUE_MENU_COMPONENT_MAX_WIDTH_PX = 80
+const MARKETING_BLUE_MENU_COMPONENT_MAX_HEIGHT_PX = 70
+const MARKETING_BLUE_MENU_DOT_MIN_PIXELS = 8
 
 const wait = (milliseconds: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
+
+const clampNumber = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
 
 type ImageCropRect = {
   x: number
@@ -117,6 +144,19 @@ type MarketingActionRecord = {
 type MarketingActionStore = {
   version: number
   records?: MarketingActionRecord[]
+}
+
+type MarketingLikeClickResult = {
+  ok: boolean
+  error?: string
+  menuPoint?: MarketingMomentPoint
+  confirmPoint?: MarketingMomentPoint
+}
+
+type MarketingMenuPointCandidate = {
+  point: MarketingMomentPoint
+  score: number
+  source?: 'blue_action_button' | 'dark_ellipsis'
 }
 
 export class WeChatNativeDriver {
@@ -592,10 +632,14 @@ export class WeChatNativeDriver {
       if (!enteredMoments) {
         return this.skipMarketingAction('moments_entry_click_failed', '朋友圈入口点击失败，已跳过本轮互动')
       }
-      const screenshot = await captureWeChatWindow(window)
+      const momentsWindow = await findWeChatMomentsWindow(window, this.channel)
+      if (!momentsWindow) {
+        return this.skipMarketingAction('moments_window_not_found', '未找到朋友圈独立窗口，已跳过本轮互动')
+      }
+      const screenshot = await captureWeChatWindow(momentsWindow)
       const recognition = await recognizeMarketingMomentsWithVision(
         screenshot.dataUrl,
-        window,
+        momentsWindow,
         this.lastSnapshotDigest,
         this.runtimeConfig
       )
@@ -618,18 +662,29 @@ export class WeChatNativeDriver {
         }
       }
 
-      const point = action === 'like' ? candidate.likePoint : candidate.commentPoint
-      if (!point) {
+      const point = candidate.commentPoint
+      if (action === 'comment' && !point) {
         return this.skipMarketingAction('missing_action_point', '朋友圈互动点位缺失', candidate.author)
       }
-      await focusWindow(window.hwnd)
-      const clicked = await clickMarketingPoint(window, point)
-      if (!clicked) {
-        return this.skipMarketingAction('click_failed', '朋友圈互动点位点击失败', candidate.author)
+      if (action === 'like') {
+        const menuPoint = this.resolveMarketingLikeMenuPoint(screenshot, recognition.moments, selection.candidateIndex, candidate)
+        if (!menuPoint) {
+          return this.skipMarketingAction('like_menu_point_not_found', '未在朋友圈截图内确认到可匹配的点赞菜单入口', candidate.author)
+        }
+        const likeResult = await this.clickMarketingLikeThroughMenu(momentsWindow, candidate, menuPoint)
+        if (!likeResult.ok) {
+          return this.skipMarketingAction(likeResult.error || 'click_failed', '朋友圈点赞菜单确认或点击失败', candidate.author)
+        }
+      } else {
+        await focusWindow(momentsWindow.hwnd)
+        const clicked = await clickMarketingPoint(momentsWindow, point)
+        if (!clicked) {
+          return this.skipMarketingAction('click_failed', '朋友圈互动点位点击失败', candidate.author)
+        }
       }
       if (action === 'comment') {
         await wait(420 + Math.floor(Math.random() * 520))
-        const commented = await pasteMarketingComment(window, commentContent)
+        const commented = await pasteMarketingComment(momentsWindow, commentContent)
         if (!commented) {
           return this.skipMarketingAction('comment_send_failed', '朋友圈评论发送失败', candidate.author)
         }
@@ -692,24 +747,446 @@ export class WeChatNativeDriver {
     return true
   }
 
+  private resolveMarketingLikeMenuPoint(
+    screenshot: WeChatScreenshot,
+    candidates: MarketingMomentCandidate[],
+    candidateIndex: number,
+    candidate: MarketingMomentCandidate
+  ): MarketingMomentPoint | null {
+    const menuCandidates = this.findMarketingMenuPointCandidates(screenshot)
+    if (menuCandidates.length === 0) {
+      console.info('个人微信朋友圈未在截图内检测到点赞菜单入口候选', {
+        author: candidate.author,
+        screenshot: { width: screenshot.width, height: screenshot.height }
+      })
+      return null
+    }
+    const range = this.getMarketingMomentVerticalRange(candidate, screenshot)
+    if (range) {
+      const matched = menuCandidates
+        .filter((item) => item.point.y >= range.y - MARKETING_ACTION_POINT_PADDING_PX &&
+          item.point.y <= range.y + range.h + MARKETING_ACTION_POINT_PADDING_PX)
+        .sort((a, b) => this.getMarketingMenuCandidatePriority(a) - this.getMarketingMenuCandidatePriority(b) ||
+          Math.abs(a.point.y - (range.y + range.h / 2)) - Math.abs(b.point.y - (range.y + range.h / 2)) ||
+          b.point.x - a.point.x)[0]
+      if (matched) {
+        console.info('个人微信朋友圈已按动态垂直范围匹配本地点赞菜单入口', {
+          author: candidate.author,
+          menuPoint: matched.point,
+          range
+        })
+        return matched.point
+      }
+    }
+    const normalizedIndex = typeof candidate.visualIndex === 'number' && candidate.visualIndex >= 0
+      ? candidate.visualIndex
+      : candidateIndex
+    const boundedIndex = clampNumber(normalizedIndex, 0, Math.max(0, menuCandidates.length - 1))
+    const matched = menuCandidates[boundedIndex]
+    if (!matched) {
+      return null
+    }
+    console.info('个人微信朋友圈已按视觉顺序匹配本地点赞菜单入口', {
+      author: candidate.author,
+      candidateIndex,
+      visualIndex: candidate.visualIndex,
+      totalMoments: candidates.length,
+      totalMenuPoints: menuCandidates.length,
+      menuPoint: matched.point
+    })
+    return matched.point
+  }
+
+  private getMarketingMomentVerticalRange(
+    candidate: MarketingMomentCandidate,
+    screenshot: WeChatScreenshot
+  ): { y: number; h: number } | null {
+    const raw = candidate.verticalRange || (candidate.postBounds ? { y: candidate.postBounds.y, h: candidate.postBounds.h } : null)
+    if (!raw || !Number.isFinite(raw.y) || !Number.isFinite(raw.h) || raw.h <= 0) {
+      return null
+    }
+    const top = clampNumber(Math.round(raw.y), 0, Math.max(0, screenshot.height - 1))
+    const bottom = clampNumber(Math.round(raw.y + raw.h), top, screenshot.height)
+    if (bottom - top <= 0) {
+      return null
+    }
+    return { y: top, h: bottom - top }
+  }
+
+  private findMarketingMenuPointCandidates(screenshot: WeChatScreenshot): MarketingMenuPointCandidate[] {
+    try {
+      const image = nativeImage.createFromBuffer(screenshot.png)
+      if (!image || image.isEmpty()) {
+        return []
+      }
+      const size = image.getSize()
+      if (!size.width || !size.height || typeof image.toBitmap !== 'function') {
+        return []
+      }
+      const bitmap = image.toBitmap()
+      const blueButtonCandidates = this.findMarketingBlueActionButtonCandidates(bitmap, size.width, size.height)
+      const rawCandidates: MarketingMenuPointCandidate[] = []
+      const startX = Math.max(0, Math.floor(size.width * MARKETING_MENU_DOT_SCAN_START_RATIO))
+      const endX = Math.max(startX, size.width - MARKETING_MENU_DOT_PAIR_SPACING_PX * 2 - MARKETING_MENU_DOT_RADIUS_PX)
+      const startY = Math.min(size.height - 1, MARKETING_MENU_DOT_SCAN_TOP_PX)
+      const endY = Math.max(startY, size.height - MARKETING_MENU_DOT_SCAN_BOTTOM_PADDING_PX)
+      for (let y = startY; y <= endY; y += 1) {
+        for (let x = startX; x <= endX; x += 1) {
+          const first = this.countDarkPixelsAround(bitmap, size.width, size.height, x, y, MARKETING_MENU_DOT_RADIUS_PX)
+          const second = this.countDarkPixelsAround(bitmap, size.width, size.height, x + MARKETING_MENU_DOT_PAIR_SPACING_PX, y, MARKETING_MENU_DOT_RADIUS_PX)
+          if (first < MARKETING_MENU_DOT_MIN_PIXELS || second < MARKETING_MENU_DOT_MIN_PIXELS) {
+            continue
+          }
+          const third = this.countDarkPixelsAround(bitmap, size.width, size.height, x + MARKETING_MENU_DOT_PAIR_SPACING_PX * 2, y, MARKETING_MENU_DOT_RADIUS_PX)
+          const hasThirdDot = third >= MARKETING_MENU_DOT_MIN_PIXELS
+          rawCandidates.push({
+            point: {
+              x: x + (hasThirdDot ? MARKETING_MENU_DOT_PAIR_SPACING_PX : Math.round(MARKETING_MENU_DOT_PAIR_SPACING_PX / 2)),
+              y
+            },
+            score: first + second + (hasThirdDot ? third : 0),
+            source: 'dark_ellipsis'
+          })
+        }
+      }
+      const merged: MarketingMenuPointCandidate[] = []
+      for (const candidate of rawCandidates.sort((a, b) => b.score - a.score)) {
+        const nearExisting = merged.some((item) =>
+          Math.abs(item.point.x - candidate.point.x) <= MARKETING_MENU_DOT_MERGE_X_PX &&
+          Math.abs(item.point.y - candidate.point.y) <= MARKETING_MENU_DOT_MERGE_Y_PX)
+        if (!nearExisting) {
+          merged.push(candidate)
+        }
+      }
+      return [...blueButtonCandidates, ...merged].sort((a, b) =>
+        this.getMarketingMenuCandidatePriority(a) - this.getMarketingMenuCandidatePriority(b) ||
+        a.point.y - b.point.y ||
+        b.point.x - a.point.x)
+    } catch (error) {
+      console.warn('个人微信朋友圈点赞菜单入口本地识别失败', error)
+      return []
+    }
+  }
+
+  private getMarketingMenuCandidatePriority(candidate: MarketingMenuPointCandidate): number {
+    return candidate.source === 'blue_action_button' ? 0 : 1
+  }
+
+  private findMarketingBlueActionButtonCandidates(
+    bitmap: Buffer,
+    width: number,
+    height: number
+  ): MarketingMenuPointCandidate[] {
+    const startX = Math.max(0, Math.floor(width * MARKETING_BLUE_MENU_SCAN_START_RATIO))
+    const startY = Math.min(height - 1, MARKETING_MENU_DOT_SCAN_TOP_PX)
+    const endY = Math.max(startY, height - MARKETING_MENU_DOT_SCAN_BOTTOM_PADDING_PX)
+    const visited = new Uint8Array(width * height)
+    const candidates: MarketingMenuPointCandidate[] = []
+    for (let y = startY; y <= endY; y += 1) {
+      for (let x = startX; x < width; x += 1) {
+        const index = y * width + x
+        if (visited[index] || !this.isMarketingBlueMenuPixel(bitmap, index)) {
+          continue
+        }
+        const component = this.collectMarketingBlueComponent(bitmap, visited, width, height, x, y, startX, startY, endY)
+        const componentWidth = component.maxX - component.minX + 1
+        const componentHeight = component.maxY - component.minY + 1
+        if (component.count < MARKETING_BLUE_MENU_COMPONENT_MIN_PIXELS ||
+          componentWidth < MARKETING_BLUE_MENU_COMPONENT_MIN_WIDTH_PX ||
+          componentHeight < MARKETING_BLUE_MENU_COMPONENT_MIN_HEIGHT_PX ||
+          componentWidth > MARKETING_BLUE_MENU_COMPONENT_MAX_WIDTH_PX ||
+          componentHeight > MARKETING_BLUE_MENU_COMPONENT_MAX_HEIGHT_PX) {
+          continue
+        }
+        candidates.push({
+          point: {
+            x: Math.round((component.minX + component.maxX) / 2),
+            y: Math.round((component.minY + component.maxY) / 2)
+          },
+          score: component.count,
+          source: 'blue_action_button'
+        })
+      }
+    }
+    return [
+      ...candidates,
+      ...this.findMarketingBlueDotCandidates(bitmap, width, height, startX, startY, endY)
+    ].sort((a, b) => a.point.y - b.point.y || b.score - a.score)
+  }
+
+  private findMarketingBlueDotCandidates(
+    bitmap: Buffer,
+    width: number,
+    height: number,
+    startX: number,
+    startY: number,
+    endY: number
+  ): MarketingMenuPointCandidate[] {
+    const candidates: MarketingMenuPointCandidate[] = []
+    const endX = Math.max(startX, width - MARKETING_MENU_DOT_PAIR_SPACING_PX * 2 - MARKETING_MENU_DOT_RADIUS_PX)
+    for (let y = startY; y <= endY; y += 1) {
+      for (let x = startX; x <= endX; x += 1) {
+        const first = this.countBluePixelsAround(bitmap, width, height, x, y, MARKETING_MENU_DOT_RADIUS_PX)
+        const second = this.countBluePixelsAround(bitmap, width, height, x + MARKETING_MENU_DOT_PAIR_SPACING_PX, y, MARKETING_MENU_DOT_RADIUS_PX)
+        const third = this.countBluePixelsAround(bitmap, width, height, x + MARKETING_MENU_DOT_PAIR_SPACING_PX * 2, y, MARKETING_MENU_DOT_RADIUS_PX)
+        if (first < MARKETING_BLUE_MENU_DOT_MIN_PIXELS ||
+          second < MARKETING_BLUE_MENU_DOT_MIN_PIXELS) {
+          continue
+        }
+        const hasThirdDot = third >= MARKETING_BLUE_MENU_DOT_MIN_PIXELS
+        candidates.push({
+          point: {
+            x: x + (hasThirdDot ? MARKETING_MENU_DOT_PAIR_SPACING_PX : Math.round(MARKETING_MENU_DOT_PAIR_SPACING_PX / 2)),
+            y
+          },
+          score: first + second + (hasThirdDot ? third : 0),
+          source: 'blue_action_button'
+        })
+      }
+    }
+    const merged: MarketingMenuPointCandidate[] = []
+    for (const candidate of candidates.sort((a, b) => b.score - a.score)) {
+      const nearExisting = merged.some((item) =>
+        Math.abs(item.point.x - candidate.point.x) <= MARKETING_MENU_DOT_MERGE_X_PX &&
+        Math.abs(item.point.y - candidate.point.y) <= MARKETING_MENU_DOT_MERGE_Y_PX)
+      if (!nearExisting) {
+        merged.push(candidate)
+      }
+    }
+    return merged
+  }
+
+  private collectMarketingBlueComponent(
+    bitmap: Buffer,
+    visited: Uint8Array,
+    width: number,
+    height: number,
+    startX: number,
+    startY: number,
+    minScanX: number,
+    minScanY: number,
+    maxScanY: number
+  ): { count: number; minX: number; minY: number; maxX: number; maxY: number } {
+    const queue: Array<{ x: number; y: number }> = [{ x: startX, y: startY }]
+    let count = 0
+    let minX = startX
+    let minY = startY
+    let maxX = startX
+    let maxY = startY
+    visited[startY * width + startX] = 1
+    for (let offset = 0; offset < queue.length; offset += 1) {
+      const current = queue[offset]
+      count += 1
+      minX = Math.min(minX, current.x)
+      minY = Math.min(minY, current.y)
+      maxX = Math.max(maxX, current.x)
+      maxY = Math.max(maxY, current.y)
+      const neighbours = [
+        { x: current.x + 1, y: current.y },
+        { x: current.x - 1, y: current.y },
+        { x: current.x, y: current.y + 1 },
+        { x: current.x, y: current.y - 1 }
+      ]
+      for (const next of neighbours) {
+        if (next.x < minScanX || next.x >= width || next.y < minScanY || next.y > maxScanY) {
+          continue
+        }
+        const nextIndex = next.y * width + next.x
+        if (visited[nextIndex] || !this.isMarketingBlueMenuPixel(bitmap, nextIndex)) {
+          continue
+        }
+        visited[nextIndex] = 1
+        queue.push(next)
+      }
+    }
+    return { count, minX, minY, maxX, maxY }
+  }
+
+  private isMarketingBlueMenuPixel(bitmap: Buffer, pixelIndex: number): boolean {
+    const offset = pixelIndex * 4
+    const first = bitmap[offset]
+    const green = bitmap[offset + 1]
+    const third = bitmap[offset + 2]
+    const alpha = bitmap[offset + 3]
+    if (alpha <= 160 || green < 90) {
+      return false
+    }
+    const rgbLooksBlue = third >= 145 && third - first >= 8 && third >= green - 12
+    const bgrLooksBlue = first >= 145 && first - third >= 8 && first >= green - 12
+    return rgbLooksBlue || bgrLooksBlue
+  }
+
+  private countBluePixelsAround(
+    bitmap: Buffer,
+    width: number,
+    height: number,
+    centerX: number,
+    centerY: number,
+    radius: number
+  ): number {
+    let count = 0
+    const left = clampNumber(centerX - radius, 0, width - 1)
+    const right = clampNumber(centerX + radius, left, width - 1)
+    const top = clampNumber(centerY - radius, 0, height - 1)
+    const bottom = clampNumber(centerY + radius, top, height - 1)
+    for (let y = top; y <= bottom; y += 1) {
+      for (let x = left; x <= right; x += 1) {
+        if (this.isMarketingBlueDotPixel(bitmap, y * width + x)) {
+          count += 1
+        }
+      }
+    }
+    return count
+  }
+
+  private isMarketingBlueDotPixel(bitmap: Buffer, pixelIndex: number): boolean {
+    const offset = pixelIndex * 4
+    const first = bitmap[offset]
+    const green = bitmap[offset + 1]
+    const third = bitmap[offset + 2]
+    const alpha = bitmap[offset + 3]
+    if (alpha <= 160) {
+      return false
+    }
+    const rgbBlueSaturation = third - Math.max(first, green)
+    const bgrBlueSaturation = first - Math.max(third, green)
+    return (third >= 110 && rgbBlueSaturation >= 35) ||
+      (first >= 110 && bgrBlueSaturation >= 35)
+  }
+
+  private countDarkPixelsAround(
+    bitmap: Buffer,
+    width: number,
+    height: number,
+    centerX: number,
+    centerY: number,
+    radius: number
+  ): number {
+    let count = 0
+    const left = clampNumber(centerX - radius, 0, width - 1)
+    const right = clampNumber(centerX + radius, left, width - 1)
+    const top = clampNumber(centerY - radius, 0, height - 1)
+    const bottom = clampNumber(centerY + radius, top, height - 1)
+    for (let y = top; y <= bottom; y += 1) {
+      for (let x = left; x <= right; x += 1) {
+        const offset = (y * width + x) * 4
+        const red = bitmap[offset]
+        const green = bitmap[offset + 1]
+        const blue = bitmap[offset + 2]
+        const alpha = bitmap[offset + 3]
+        if (alpha > 160 && red < 120 && green < 120 && blue < 120) {
+          count += 1
+        }
+      }
+    }
+    return count
+  }
+
+  private async clickMarketingLikeThroughMenu(
+    window: WindowBounds,
+    candidate: MarketingMomentCandidate,
+    menuPoint: MarketingMomentPoint
+  ): Promise<MarketingLikeClickResult> {
+    await focusWindow(window.hwnd)
+    const menuClicked = await clickMarketingPoint(window, menuPoint)
+    if (!menuClicked) {
+      return { ok: false, error: 'click_failed', menuPoint }
+    }
+    await wait(280 + Math.floor(Math.random() * 220))
+    const menuScreenshot = await captureWeChatWindow(window)
+    const confirmPoint = this.findMarketingLikeConfirmPoint(menuScreenshot, menuPoint)
+    if (!confirmPoint) {
+      console.warn('个人微信朋友圈点赞菜单未通过本地确认，已跳过点赞', {
+        author: candidate.author,
+        menuPoint
+      })
+      return { ok: false, error: 'like_menu_not_confirmed', menuPoint }
+    }
+    const confirmed = await clickMarketingPoint(window, confirmPoint)
+    if (!confirmed) {
+      return { ok: false, error: 'like_confirm_click_failed', menuPoint, confirmPoint }
+    }
+    return { ok: true, menuPoint, confirmPoint }
+  }
+
+  private findMarketingLikeConfirmPoint(screenshot: WeChatScreenshot, menuPoint: MarketingMomentPoint): MarketingMomentPoint | null {
+    try {
+      const image = nativeImage.createFromBuffer(screenshot.png)
+      if (!image || image.isEmpty()) {
+        return null
+      }
+      const size = image.getSize()
+      if (!size.width || !size.height || typeof image.toBitmap !== 'function') {
+        return null
+      }
+      const bitmap = image.toBitmap()
+      const left = clampNumber(Math.round(menuPoint.x - MARKETING_LIKE_MENU_SCAN_LEFT_PX), 0, size.width - 1)
+      const right = clampNumber(Math.round(menuPoint.x + MARKETING_LIKE_MENU_SCAN_RIGHT_PX), left, size.width - 1)
+      const top = clampNumber(Math.round(menuPoint.y - MARKETING_LIKE_MENU_SCAN_VERTICAL_PX), 0, size.height - 1)
+      const bottom = clampNumber(Math.round(menuPoint.y + MARKETING_LIKE_MENU_SCAN_VERTICAL_PX), top, size.height - 1)
+      let minX = Number.POSITIVE_INFINITY
+      let minY = Number.POSITIVE_INFINITY
+      let maxX = 0
+      let maxY = 0
+      let darkPixels = 0
+      let scannedPixels = 0
+      for (let y = top; y <= bottom; y += 1) {
+        for (let x = left; x <= right; x += 1) {
+          scannedPixels += 1
+          const offset = (y * size.width + x) * 4
+          const first = bitmap[offset]
+          const second = bitmap[offset + 1]
+          const third = bitmap[offset + 2]
+          const alpha = bitmap[offset + 3]
+          if (alpha > 180 && first < 90 && second < 90 && third < 90) {
+            darkPixels += 1
+            minX = Math.min(minX, x)
+            minY = Math.min(minY, y)
+            maxX = Math.max(maxX, x)
+            maxY = Math.max(maxY, y)
+          }
+        }
+      }
+      const menuWidth = maxX - minX
+      const menuHeight = maxY - minY
+      const darkRatio = scannedPixels > 0 ? darkPixels / scannedPixels : 0
+      if (darkPixels < MARKETING_LIKE_MENU_MIN_DARK_PIXELS ||
+        menuWidth < MARKETING_LIKE_MENU_MIN_WIDTH_PX ||
+        menuHeight < MARKETING_LIKE_MENU_MIN_HEIGHT_PX ||
+        darkRatio < MARKETING_LIKE_MENU_MIN_DARK_RATIO ||
+        maxX < menuPoint.x - MARKETING_LIKE_MENU_RIGHT_EDGE_TOLERANCE_PX) {
+        return null
+      }
+      return {
+        x: clampNumber(Math.round(minX + menuWidth * 0.28), 0, screenshot.width),
+        y: clampNumber(Math.round(minY + menuHeight * 0.5), 0, screenshot.height)
+      }
+    } catch (error) {
+      console.warn('个人微信朋友圈点赞菜单本地识别失败', error)
+      return null
+    }
+  }
+
   private selectMarketingCandidate(
     action: MarketingActionType,
     candidates: MarketingMomentCandidate[],
     screenshot: WeChatScreenshot,
     rawConfig: Record<string, any>
-  ): { candidate: MarketingMomentCandidate | null; error: string } {
+  ): { candidate: MarketingMomentCandidate | null; candidateIndex: number; error: string } {
     if (!Array.isArray(candidates) || candidates.length === 0) {
-      return { candidate: null, error: 'no_candidate' }
+      return { candidate: null, candidateIndex: -1, error: 'no_candidate' }
     }
     let firstError = ''
-    for (const candidate of candidates) {
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index]
       const error = this.getMarketingCandidateError(action, candidate, screenshot, rawConfig)
       if (!error) {
-        return { candidate, error: '' }
+        return { candidate, candidateIndex: index, error: '' }
       }
+      this.logRejectedMarketingCandidate(action, candidate, screenshot, error)
       firstError = firstError || error
     }
-    return { candidate: null, error: firstError || 'no_candidate' }
+    return { candidate: null, candidateIndex: -1, error: firstError || 'no_candidate' }
   }
 
   private getMarketingCandidateError(
@@ -722,11 +1199,21 @@ export class WeChatNativeDriver {
     if (confidence < MARKETING_MIN_CONFIDENCE) {
       return 'vision_low_confidence'
     }
+    if (action === 'like') {
+      if (candidate.suitableForLike === false) {
+        return 'like_not_suitable'
+      }
+      if (this.hasMarketingKeywordHit(rawConfig?.keywordFilter, candidate)) {
+        return 'keyword_filtered'
+      }
+      return ''
+    }
     const actionPoint = action === 'like' ? candidate.likePoint : candidate.commentPoint
     if (!candidate.postBounds || !actionPoint) {
       return 'missing_action_point'
     }
-    if (!this.isPointInsideScreenshot(actionPoint, screenshot) || !this.isPointInsideBounds(actionPoint, candidate.postBounds)) {
+    if (!this.isPointInsideScreenshot(actionPoint, screenshot) ||
+      !this.isMarketingActionPointInsideCandidate(action, actionPoint, candidate.postBounds)) {
       return 'action_point_out_of_bounds'
     }
     if (this.hasMarketingKeywordHit(rawConfig?.keywordFilter, candidate)) {
@@ -739,12 +1226,45 @@ export class WeChatNativeDriver {
     return point.x >= 0 && point.y >= 0 && point.x <= screenshot.width && point.y <= screenshot.height
   }
 
+  private isMarketingActionPointInsideCandidate(
+    action: MarketingActionType,
+    point: MarketingMomentPoint,
+    bounds: WeChatMessageBounds
+  ): boolean {
+    if (action !== 'like') {
+      return this.isPointInsideBounds(point, bounds)
+    }
+    // 朋友圈点赞入口是动态右侧的“...”菜单，可能在正文区域右侧；先放宽菜单候选区，最终仍要截图确认点赞菜单。
+    return point.x >= bounds.x - MARKETING_ACTION_POINT_PADDING_PX &&
+      point.y >= bounds.y - MARKETING_ACTION_POINT_PADDING_PX &&
+      point.x <= bounds.x + bounds.w + MARKETING_LIKE_POINT_RIGHT_EXTENSION_PX &&
+      point.y <= bounds.y + bounds.h + MARKETING_ACTION_POINT_PADDING_PX
+  }
+
   private isPointInsideBounds(point: MarketingMomentPoint, bounds: WeChatMessageBounds): boolean {
-    const padding = 16
+    const padding = MARKETING_ACTION_POINT_PADDING_PX
     return point.x >= bounds.x - padding &&
       point.y >= bounds.y - padding &&
       point.x <= bounds.x + bounds.w + padding &&
       point.y <= bounds.y + bounds.h + padding
+  }
+
+  private logRejectedMarketingCandidate(
+    action: MarketingActionType,
+    candidate: MarketingMomentCandidate,
+    screenshot: WeChatScreenshot,
+    error: string
+  ): void {
+    console.info('个人微信朋友圈候选动态被本地安全规则跳过', {
+      action,
+      error,
+      author: candidate.author,
+      confidence: candidate.confidence,
+      postBounds: candidate.postBounds,
+      likePoint: candidate.likePoint,
+      commentPoint: candidate.commentPoint,
+      screenshot: { width: screenshot.width, height: screenshot.height }
+    })
   }
 
   private hasMarketingKeywordHit(keywordFilter: unknown, candidate: MarketingMomentCandidate): boolean {

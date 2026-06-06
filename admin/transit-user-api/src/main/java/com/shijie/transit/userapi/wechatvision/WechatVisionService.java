@@ -243,12 +243,46 @@ public class WechatVisionService {
       moments.add(new WechatMarketingMoment(
           author,
           content,
+          parseMarketingVisualIndex(node),
+          node.path("suitableForLike").isBoolean() ? node.path("suitableForLike").asBoolean() : null,
+          parseMarketingVerticalRange(node.path("verticalRange")),
           parseBounds(node.has("postBounds") ? node.path("postBounds") : node.path("bounds")),
           parseMarketingPoint(node.path("likePoint")),
           parseMarketingPoint(node.path("commentPoint")),
           node.path("confidence").isNumber() ? node.path("confidence").asDouble() : null));
     }
     return moments;
+  }
+
+  private Integer parseMarketingVisualIndex(JsonNode node) {
+    JsonNode indexNode = node.path("visualIndex");
+    if (!indexNode.isNumber()) {
+      indexNode = node.path("index");
+    }
+    if (!indexNode.isNumber()) {
+      indexNode = node.path("order");
+    }
+    if (!indexNode.isNumber()) {
+      return null;
+    }
+    int index = indexNode.asInt();
+    return index >= 0 ? index : null;
+  }
+
+  private WechatMarketingVerticalRange parseMarketingVerticalRange(JsonNode node) {
+    if (node == null || node.isMissingNode() || node.isNull()) {
+      return null;
+    }
+    double y = node.has("y") ? node.path("y").asDouble(Double.NaN) : node.path("top").asDouble(Double.NaN);
+    double h = node.has("h")
+        ? node.path("h").asDouble(Double.NaN)
+        : node.has("height")
+            ? node.path("height").asDouble(Double.NaN)
+            : node.path("bottom").asDouble(Double.NaN) - y;
+    if (!Double.isFinite(y) || !Double.isFinite(h) || h <= 0D) {
+      return null;
+    }
+    return new WechatMarketingVerticalRange(y, h);
   }
 
   private boolean isIgnoredSystemNotice(String content) {
@@ -320,10 +354,12 @@ public class WechatVisionService {
         - changed 固定返回 true。
         如果场景是 MARKETING_MOMENTS 或截图是朋友圈：
         - messages 返回空数组，重点输出 moments 数组。
-        - moments 每项字段固定为 author、content、postBounds、likePoint、commentPoint、confidence。
+        - moments 每项字段固定为 author、content、visualIndex、suitableForLike、verticalRange、postBounds、likePoint、commentPoint、confidence。
         - 只识别当前截图真实可见的朋友圈动态，不要推测屏幕外动态，不要补全看不清的昵称或内容。
-        - postBounds 是整条动态主体区域坐标，likePoint 和 commentPoint 必须是该动态内可见的真实点赞/评论入口坐标。
-        - 如果没有把握、坐标不可见、按钮被遮挡或不在朋友圈页面，moments 返回空数组或降低 confidence。
+        - visualIndex 必须按当前截图内动态从上到下排序，从 0 开始；suitableForLike 表示这条动态语义上是否适合点赞。
+        - verticalRange 只描述该动态在当前截图内的粗略垂直范围，字段为 y、h；它只用于本地匹配，不是点击坐标。
+        - postBounds、likePoint、commentPoint 是兼容旧版本的可选字段；点赞坐标由客户端本地识别“...”菜单，不要为了补全字段而猜测坐标。
+        - 如果没有把握、动态不完整、语义不适合点赞、按钮被遮挡或不在朋友圈页面，moments 返回空数组或降低 confidence。
         只输出真实可见内容，忽略搜索框、输入框、菜单、按钮、时间轴和其他系统控件。
         """;
   }
