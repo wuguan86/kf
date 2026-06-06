@@ -12,5 +12,6 @@ export const pasteAndSendText = inputBackend.pasteAndSendText
 export const clickConversationCandidate = inputBackend.clickConversationCandidate
 export const exitConversationToList = inputBackend.exitConversationToList
 export const returnFromNestedConversation = inputBackend.returnFromNestedConversation
+export const clickMomentsEntry = inputBackend.clickMomentsEntry
 export const clickMarketingPoint = inputBackend.clickMarketingPoint
 export const pasteMarketingComment = inputBackend.pasteMarketingComment

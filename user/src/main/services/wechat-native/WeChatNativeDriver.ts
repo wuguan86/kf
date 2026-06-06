@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { createHash } from 'crypto'
 import { recognizeUnreadConversationCandidate } from './conversationListRecognizer'
-import { clickConversationCandidate, clickMarketingPoint, exitConversationToList, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
+import { clickConversationCandidate, clickMarketingPoint, clickMomentsEntry, exitConversationToList, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
 import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshots } from './snapshotDiff'
 import { findUnreadConversationCandidates } from './unreadDetector'
@@ -588,6 +588,10 @@ export class WeChatNativeDriver {
         return this.skipMarketingAction('wechat_window_not_found', '未找到可信个人微信窗口')
       }
       this.lastWindow = window
+      const enteredMoments = await this.enterMomentsForMarketing(window)
+      if (!enteredMoments) {
+        return this.skipMarketingAction('moments_entry_click_failed', '朋友圈入口点击失败，已跳过本轮互动')
+      }
       const screenshot = await captureWeChatWindow(window)
       const recognition = await recognizeMarketingMomentsWithVision(
         screenshot.dataUrl,
@@ -672,6 +676,20 @@ export class WeChatNativeDriver {
   private skipMarketingAction(error: string, message: string, author = ''): NativeDriverResult {
     console.info('个人微信朋友圈互动跳过', { error, message, author })
     return { ok: true, skipped: true, error, message, author }
+  }
+
+  private async enterMomentsForMarketing(window: WindowBounds): Promise<boolean> {
+    // 营销互动必须先进入朋友圈页面，但点赞/评论仍由视觉候选和本地坐标校验决定。
+    const clicked = await clickMomentsEntry(window)
+    if (!clicked) {
+      console.warn('个人微信朋友圈入口点击失败，已跳过本轮营销互动', {
+        processName: window.processName,
+        title: window.title
+      })
+      return false
+    }
+    await wait(900 + Math.floor(Math.random() * 500))
+    return true
   }
 
   private selectMarketingCandidate(

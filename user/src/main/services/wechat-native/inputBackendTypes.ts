@@ -5,6 +5,7 @@ export type WeChatInputBackend = {
   clickConversationCandidate: (bounds: WindowBounds, candidate: UnreadConversationCandidate) => Promise<boolean>
   exitConversationToList: (bounds: WindowBounds) => Promise<boolean>
   returnFromNestedConversation: (bounds: WindowBounds) => Promise<boolean>
+  clickMomentsEntry: (bounds: WindowBounds) => Promise<boolean>
   clickMarketingPoint: (bounds: WindowBounds, point: MarketingMomentPoint) => Promise<boolean>
   pasteMarketingComment: (bounds: WindowBounds, content: string) => Promise<boolean>
 }

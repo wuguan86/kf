@@ -71,6 +71,11 @@ function createBackend(name, calls, behavior = {}) {
       if (behavior.nestedReturnError) throw new Error(behavior.nestedReturnError)
       return behavior.nestedReturnResult ?? true
     },
+    clickMomentsEntry: async () => {
+      calls.push(`${name}:moments-entry`)
+      if (behavior.momentsEntryError) throw new Error(behavior.momentsEntryError)
+      return behavior.momentsEntryResult ?? true
+    },
     clickMarketingPoint: async () => {
       calls.push(`${name}:marketing-click`)
       if (behavior.marketingClickError) throw new Error(behavior.marketingClickError)
@@ -152,6 +157,24 @@ async function testReturnsFromNestedConversationWithFallback() {
   assert.equal(warnings.length, 1)
 }
 
+async function testClickMomentsEntryUsesFallbackWhenNativeFails() {
+  const { createInputBackend } = loadSelector()
+  const calls = []
+  const warnings = []
+  const backend = createInputBackend({
+    platform: 'win32',
+    nativeBackend: createBackend('native', calls, { momentsEntryResult: false }),
+    fallbackBackend: createBackend('fallback', calls),
+    logger: { warn: (...args) => warnings.push(args) }
+  })
+
+  const result = await backend.clickMomentsEntry(testWindow)
+
+  assert.equal(result, true)
+  assert.deepEqual(calls, ['native:moments-entry', 'fallback:moments-entry'])
+  assert.equal(warnings.length, 1)
+}
+
 function testExitPointTargetsConversationListAndAvoidsWindowCloseButton() {
   const { getConversationListExitPoint } = loadWechatNativeModule('conversationExitPoint.ts')
 
@@ -163,6 +186,19 @@ function testExitPointTargetsConversationListAndAvoidsWindowCloseButton() {
   assert.ok(point.y > testWindow.y + 80)
   assert.ok(point.x < testWindow.x + testWindow.width - 120)
   assert.ok(point.y > testWindow.y + 40)
+}
+
+function testMomentsEntryPointTargetsLeftSidebarIcon() {
+  const { getMomentsEntryPoint } = loadWechatNativeModule('momentsEntryPoint.ts')
+
+  const point = getMomentsEntryPoint(testWindow)
+
+  assert.equal(point.x, 31)
+  assert.equal(point.y, 235)
+  assert.ok(point.x >= 24)
+  assert.ok(point.x <= 34)
+  assert.ok(point.y >= 218)
+  assert.ok(point.y <= 292)
 }
 
 function testNestedReturnPointTargetsTopLeftBackButton() {
@@ -190,6 +226,8 @@ await testUsesNativeBackendFirstOnWindows()
 await testFallsBackWhenNativeBackendThrows()
 await testUsesFallbackOutsideWindows()
 await testReturnsFromNestedConversationWithFallback()
+await testClickMomentsEntryUsesFallbackWhenNativeFails()
 testExitPointTargetsConversationListAndAvoidsWindowCloseButton()
+testMomentsEntryPointTargetsLeftSidebarIcon()
 testNestedReturnPointTargetsTopLeftBackButton()
 testExitBackendsDoNotSendEscBecauseWechatMinimizesToTray()

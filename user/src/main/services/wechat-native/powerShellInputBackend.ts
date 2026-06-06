@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
 import type { WeChatInputBackend } from './inputBackendTypes'
 import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
+import { getMomentsEntryPoint } from './momentsEntryPoint'
 
 const runPowerShell = async (script: string, timeoutMs = 10000): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -254,6 +255,41 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
       console.info('PowerShell 输入后端已点击微信内层会话返回按钮', {
         backX,
         backY,
+        processName: bounds.processName
+      })
+      return true
+    },
+
+    async clickMomentsEntry(bounds: WindowBounds): Promise<boolean> {
+      const point = getMomentsEntryPoint(bounds)
+      const clickX = Math.round(bounds.x + point.x + Math.random() * 6 - 3)
+      const clickY = Math.round(bounds.y + point.y + Math.random() * 6 - 3)
+      const script = `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class NativeMomentsEntryClick {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+$hwnd = [IntPtr]${Math.round(bounds.hwnd)}
+[void][NativeMomentsEntryClick]::SetForegroundWindow($hwnd)
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+[void][NativeMomentsEntryClick]::SetCursorPos(${clickX}, ${clickY})
+Start-Sleep -Milliseconds (Get-Random -Minimum 80 -Maximum 160)
+[NativeMomentsEntryClick]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
+[NativeMomentsEntryClick]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+`
+
+      await runPowerShell(script, 8000)
+      console.info('PowerShell 输入后端已点击微信朋友圈入口', {
+        clickX,
+        clickY,
         processName: bounds.processName
       })
       return true

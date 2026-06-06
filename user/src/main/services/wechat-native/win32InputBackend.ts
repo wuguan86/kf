@@ -3,6 +3,7 @@ import { createRequire } from 'module'
 import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
 import type { WeChatInputBackend } from './inputBackendTypes'
 import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
+import { getMomentsEntryPoint } from './momentsEntryPoint'
 
 type Win32Api = {
   setForegroundWindow: (hwnd: number) => boolean
@@ -140,6 +141,21 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
       console.info('原生输入后端已点击微信内层会话返回按钮', {
         backX: backPoint.x,
         backY: backPoint.y,
+        processName: bounds.processName
+      })
+      return true
+    },
+
+    async clickMomentsEntry(bounds: WindowBounds): Promise<boolean> {
+      const api = loadWin32Api()
+      const point = getMomentsEntryPoint(bounds)
+      const clickX = Math.round(bounds.x + point.x)
+      const clickY = Math.round(bounds.y + point.y)
+      await focusWindow(api, bounds.hwnd)
+      await clickAt(api, clickX, clickY)
+      console.info('原生输入后端已点击微信朋友圈入口', {
+        clickX,
+        clickY,
         processName: bounds.processName
       })
       return true

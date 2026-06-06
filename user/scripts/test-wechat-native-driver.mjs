@@ -96,6 +96,7 @@ function loadNativeDriver(mocks = {}) {
         clickConversationCandidate: mocks.clickConversationCandidate,
         exitConversationToList: mocks.exitConversationToList || (async () => true),
         returnFromNestedConversation: mocks.returnFromNestedConversation || (async () => true),
+        clickMomentsEntry: mocks.clickMomentsEntry || (async () => true),
         clickMarketingPoint: mocks.clickMarketingPoint || (async () => true),
         pasteMarketingComment: mocks.pasteMarketingComment || (async () => true)
       }
@@ -1790,6 +1791,66 @@ async function testMarketingLikeClicksSafeCandidateAndDedupesPost() {
   assert.equal(secondResult.error, 'duplicate_post')
 }
 
+async function testMarketingLikeEntersMomentsBeforeRecognition() {
+  const events = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=marketing-enter-moments',
+      png: Buffer.from('marketing-enter-moments'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-enter-moments', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '进入朋友圈客户',
+      messages: [],
+      snapshotDigest: 'marketing-enter-moments',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    clickMomentsEntry: async () => {
+      events.push('enter-moments')
+      return true
+    },
+    recognizeMarketingMomentsWithVision: async () => {
+      events.push('recognize-moments')
+      return {
+        moments: [
+          {
+            author: '客户A',
+            content: '进入朋友圈后识别新品动态',
+            postBounds: { x: 180, y: 120, w: 520, h: 180 },
+            likePoint: { x: 650, y: 270 },
+            confidence: 0.95
+          }
+        ],
+        confidence: 0.95
+      }
+    },
+    clickMarketingPoint: async () => {
+      events.push('click-like')
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.performed, true)
+  assert.deepEqual(events, ['enter-moments', 'recognize-moments', 'click-like'])
+}
+
 async function testMarketingLikeRejectsLowConfidenceCandidateWithoutClicking() {
   const clickedPoints = []
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -1947,6 +2008,7 @@ await testDifferentImageSignatureCanTriggerAfterPreviousImageReply()
 await testRecentlySentSelfReplyMisreadAsCustomerIsNotReported()
 await testEllipsizedSelfReplyMisreadAsCustomerIsNotReported()
 await testMarketingLikeIsSkippedDuringActiveReplySession()
+await testMarketingLikeEntersMomentsBeforeRecognition()
 await testMarketingLikeClicksSafeCandidateAndDedupesPost()
 await testMarketingLikeRejectsLowConfidenceCandidateWithoutClicking()
 await testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails()
