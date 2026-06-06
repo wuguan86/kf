@@ -175,6 +175,20 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
       return true
     },
 
+    async closeMomentsWindow(bounds: WindowBounds): Promise<boolean> {
+      const api = loadWin32Api()
+      const closeX = Math.round(bounds.x + bounds.width - 30)
+      const closeY = Math.round(bounds.y + 24)
+      await focusWindow(api, bounds.hwnd)
+      await clickAt(api, closeX, closeY)
+      console.info('原生输入后端已点击微信朋友圈窗口关闭按钮', {
+        closeX,
+        closeY,
+        processName: bounds.processName
+      })
+      return true
+    },
+
     async pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
       const api = loadWin32Api()
       const originalClipboardText = clipboard.readText()

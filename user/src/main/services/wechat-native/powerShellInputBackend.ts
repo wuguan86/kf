@@ -341,6 +341,41 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
       return true
     },
 
+    async closeMomentsWindow(bounds: WindowBounds): Promise<boolean> {
+      const closeX = Math.round(bounds.x + bounds.width - 30 + Math.random() * 6 - 3)
+      const closeY = Math.round(bounds.y + 24 + Math.random() * 4 - 2)
+      const script = `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class NativeMomentsWindowClose {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+$hwnd = [IntPtr]${Math.round(bounds.hwnd)}
+[void][NativeMomentsWindowClose]::SetForegroundWindow($hwnd)
+Start-Sleep -Milliseconds (Get-Random -Minimum 160 -Maximum 300)
+[void][NativeMomentsWindowClose]::SetCursorPos(${closeX}, ${closeY})
+Start-Sleep -Milliseconds (Get-Random -Minimum 70 -Maximum 140)
+[NativeMomentsWindowClose]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
+[NativeMomentsWindowClose]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+`
+
+      await runPowerShell(script, 8000)
+      console.info('PowerShell 输入后端已点击微信朋友圈窗口关闭按钮', {
+        closeX,
+        closeY,
+        processName: bounds.processName
+      })
+      return true
+    },
+
     async pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
       const originalClipboardText = clipboard.readText()
       clipboard.writeText(content)

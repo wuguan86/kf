@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { createHash } from 'crypto'
 import { recognizeUnreadConversationCandidate } from './conversationListRecognizer'
-import { clickConversationCandidate, clickMarketingPoint, clickMomentsEntry, exitConversationToList, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
+import { clickConversationCandidate, clickMarketingPoint, clickMomentsEntry, closeMomentsWindow, exitConversationToList, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
 import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshots } from './snapshotDiff'
 import { findUnreadConversationCandidates } from './unreadDetector'
@@ -691,6 +691,7 @@ export class WeChatNativeDriver {
       }
 
       await this.recordMarketingAction(action, candidate, postFingerprint)
+      await this.closeMomentsWindowAfterMarketing(momentsWindow, action, candidate.author)
       console.info('个人微信朋友圈互动已执行', {
         action,
         author: candidate.author,
@@ -745,6 +746,36 @@ export class WeChatNativeDriver {
     }
     await wait(900 + Math.floor(Math.random() * 500))
     return true
+  }
+
+  private async closeMomentsWindowAfterMarketing(
+    window: WindowBounds,
+    action: MarketingActionType,
+    author: string
+  ): Promise<void> {
+    try {
+      const closed = await closeMomentsWindow(window)
+      if (!closed) {
+        console.warn('个人微信朋友圈互动成功后关闭朋友圈窗口失败', {
+          action,
+          author,
+          hwnd: window.hwnd
+        })
+        return
+      }
+      console.info('个人微信朋友圈互动成功后已关闭朋友圈窗口', {
+        action,
+        author,
+        hwnd: window.hwnd
+      })
+    } catch (error) {
+      console.warn('个人微信朋友圈互动成功后关闭朋友圈窗口异常', {
+        action,
+        author,
+        hwnd: window.hwnd,
+        error
+      })
+    }
   }
 
   private resolveMarketingLikeMenuPoint(

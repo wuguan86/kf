@@ -99,6 +99,7 @@ function loadNativeDriver(mocks = {}) {
         returnFromNestedConversation: mocks.returnFromNestedConversation || (async () => true),
         clickMomentsEntry: mocks.clickMomentsEntry || (async () => true),
         clickMarketingPoint: mocks.clickMarketingPoint || (async () => true),
+        closeMomentsWindow: mocks.closeMomentsWindow || (async () => true),
         pasteMarketingComment: mocks.pasteMarketingComment || (async () => true)
       }
     }
@@ -2089,6 +2090,67 @@ async function testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike() {
   assert.ok(clicked[1].point.y >= 265 && clicked[1].point.y <= 285)
 }
 
+async function testMarketingLikeClosesMomentsWindowAfterSuccess() {
+  const events = []
+  let captureCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-close-after-like-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'moments-window-ellipsis' : 'menu-open'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-close-after-like', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => {
+      events.push('enter-moments')
+      return true
+    },
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: '关闭测试客户',
+          content: '点赞成功后关闭朋友圈窗口',
+          verticalRange: { y: 120, h: 220 },
+          suitableForLike: true,
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async () => {
+      events.push(events.includes('click-like-menu') ? 'click-like-confirm' : 'click-like-menu')
+      return true
+    },
+    closeMomentsWindow: async (window) => {
+      events.push(`close-moments:${window.hwnd}`)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.performed, true)
+  assert.deepEqual(events.slice(-3), ['click-like-menu', 'click-like-confirm', 'close-moments:200'])
+}
+
 async function testMarketingLikeAllowsMenuPointBesidePostBounds() {
   const clicked = []
   let captureCount = 0
@@ -2372,6 +2434,7 @@ async function testMarketingLikeSkipsWhenMomentsWindowIsNotFound() {
 
 async function testMarketingLikeSkipsWhenLikeMenuIsNotConfirmed() {
   const clicked = []
+  const closed = []
   let captureCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
     nativeImage: createMarketingMenuNativeImageMock(),
@@ -2405,6 +2468,10 @@ async function testMarketingLikeSkipsWhenLikeMenuIsNotConfirmed() {
       clicked.push({ hwnd: window.hwnd, point })
       return true
     },
+    closeMomentsWindow: async (window) => {
+      closed.push(window.hwnd)
+      return true
+    },
     pasteAndSendText: async () => true
   })
   const driver = new WeChatNativeDriver()
@@ -2423,6 +2490,7 @@ async function testMarketingLikeSkipsWhenLikeMenuIsNotConfirmed() {
   assert.equal(result.skipped, true)
   assert.equal(result.error, 'like_menu_not_confirmed')
   assert.equal(clicked.length, 1)
+  assert.deepEqual(closed, [])
 }
 
 async function testMarketingLikeSkipsWhenLocalMenuPointIsNotFound() {
@@ -2634,6 +2702,7 @@ await testEllipsizedSelfReplyMisreadAsCustomerIsNotReported()
 await testMarketingLikeIsSkippedDuringActiveReplySession()
 await testMarketingLikeEntersMomentsBeforeRecognition()
 await testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike()
+await testMarketingLikeClosesMomentsWindowAfterSuccess()
 await testMarketingLikeAllowsMenuPointBesidePostBounds()
 await testMarketingLikeUsesLocalMenuPointWithoutModelCoordinates()
 await testMarketingLikePrefersBlueActionButtonOverArticleEllipsis()

@@ -15,6 +15,7 @@ type BackendAction =
   | 'returnFromNestedConversation'
   | 'clickMomentsEntry'
   | 'clickMarketingPoint'
+  | 'closeMomentsWindow'
   | 'pasteMarketingComment'
 
 const runWithFallback = async (
@@ -94,6 +95,14 @@ export const createInputBackend = (rawOptions: InputBackendOptions): WeChatInput
         options,
         () => options.nativeBackend.clickMarketingPoint(bounds, point),
         () => options.fallbackBackend.clickMarketingPoint(bounds, point)
+      )
+    },
+    closeMomentsWindow(bounds: WindowBounds): Promise<boolean> {
+      return runWithFallback(
+        'closeMomentsWindow',
+        options,
+        () => options.nativeBackend.closeMomentsWindow(bounds),
+        () => options.fallbackBackend.closeMomentsWindow(bounds)
       )
     },
     pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {

@@ -14,4 +14,5 @@ export const exitConversationToList = inputBackend.exitConversationToList
 export const returnFromNestedConversation = inputBackend.returnFromNestedConversation
 export const clickMomentsEntry = inputBackend.clickMomentsEntry
 export const clickMarketingPoint = inputBackend.clickMarketingPoint
+export const closeMomentsWindow = inputBackend.closeMomentsWindow
 export const pasteMarketingComment = inputBackend.pasteMarketingComment
