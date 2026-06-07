@@ -22,6 +22,7 @@ import type {
   ParsedWeChatSnapshot,
   UnreadConversationCandidate,
   WeChatChannel,
+  MarketingLikeMenuAction,
   WeChatMessageBounds,
   WeChatMessageType,
   WeChatScreenshot,
@@ -675,6 +676,9 @@ export class WeChatNativeDriver {
         }
         const likeResult = await this.clickMarketingLikeThroughMenu(momentsWindow, candidate, menuPoint)
         if (!likeResult.ok) {
+          if (likeResult.error === 'like_menu_is_unlike' || likeResult.error === 'like_menu_action_unconfirmed') {
+            await this.closeMomentsWindowAfterUnsafeLikeMenu(momentsWindow, likeResult.error, candidate.author)
+          }
           return this.skipMarketingAction(likeResult.error || 'click_failed', '朋友圈点赞菜单确认或点击失败', candidate.author)
         }
       } else {
@@ -785,6 +789,36 @@ export class WeChatNativeDriver {
         author,
         hwnd: window.hwnd,
         error
+      })
+    }
+  }
+
+  private async closeMomentsWindowAfterUnsafeLikeMenu(
+    window: WindowBounds,
+    error: string,
+    author: string
+  ): Promise<void> {
+    try {
+      const closed = await closeMomentsWindow(window)
+      if (!closed) {
+        console.warn('个人微信朋友圈点赞菜单不安全，关闭朋友圈窗口失败', {
+          error,
+          author,
+          hwnd: window.hwnd
+        })
+        return
+      }
+      console.info('个人微信朋友圈点赞菜单不安全，已关闭朋友圈窗口避免误触', {
+        error,
+        author,
+        hwnd: window.hwnd
+      })
+    } catch (closeError) {
+      console.warn('个人微信朋友圈点赞菜单不安全，关闭朋友圈窗口异常', {
+        error,
+        author,
+        hwnd: window.hwnd,
+        closeError
       })
     }
   }
@@ -1144,11 +1178,91 @@ export class WeChatNativeDriver {
       })
       return { ok: false, error: 'like_menu_not_confirmed', menuPoint }
     }
+    const menuAction = await this.confirmOpenedMarketingLikeMenuAction(window, candidate, menuScreenshot)
+    if (menuAction !== 'like') {
+      console.warn('个人微信朋友圈点赞菜单动作不是明确的赞，已跳过避免取消点赞', {
+        author: candidate.author,
+        menuAction,
+        menuPoint,
+        confirmPoint
+      })
+      return {
+        ok: false,
+        error: menuAction === 'unlike' ? 'like_menu_is_unlike' : 'like_menu_action_unconfirmed',
+        menuPoint,
+        confirmPoint
+      }
+    }
     const confirmed = await clickMarketingPoint(window, confirmPoint)
     if (!confirmed) {
       return { ok: false, error: 'like_confirm_click_failed', menuPoint, confirmPoint }
     }
     return { ok: true, menuPoint, confirmPoint }
+  }
+
+  private async confirmOpenedMarketingLikeMenuAction(
+    window: WindowBounds,
+    candidate: MarketingMomentCandidate,
+    menuScreenshot: WeChatScreenshot
+  ): Promise<MarketingLikeMenuAction> {
+    try {
+      const recognition = await recognizeMarketingMomentsWithVision(
+        menuScreenshot.dataUrl,
+        window,
+        this.lastSnapshotDigest,
+        this.runtimeConfig
+      )
+      const menuAction = this.resolveOpenedMarketingLikeMenuAction(candidate, recognition.moments)
+      console.info('个人微信朋友圈点赞菜单动作二次识别完成', {
+        author: candidate.author,
+        menuAction,
+        candidateCount: recognition.moments.length
+      })
+      return menuAction
+    } catch (error) {
+      console.warn('个人微信朋友圈点赞菜单动作二次识别异常，已按不安全处理', {
+        author: candidate.author,
+        error
+      })
+      return 'unknown'
+    }
+  }
+
+  private resolveOpenedMarketingLikeMenuAction(
+    candidate: MarketingMomentCandidate,
+    moments: MarketingMomentCandidate[]
+  ): MarketingLikeMenuAction {
+    if (!Array.isArray(moments) || moments.length === 0) {
+      return 'unknown'
+    }
+    const matched = moments
+      .map((moment) => ({
+        moment,
+        score: this.getMarketingMomentMatchScore(candidate, moment)
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)[0]?.moment || moments[0]
+    if (matched.alreadyLiked === true || matched.likeMenuAction === 'unlike') {
+      return 'unlike'
+    }
+    if (matched.likeMenuAction === 'like') {
+      return 'like'
+    }
+    return 'unknown'
+  }
+
+  private getMarketingMomentMatchScore(left: MarketingMomentCandidate, right: MarketingMomentCandidate): number {
+    let score = 0
+    if (String(left.author || '').trim() && String(left.author || '').trim() === String(right.author || '').trim()) {
+      score += 2
+    }
+    if (String(left.content || '').trim() && String(left.content || '').trim() === String(right.content || '').trim()) {
+      score += 2
+    }
+    if (typeof left.visualIndex === 'number' && left.visualIndex === right.visualIndex) {
+      score += 1
+    }
+    return score
   }
 
   private findMarketingLikeConfirmPoint(screenshot: WeChatScreenshot, menuPoint: MarketingMomentPoint): MarketingMomentPoint | null {

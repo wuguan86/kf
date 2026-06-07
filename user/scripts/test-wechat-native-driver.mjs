@@ -1843,6 +1843,7 @@ async function testMarketingLikeIsSkippedDuringActiveReplySession() {
           content: '今天新品到店',
           postBounds: { x: 180, y: 120, w: 520, h: 180 },
           likePoint: { x: 650, y: 270 },
+          likeMenuAction: 'like',
           confidence: 0.95
         }
       ],
@@ -1903,6 +1904,7 @@ async function testMarketingLikeClicksSafeCandidateAndDedupesPost() {
           content: '今天新品到店',
           postBounds: { x: 180, y: 120, w: 520, h: 180 },
           likePoint: { x: 650, y: 270 },
+          likeMenuAction: 'like',
           confidence: 0.95
         }
       ],
@@ -1983,6 +1985,7 @@ async function testMarketingLikeEntersMomentsBeforeRecognition() {
             content: '进入朋友圈后识别新品动态',
             postBounds: { x: 180, y: 120, w: 520, h: 180 },
             likePoint: { x: 650, y: 270 },
+            likeMenuAction: 'like',
             confidence: 0.95
           }
         ],
@@ -2010,7 +2013,7 @@ async function testMarketingLikeEntersMomentsBeforeRecognition() {
   assert.equal(result.ok, true)
   assert.equal(result.performed, true)
   assert.deepEqual(events.slice(0, 2), ['enter-moments', 'recognize-moments'])
-  assert.deepEqual(events.slice(2), ['click-like-menu', 'click-like-confirm'])
+  assert.deepEqual(events.slice(2), ['click-like-menu', 'recognize-moments', 'click-like-confirm'])
 }
 
 async function testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike() {
@@ -2055,6 +2058,7 @@ async function testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike() {
             content: '今天新品到店',
             postBounds: { x: 140, y: 120, w: 520, h: 220 },
             likePoint: { x: 600, y: 275 },
+            likeMenuAction: 'like',
             confidence: 0.95
           }
         ],
@@ -2083,6 +2087,8 @@ async function testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike() {
   assert.equal(result.ok, true)
   assert.equal(result.performed, true)
   assert.deepEqual(events.slice(0, 4), ['enter-moments', 'find-moments:100', 'capture:200:1', 'recognize:200'])
+  assert.ok(events.includes('capture:200:2'))
+  assert.equal(events.filter((event) => event === 'recognize:200').length, 2)
   assert.equal(clicked.length, 2)
   assert.deepEqual(clicked[0], { hwnd: 200, point: { x: 600, y: 275 } })
   assert.equal(clicked[1].hwnd, 200)
@@ -2121,6 +2127,7 @@ async function testMarketingLikeClosesMomentsWindowAfterSuccess() {
           content: '点赞成功后关闭朋友圈窗口',
           verticalRange: { y: 120, h: 220 },
           suitableForLike: true,
+          likeMenuAction: 'like',
           confidence: 0.95
         }
       ],
@@ -2201,6 +2208,7 @@ async function testMarketingLikeSkipsAlreadyLikedCandidateAndUsesNextMoment() {
           author: '待点赞客户',
           content: '这条还没点赞',
           alreadyLiked: false,
+          likeMenuAction: 'like',
           visualIndex: 0,
           verticalRange: { y: 120, h: 180 },
           suitableForLike: true,
@@ -2233,6 +2241,91 @@ async function testMarketingLikeSkipsAlreadyLikedCandidateAndUsesNextMoment() {
   assert.equal(clicked.length, 2)
 }
 
+async function testMarketingLikeSkipsWhenOpenedMenuIsUnlikeAction() {
+  const clicked = []
+  const closed = []
+  let captureCount = 0
+  let recognizeCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-menu-unlike-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'moments-window-ellipsis' : 'menu-open'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-menu-unlike', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => {
+      recognizeCount += 1
+      if (recognizeCount === 1) {
+        return {
+          moments: [
+            {
+              author: '已点赞客户',
+              content: '打开菜单后才发现是取消',
+              alreadyLiked: false,
+              visualIndex: 0,
+              verticalRange: { y: 120, h: 180 },
+              suitableForLike: true,
+              confidence: 0.95
+            }
+          ],
+          confidence: 0.95
+        }
+      }
+      return {
+        moments: [
+          {
+            author: '已点赞客户',
+            content: '打开菜单后才发现是取消',
+            alreadyLiked: true,
+            likeMenuAction: 'unlike',
+            visualIndex: 0,
+            verticalRange: { y: 120, h: 180 },
+            suitableForLike: true,
+            confidence: 0.95
+          }
+        ],
+        confidence: 0.95
+      }
+    },
+    clickMarketingPoint: async (window, point) => {
+      clicked.push({ hwnd: window.hwnd, point })
+      return true
+    },
+    closeMomentsWindow: async (window) => {
+      closed.push(window.hwnd)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.equal(result.error, 'like_menu_is_unlike')
+  assert.equal(clicked.length, 1)
+  assert.equal(recognizeCount, 2)
+  assert.deepEqual(closed, [200])
+}
+
 async function testMarketingLikeAllowsMenuPointBesidePostBounds() {
   const clicked = []
   let captureCount = 0
@@ -2259,6 +2352,7 @@ async function testMarketingLikeAllowsMenuPointBesidePostBounds() {
           content: '右侧菜单点位测试',
           postBounds: { x: 140, y: 120, w: 360, h: 220 },
           likePoint: { x: 600, y: 275 },
+          likeMenuAction: 'like',
           confidence: 0.95
         }
       ],
@@ -2314,6 +2408,7 @@ async function testMarketingLikeUsesLocalMenuPointWithoutModelCoordinates() {
           content: '本地菜单定位测试',
           verticalRange: { y: 120, h: 260 },
           suitableForLike: true,
+          likeMenuAction: 'like',
           confidence: 0.95
         }
       ],
@@ -2371,6 +2466,7 @@ async function testMarketingLikePrefersBlueActionButtonOverArticleEllipsis() {
           content: '姣曟槉娲诲瓧鍗板埛',
           verticalRange: { y: 386, h: 146 },
           suitableForLike: true,
+          likeMenuAction: 'like',
           confidence: 0.95
         }
       ],
@@ -2436,6 +2532,7 @@ async function testMarketingLikeUsesRightEdgeBlueButtonInNarrowMomentsWindow() {
           content: '毕昇活字印刷领先西方四百年',
           verticalRange: { y: 386, h: 190 },
           suitableForLike: true,
+          likeMenuAction: 'like',
           confidence: 0.95
         }
       ],
@@ -2786,6 +2883,7 @@ await testMarketingLikeEntersMomentsBeforeRecognition()
 await testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike()
 await testMarketingLikeClosesMomentsWindowAfterSuccess()
 await testMarketingLikeSkipsAlreadyLikedCandidateAndUsesNextMoment()
+await testMarketingLikeSkipsWhenOpenedMenuIsUnlikeAction()
 await testMarketingLikeAllowsMenuPointBesidePostBounds()
 await testMarketingLikeUsesLocalMenuPointWithoutModelCoordinates()
 await testMarketingLikePrefersBlueActionButtonOverArticleEllipsis()

@@ -21,12 +21,15 @@ export type MarketingMomentVerticalRange = {
   h: number
 }
 
+export type MarketingLikeMenuAction = 'like' | 'unlike' | 'unknown'
+
 export type MarketingMomentCandidate = {
   author: string
   content: string
   visualIndex?: number | null
   suitableForLike?: boolean | null
   alreadyLiked?: boolean | null
+  likeMenuAction?: MarketingLikeMenuAction | null
   verticalRange?: MarketingMomentVerticalRange
   postBounds?: WeChatMessageBounds
   likePoint?: MarketingMomentPoint

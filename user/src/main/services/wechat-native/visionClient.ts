@@ -184,6 +184,7 @@ const normalizeMarketingMoments = (value: unknown): MarketingMomentCandidate[] =
         visualIndex: normalizeVisualIndex(raw.visualIndex ?? raw.index ?? raw.order),
         suitableForLike: typeof raw.suitableForLike === 'boolean' ? raw.suitableForLike : null,
         alreadyLiked: typeof raw.alreadyLiked === 'boolean' ? raw.alreadyLiked : null,
+        likeMenuAction: normalizeMarketingLikeMenuAction(raw.likeMenuAction),
         verticalRange: normalizeVerticalRange(raw.verticalRange),
         postBounds: normalizeBounds(raw.postBounds || raw.bounds),
         likePoint: normalizePoint(raw.likePoint),
@@ -192,6 +193,23 @@ const normalizeMarketingMoments = (value: unknown): MarketingMomentCandidate[] =
       }
     })
     .filter((item): item is MarketingMomentCandidate => !!item)
+}
+
+const normalizeMarketingLikeMenuAction = (value: unknown): 'like' | 'unlike' | 'unknown' | null => {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) {
+    return null
+  }
+  if (normalized === 'like' || normalized === '赞') {
+    return 'like'
+  }
+  if (normalized === 'unlike' || normalized === 'cancel' || normalized === '取消' || normalized === '取消赞') {
+    return 'unlike'
+  }
+  if (normalized === 'unknown') {
+    return 'unknown'
+  }
+  return null
 }
 
 const normalizeVisualIndex = (value: unknown): number | null => {

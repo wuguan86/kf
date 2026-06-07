@@ -246,6 +246,7 @@ public class WechatVisionService {
           parseMarketingVisualIndex(node),
           node.path("suitableForLike").isBoolean() ? node.path("suitableForLike").asBoolean() : null,
           node.path("alreadyLiked").isBoolean() ? node.path("alreadyLiked").asBoolean() : null,
+          normalizeMarketingLikeMenuAction(node.path("likeMenuAction")),
           parseMarketingVerticalRange(node.path("verticalRange")),
           parseBounds(node.has("postBounds") ? node.path("postBounds") : node.path("bounds")),
           parseMarketingPoint(node.path("likePoint")),
@@ -268,6 +269,24 @@ public class WechatVisionService {
     }
     int index = indexNode.asInt();
     return index >= 0 ? index : null;
+  }
+
+  private String normalizeMarketingLikeMenuAction(JsonNode node) {
+    String normalized = text(node).trim().toLowerCase(Locale.ROOT);
+    if (!StringUtils.hasText(normalized)) {
+      return null;
+    }
+    if ("like".equals(normalized) || "赞".equals(normalized)) {
+      return "like";
+    }
+    if ("unlike".equals(normalized) || "cancel".equals(normalized)
+        || "取消".equals(normalized) || "取消赞".equals(normalized)) {
+      return "unlike";
+    }
+    if ("unknown".equals(normalized)) {
+      return "unknown";
+    }
+    return null;
   }
 
   private WechatMarketingVerticalRange parseMarketingVerticalRange(JsonNode node) {
@@ -355,10 +374,11 @@ public class WechatVisionService {
         - changed 固定返回 true。
         如果场景是 MARKETING_MOMENTS 或截图是朋友圈：
         - messages 返回空数组，重点输出 moments 数组。
-        - moments 每项字段固定为 author、content、visualIndex、suitableForLike、alreadyLiked、verticalRange、postBounds、likePoint、commentPoint、confidence。
+        - moments 每项字段固定为 author、content、visualIndex、suitableForLike、alreadyLiked、likeMenuAction、verticalRange、postBounds、likePoint、commentPoint、confidence。
         - 只识别当前截图真实可见的朋友圈动态，不要推测屏幕外动态，不要补全看不清的昵称或内容。
         - visualIndex 必须按当前截图内动态从上到下排序，从 0 开始；suitableForLike 表示这条动态语义上是否适合点赞。
         - alreadyLiked 表示当前账号是否已经赞过这条动态；如果动态下方已有当前账号点赞痕迹，或该动态的点赞菜单会变成“取消/取消赞”，必须返回 true，客户端会跳过，不能再次点击。
+        - 如果截图里已经打开某条动态右侧“...”菜单，必须识别菜单左侧点赞动作：显示“赞”时 likeMenuAction=like，显示“取消”或“取消赞”时 likeMenuAction=unlike，看不清或菜单未打开时 likeMenuAction=unknown。
         - verticalRange 只描述该动态在当前截图内的粗略垂直范围，字段为 y、h；它只用于本地匹配，不是点击坐标。
         - postBounds、likePoint、commentPoint 是兼容旧版本的可选字段；点赞坐标由客户端本地识别“...”菜单，不要为了补全字段而猜测坐标。
         - 如果没有把握、动态不完整、语义不适合点赞、按钮被遮挡或不在朋友圈页面，moments 返回空数组或降低 confidence。
