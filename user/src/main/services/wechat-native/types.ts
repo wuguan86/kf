@@ -26,6 +26,7 @@ export type MarketingMomentCandidate = {
   content: string
   visualIndex?: number | null
   suitableForLike?: boolean | null
+  alreadyLiked?: boolean | null
   verticalRange?: MarketingMomentVerticalRange
   postBounds?: WeChatMessageBounds
   likePoint?: MarketingMomentPoint

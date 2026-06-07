@@ -86,6 +86,8 @@ const MARKETING_BLUE_MENU_COMPONENT_MIN_HEIGHT_PX = 16
 const MARKETING_BLUE_MENU_COMPONENT_MAX_WIDTH_PX = 80
 const MARKETING_BLUE_MENU_COMPONENT_MAX_HEIGHT_PX = 70
 const MARKETING_BLUE_MENU_DOT_MIN_PIXELS = 8
+const MARKETING_CLOSE_AFTER_SUCCESS_MIN_DELAY_MS = 1200
+const MARKETING_CLOSE_AFTER_SUCCESS_MAX_DELAY_MS = 2000
 
 const wait = (milliseconds: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -754,6 +756,15 @@ export class WeChatNativeDriver {
     author: string
   ): Promise<void> {
     try {
+      const delayMs = MARKETING_CLOSE_AFTER_SUCCESS_MIN_DELAY_MS +
+        Math.floor(Math.random() * (MARKETING_CLOSE_AFTER_SUCCESS_MAX_DELAY_MS - MARKETING_CLOSE_AFTER_SUCCESS_MIN_DELAY_MS + 1))
+      console.info('个人微信朋友圈互动成功，准备延迟关闭朋友圈窗口', {
+        action,
+        author,
+        hwnd: window.hwnd,
+        delayMs
+      })
+      await wait(delayMs)
       const closed = await closeMomentsWindow(window)
       if (!closed) {
         console.warn('个人微信朋友圈互动成功后关闭朋友圈窗口失败', {
@@ -1231,6 +1242,9 @@ export class WeChatNativeDriver {
       return 'vision_low_confidence'
     }
     if (action === 'like') {
+      if (candidate.alreadyLiked === true) {
+        return 'already_liked'
+      }
       if (candidate.suitableForLike === false) {
         return 'like_not_suitable'
       }
@@ -1291,6 +1305,7 @@ export class WeChatNativeDriver {
       error,
       author: candidate.author,
       confidence: candidate.confidence,
+      alreadyLiked: candidate.alreadyLiked,
       postBounds: candidate.postBounds,
       likePoint: candidate.likePoint,
       commentPoint: candidate.commentPoint,

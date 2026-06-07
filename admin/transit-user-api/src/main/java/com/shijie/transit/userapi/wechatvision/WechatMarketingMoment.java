@@ -5,6 +5,7 @@ public record WechatMarketingMoment(
     String content,
     Integer visualIndex,
     Boolean suitableForLike,
+    Boolean alreadyLiked,
     WechatMarketingVerticalRange verticalRange,
     WechatVisionBounds postBounds,
     WechatMarketingPoint likePoint,

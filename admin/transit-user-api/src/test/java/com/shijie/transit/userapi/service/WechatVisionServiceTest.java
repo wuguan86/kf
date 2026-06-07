@@ -312,12 +312,14 @@ class WechatVisionServiceTest {
     MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
     server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
         .andExpect(content().string(Matchers.containsString("MARKETING_MOMENTS")))
+        .andExpect(content().string(Matchers.containsString("alreadyLiked")))
+        .andExpect(content().string(Matchers.containsString("客户端会跳过")))
         .andRespond(withSuccess("""
             {
               "choices": [
                 {
                   "message": {
-                    "content": "{\\"contact\\":\\"Moments\\",\\"messages\\":[],\\"moments\\":[{\\"author\\":\\"Alice\\",\\"content\\":\\"new product\\",\\"visualIndex\\":1,\\"suitableForLike\\":true,\\"verticalRange\\":{\\"y\\":120,\\"h\\":180},\\"confidence\\":0.93}],\\"changed\\":true,\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.9}"
+                    "content": "{\\"contact\\":\\"Moments\\",\\"messages\\":[],\\"moments\\":[{\\"author\\":\\"Alice\\",\\"content\\":\\"new product\\",\\"visualIndex\\":1,\\"suitableForLike\\":true,\\"alreadyLiked\\":true,\\"verticalRange\\":{\\"y\\":120,\\"h\\":180},\\"confidence\\":0.93}],\\"changed\\":true,\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.9}"
                   }
                 }
               ]
@@ -337,6 +339,7 @@ class WechatVisionServiceTest {
     assertEquals("new product", response.moments().get(0).content());
     assertEquals(1, response.moments().get(0).visualIndex());
     assertEquals(true, response.moments().get(0).suitableForLike());
+    assertEquals(true, response.moments().get(0).alreadyLiked());
     assertEquals(120D, response.moments().get(0).verticalRange().y());
     assertEquals(180D, response.moments().get(0).verticalRange().h());
     assertEquals(0.93D, response.moments().get(0).confidence());

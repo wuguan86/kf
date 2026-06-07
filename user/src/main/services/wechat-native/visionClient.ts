@@ -183,6 +183,7 @@ const normalizeMarketingMoments = (value: unknown): MarketingMomentCandidate[] =
         content,
         visualIndex: normalizeVisualIndex(raw.visualIndex ?? raw.index ?? raw.order),
         suitableForLike: typeof raw.suitableForLike === 'boolean' ? raw.suitableForLike : null,
+        alreadyLiked: typeof raw.alreadyLiked === 'boolean' ? raw.alreadyLiked : null,
         verticalRange: normalizeVerticalRange(raw.verticalRange),
         postBounds: normalizeBounds(raw.postBounds || raw.bounds),
         likePoint: normalizePoint(raw.likePoint),

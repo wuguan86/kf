@@ -2092,6 +2092,8 @@ async function testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike() {
 
 async function testMarketingLikeClosesMomentsWindowAfterSuccess() {
   const events = []
+  const delayEvents = []
+  const originalSetTimeout = globalThis.setTimeout
   let captureCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
     nativeImage: createMarketingMenuNativeImageMock(),
@@ -2136,6 +2138,85 @@ async function testMarketingLikeClosesMomentsWindowAfterSuccess() {
   })
   const driver = new WeChatNativeDriver()
 
+  globalThis.setTimeout = (callback, milliseconds, ...args) => {
+    delayEvents.push({ milliseconds, lastEvent: events.at(-1) || '' })
+    return originalSetTimeout(callback, 0, ...args)
+  }
+  let result
+  try {
+    await driver.start()
+    result = await driver.command({
+      action: 'marketing_like',
+      config: {
+        enabled: true,
+        maxDailyLikesPerFriend: 5,
+        maxDailyTotalLikes: 100
+      }
+    })
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+  }
+
+  assert.equal(result.ok, true)
+  assert.equal(result.performed, true)
+  assert.deepEqual(events.slice(-3), ['click-like-menu', 'click-like-confirm', 'close-moments:200'])
+  assert.ok(delayEvents.some((item) =>
+    item.lastEvent === 'click-like-confirm' &&
+    item.milliseconds >= 1200 &&
+    item.milliseconds <= 2000
+  ))
+}
+
+async function testMarketingLikeSkipsAlreadyLikedCandidateAndUsesNextMoment() {
+  const clicked = []
+  let captureCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-skip-liked-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'moments-window-ellipsis' : 'menu-open'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-skip-liked', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: '已点赞客户',
+          content: '这条已经点过赞',
+          alreadyLiked: true,
+          visualIndex: 0,
+          verticalRange: { y: 120, h: 180 },
+          suitableForLike: true,
+          confidence: 0.95
+        },
+        {
+          author: '待点赞客户',
+          content: '这条还没点赞',
+          alreadyLiked: false,
+          visualIndex: 0,
+          verticalRange: { y: 120, h: 180 },
+          suitableForLike: true,
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (window, point) => {
+      clicked.push({ hwnd: window.hwnd, point })
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
   await driver.start()
   const result = await driver.command({
     action: 'marketing_like',
@@ -2148,7 +2229,8 @@ async function testMarketingLikeClosesMomentsWindowAfterSuccess() {
 
   assert.equal(result.ok, true)
   assert.equal(result.performed, true)
-  assert.deepEqual(events.slice(-3), ['click-like-menu', 'click-like-confirm', 'close-moments:200'])
+  assert.equal(result.author, '待点赞客户')
+  assert.equal(clicked.length, 2)
 }
 
 async function testMarketingLikeAllowsMenuPointBesidePostBounds() {
@@ -2703,6 +2785,7 @@ await testMarketingLikeIsSkippedDuringActiveReplySession()
 await testMarketingLikeEntersMomentsBeforeRecognition()
 await testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike()
 await testMarketingLikeClosesMomentsWindowAfterSuccess()
+await testMarketingLikeSkipsAlreadyLikedCandidateAndUsesNextMoment()
 await testMarketingLikeAllowsMenuPointBesidePostBounds()
 await testMarketingLikeUsesLocalMenuPointWithoutModelCoordinates()
 await testMarketingLikePrefersBlueActionButtonOverArticleEllipsis()
