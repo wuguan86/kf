@@ -26,6 +26,7 @@ export type MarketingLikeMenuAction = 'like' | 'unlike' | 'unknown'
 export type MarketingMomentCandidate = {
   author: string
   content: string
+  timeText?: string | null
   visualIndex?: number | null
   suitableForLike?: boolean | null
   alreadyLiked?: boolean | null
@@ -34,6 +35,7 @@ export type MarketingMomentCandidate = {
   postBounds?: WeChatMessageBounds
   likePoint?: MarketingMomentPoint
   commentPoint?: MarketingMomentPoint
+  localVisualDigest?: string | null
   confidence?: number | null
 }
 

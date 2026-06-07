@@ -314,13 +314,14 @@ class WechatVisionServiceTest {
         .andExpect(content().string(Matchers.containsString("MARKETING_MOMENTS")))
         .andExpect(content().string(Matchers.containsString("alreadyLiked")))
         .andExpect(content().string(Matchers.containsString("likeMenuAction")))
-        .andExpect(content().string(Matchers.containsString("客户端会跳过")))
+        .andExpect(content().string(Matchers.containsString("timeText")))
+        .andExpect(content().string(Matchers.containsString("本地像素判断")))
         .andRespond(withSuccess("""
             {
               "choices": [
                 {
                   "message": {
-                    "content": "{\\"contact\\":\\"Moments\\",\\"messages\\":[],\\"moments\\":[{\\"author\\":\\"Alice\\",\\"content\\":\\"new product\\",\\"visualIndex\\":1,\\"suitableForLike\\":true,\\"alreadyLiked\\":true,\\"likeMenuAction\\":\\"unlike\\",\\"verticalRange\\":{\\"y\\":120,\\"h\\":180},\\"confidence\\":0.93}],\\"changed\\":true,\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.9}"
+                    "content": "{\\"contact\\":\\"Moments\\",\\"messages\\":[],\\"moments\\":[{\\"author\\":\\"Alice\\",\\"content\\":\\"new product\\",\\"timeText\\":\\"2小时前\\",\\"visualIndex\\":1,\\"suitableForLike\\":true,\\"alreadyLiked\\":true,\\"likeMenuAction\\":\\"unlike\\",\\"verticalRange\\":{\\"y\\":120,\\"h\\":180},\\"confidence\\":0.93}],\\"changed\\":true,\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.9}"
                   }
                 }
               ]
@@ -338,6 +339,7 @@ class WechatVisionServiceTest {
     assertEquals(1, response.moments().size());
     assertEquals("Alice", response.moments().get(0).author());
     assertEquals("new product", response.moments().get(0).content());
+    assertEquals("2小时前", response.moments().get(0).timeText());
     assertEquals(1, response.moments().get(0).visualIndex());
     assertEquals(true, response.moments().get(0).suitableForLike());
     assertEquals(true, response.moments().get(0).alreadyLiked());

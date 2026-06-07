@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -13,6 +14,33 @@ rmSync(testUserDataPath, { recursive: true, force: true })
 function writeRepliedMessageStore(store) {
   mkdirSync(testUserDataPath, { recursive: true })
   writeFileSync(resolve(testUserDataPath, 'wechat-native-replied-messages.json'), `${JSON.stringify(store, null, 2)}\n`, 'utf8')
+}
+
+function writeMarketingActionStore(store) {
+  mkdirSync(testUserDataPath, { recursive: true })
+  writeFileSync(resolve(testUserDataPath, 'wechat-native-marketing-actions.json'), `${JSON.stringify(store, null, 2)}\n`, 'utf8')
+}
+
+function clearMarketingActionStore() {
+  rmSync(resolve(testUserDataPath, 'wechat-native-marketing-actions.json'), { force: true })
+}
+
+function getMarketingDateKey() {
+  const now = new Date()
+  const month = `${now.getMonth() + 1}`.padStart(2, '0')
+  const day = `${now.getDate()}`.padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
+}
+
+function buildLegacyMarketingPostFingerprint(author, content, bounds) {
+  return createHash('sha256')
+    .update([
+      String(author || '').trim(),
+      String(content || '').replace(/\s+/g, ' ').trim(),
+      `${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.w)}:${Math.round(bounds.h)}`
+    ].join('|'))
+    .digest('hex')
+    .slice(0, 24)
 }
 
 function createDeferred() {
@@ -159,6 +187,30 @@ function createMarketingMenuNativeImageMock() {
           }
         }
       }
+      if (marker.includes('two-dot-primary-with-three-dot-fallback')) {
+        for (const centerX of [492, 500, 508]) {
+          for (let y = 272; y <= 278; y++) {
+            for (let x = centerX - 3; x <= centerX + 3; x++) {
+              const offset = (y * width + x) * 4
+              bitmap[offset] = 42
+              bitmap[offset + 1] = 42
+              bitmap[offset + 2] = 42
+              bitmap[offset + 3] = 255
+            }
+          }
+        }
+        for (const centerX of [650, 658]) {
+          for (let y = 272; y <= 278; y++) {
+            for (let x = centerX - 3; x <= centerX + 3; x++) {
+              const offset = (y * width + x) * 4
+              bitmap[offset] = 42
+              bitmap[offset + 1] = 42
+              bitmap[offset + 2] = 42
+              bitmap[offset + 3] = 255
+            }
+          }
+        }
+      }
       if (marker.includes('article-card-ellipsis')) {
         for (const centerX of [602, 610, 618]) {
           for (let y = 400; y <= 406; y++) {
@@ -202,6 +254,46 @@ function createMarketingMenuNativeImageMock() {
             bitmap[offset + 3] = 255
           }
         }
+        for (let y = 270; y <= 280; y++) {
+          for (let x = 496; x <= 518; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 245
+            bitmap[offset + 1] = 245
+            bitmap[offset + 2] = 245
+            bitmap[offset + 3] = 255
+          }
+        }
+      }
+      if (marker.includes('menu-open-like-local')) {
+        for (let y = 252; y <= 298; y++) {
+          for (let x = 520; x <= 664; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 48
+            bitmap[offset + 1] = 48
+            bitmap[offset + 2] = 48
+            bitmap[offset + 3] = 255
+          }
+        }
+        for (let y = 270; y <= 280; y++) {
+          for (let x = 496; x <= 518; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 245
+            bitmap[offset + 1] = 245
+            bitmap[offset + 2] = 245
+            bitmap[offset + 3] = 255
+          }
+        }
+      }
+      if (marker.includes('menu-open-unlike-local')) {
+        for (let y = 268; y <= 282; y++) {
+          for (let x = 492; x <= 520; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 235
+            bitmap[offset + 1] = 72
+            bitmap[offset + 2] = 72
+            bitmap[offset + 3] = 255
+          }
+        }
       }
       if (marker.includes('menu-open-near-article-button')) {
         for (let y = 444; y <= 486; y++) {
@@ -210,6 +302,15 @@ function createMarketingMenuNativeImageMock() {
             bitmap[offset] = 48
             bitmap[offset + 1] = 48
             bitmap[offset + 2] = 48
+            bitmap[offset + 3] = 255
+          }
+        }
+        for (let y = 458; y <= 468; y++) {
+          for (let x = 696; x <= 720; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 245
+            bitmap[offset + 1] = 245
+            bitmap[offset + 2] = 245
             bitmap[offset + 3] = 255
           }
         }
@@ -260,6 +361,15 @@ function createMarketingMenuNativeImageMock() {
             bitmap[offset] = 48
             bitmap[offset + 1] = 48
             bitmap[offset + 2] = 48
+            bitmap[offset + 3] = 255
+          }
+        }
+        for (let y = 444; y <= 456; y++) {
+          for (let x = 306; x <= 332; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 245
+            bitmap[offset + 1] = 245
+            bitmap[offset + 2] = 245
             bitmap[offset + 3] = 255
           }
         }
@@ -1882,9 +1992,12 @@ async function testMarketingLikeClicksSafeCandidateAndDedupesPost() {
     findWeChatWindow: async () => testWindow,
     captureWeChatWindow: async () => {
       captureCount += 1
+      const isListFrame = captureCount !== 2
       return {
-        dataUrl: `data:image/png;base64=marketing-like-${captureCount}`,
-        png: Buffer.from(captureCount === 2 ? 'menu-open' : 'marketing-like-ellipsis'),
+        dataUrl: isListFrame
+          ? 'data:image/png;base64=marketing-like-list'
+          : 'data:image/png;base64=marketing-like-menu',
+        png: Buffer.from(isListFrame ? 'marketing-like-ellipsis' : 'menu-open'),
         width: 900,
         height: 700
       }
@@ -1946,7 +2059,7 @@ async function testMarketingLikeClicksSafeCandidateAndDedupesPost() {
   assert.ok(clickedPoints[1].point.y >= 265 && clickedPoints[1].point.y <= 285)
   assert.equal(secondResult.ok, true)
   assert.equal(secondResult.skipped, true)
-  assert.equal(secondResult.error, 'duplicate_post')
+  assert.equal(secondResult.error, 'duplicate_local_visual_digest')
 }
 
 async function testMarketingLikeEntersMomentsBeforeRecognition() {
@@ -2013,7 +2126,7 @@ async function testMarketingLikeEntersMomentsBeforeRecognition() {
   assert.equal(result.ok, true)
   assert.equal(result.performed, true)
   assert.deepEqual(events.slice(0, 2), ['enter-moments', 'recognize-moments'])
-  assert.deepEqual(events.slice(2), ['click-like-menu', 'recognize-moments', 'click-like-confirm'])
+  assert.deepEqual(events.slice(2), ['click-like-menu', 'click-like-confirm'])
 }
 
 async function testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike() {
@@ -2088,7 +2201,7 @@ async function testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike() {
   assert.equal(result.performed, true)
   assert.deepEqual(events.slice(0, 4), ['enter-moments', 'find-moments:100', 'capture:200:1', 'recognize:200'])
   assert.ok(events.includes('capture:200:2'))
-  assert.equal(events.filter((event) => event === 'recognize:200').length, 2)
+  assert.equal(events.filter((event) => event === 'recognize:200').length, 1)
   assert.equal(clicked.length, 2)
   assert.deepEqual(clicked[0], { hwnd: 200, point: { x: 600, y: 275 } })
   assert.equal(clicked[1].hwnd, 200)
@@ -2174,7 +2287,7 @@ async function testMarketingLikeClosesMomentsWindowAfterSuccess() {
   ))
 }
 
-async function testMarketingLikeSkipsAlreadyLikedCandidateAndUsesNextMoment() {
+async function testMarketingLikeDoesNotTrustModelAlreadyLikedAsFinalState() {
   const clicked = []
   let captureCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -2237,7 +2350,6 @@ async function testMarketingLikeSkipsAlreadyLikedCandidateAndUsesNextMoment() {
 
   assert.equal(result.ok, true)
   assert.equal(result.performed, true)
-  assert.equal(result.author, '待点赞客户')
   assert.equal(clicked.length, 2)
 }
 
@@ -2254,7 +2366,7 @@ async function testMarketingLikeSkipsWhenOpenedMenuIsUnlikeAction() {
       captureCount += 1
       return {
         dataUrl: `data:image/png;base64=marketing-menu-unlike-${captureCount}`,
-        png: Buffer.from(captureCount === 1 ? 'moments-window-ellipsis' : 'menu-open'),
+        png: Buffer.from(captureCount === 1 ? 'moments-window-ellipsis' : 'menu-open-unlike-local'),
         width: 900,
         height: 700
       }
@@ -2322,7 +2434,7 @@ async function testMarketingLikeSkipsWhenOpenedMenuIsUnlikeAction() {
   assert.equal(result.skipped, true)
   assert.equal(result.error, 'like_menu_is_unlike')
   assert.equal(clicked.length, 1)
-  assert.equal(recognizeCount, 2)
+  assert.equal(recognizeCount, 1)
   assert.deepEqual(closed, [200])
 }
 
@@ -2565,6 +2677,330 @@ async function testMarketingLikeUsesRightEdgeBlueButtonInNarrowMomentsWindow() {
   assert.equal(clicked[1].hwnd, 200)
   assert.ok(clicked[1].point.x >= 300 && clicked[1].point.x <= 340)
   assert.ok(clicked[1].point.y >= 444 && clicked[1].point.y <= 462)
+}
+
+async function testMarketingLikePrefersTwoDotMenuOverThreeDotFallback() {
+  const clicked = []
+  let captureCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-two-dot-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'two-dot-primary-with-three-dot-fallback' : 'menu-open-like-local'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-two-dot', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: 'two-dot-customer',
+          content: 'two dot menu should be primary',
+          verticalRange: { y: 120, h: 220 },
+          suitableForLike: true,
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (window, point) => {
+      clicked.push({ hwnd: window.hwnd, point })
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.performed, true)
+  assert.equal(clicked.length, 2)
+  assert.ok(clicked[0].point.x >= 650 && clicked[0].point.x <= 660)
+  assert.ok(clicked[0].point.y >= 270 && clicked[0].point.y <= 280)
+}
+
+async function testMarketingLikeUsesLocalOpenedMenuStatusWithoutSecondVision() {
+  const clicked = []
+  let captureCount = 0
+  let recognizeCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-local-like-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'marketing-local-like-ellipsis' : 'menu-open-like-local'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-local-like', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => {
+      recognizeCount += 1
+      return {
+        moments: [
+          {
+            author: 'local-like-customer',
+            content: 'local like menu can be confirmed without model',
+            verticalRange: { y: 120, h: 220 },
+            suitableForLike: true,
+            confidence: 0.95
+          }
+        ],
+        confidence: 0.95
+      }
+    },
+    clickMarketingPoint: async (window, point) => {
+      clicked.push({ hwnd: window.hwnd, point })
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.performed, true)
+  assert.equal(recognizeCount, 1)
+  assert.equal(clicked.length, 2)
+}
+
+async function testMarketingLikeSkipsLocalUnlikeMenuWithoutSecondVision() {
+  const clicked = []
+  const closed = []
+  let captureCount = 0
+  let recognizeCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-local-unlike-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'marketing-local-unlike-ellipsis' : 'menu-open-unlike-local'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-local-unlike', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => {
+      recognizeCount += 1
+      return {
+        moments: [
+          {
+            author: 'local-unlike-customer',
+            content: 'local unlike menu must be skipped',
+            verticalRange: { y: 120, h: 220 },
+            suitableForLike: true,
+            confidence: 0.95
+          }
+        ],
+        confidence: 0.95
+      }
+    },
+    clickMarketingPoint: async (window, point) => {
+      clicked.push({ hwnd: window.hwnd, point })
+      return true
+    },
+    closeMomentsWindow: async (window) => {
+      closed.push(window.hwnd)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.equal(result.error, 'like_menu_is_unlike')
+  assert.equal(recognizeCount, 1)
+  assert.equal(clicked.length, 1)
+  assert.deepEqual(closed, [200])
+}
+
+async function testMarketingLikeSkipsRepeatedLocalVisualDigestBeforeVision() {
+  const clicked = []
+  let captureCount = 0
+  let recognizeCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      const isListFrame = captureCount % 2 === 1
+      return {
+        dataUrl: isListFrame
+          ? `data:image/png;base64=marketing-local-digest-repeat-list-${captureCount}`
+          : `data:image/png;base64=marketing-local-digest-repeat-menu-${captureCount}`,
+        png: Buffer.from(isListFrame ? `marketing-local-digest-repeat-ellipsis-${captureCount}` : 'menu-open-like-local'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-local-digest-repeat', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => {
+      recognizeCount += 1
+      return {
+        moments: [
+          {
+            author: 'local-digest-customer',
+            content: 'same local digest should skip before model next time',
+            verticalRange: { y: 120, h: 220 },
+            suitableForLike: true,
+            confidence: 0.95
+          }
+        ],
+        confidence: 0.95
+      }
+    },
+    clickMarketingPoint: async (window, point) => {
+      clicked.push({ hwnd: window.hwnd, point })
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const firstResult = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+  const secondResult = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(firstResult.ok, true)
+  assert.equal(firstResult.performed, true)
+  assert.equal(secondResult.ok, true)
+  assert.equal(secondResult.skipped, true)
+  assert.equal(secondResult.error, 'duplicate_local_visual_digest')
+  assert.equal(recognizeCount, 1)
+  assert.equal(clicked.length, 2)
+}
+
+async function testMarketingLikeReadsLegacyActionRecordFingerprint() {
+  const clicked = []
+  let recognizeCount = 0
+  const legacyBounds = { x: 180, y: 120, w: 520, h: 180 }
+  writeMarketingActionStore({
+    version: 1,
+    records: [
+      {
+        date: getMarketingDateKey(),
+        action: 'like',
+        author: 'legacy-like-customer',
+        postFingerprint: buildLegacyMarketingPostFingerprint('legacy-like-customer', 'legacy local record should still skip', legacyBounds),
+        createdAt: Date.now() - 1000
+      }
+    ]
+  })
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=marketing-legacy-record-list',
+      png: Buffer.from('marketing-legacy-record-ellipsis'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-legacy-record', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => {
+      recognizeCount += 1
+      return {
+        moments: [
+          {
+            author: 'legacy-like-customer',
+            content: 'legacy local record should still skip',
+            postBounds: legacyBounds,
+            verticalRange: { y: 120, h: 180 },
+            suitableForLike: true,
+            confidence: 0.95
+          }
+        ],
+        confidence: 0.95
+      }
+    },
+    clickMarketingPoint: async (window, point) => {
+      clicked.push({ hwnd: window.hwnd, point })
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_like',
+    config: {
+      enabled: true,
+      maxDailyLikesPerFriend: 5,
+      maxDailyTotalLikes: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.equal(result.error, 'duplicate_post')
+  assert.equal(recognizeCount, 1)
+  assert.deepEqual(clicked, [])
 }
 
 async function testMarketingLikeSkipsWhenMomentsWindowIsNotFound() {
@@ -2878,19 +3314,45 @@ await testCustomerImageFollowedBySelfRepliesDoesNotTrigger()
 await testDifferentImageSignatureCanTriggerAfterPreviousImageReply()
 await testRecentlySentSelfReplyMisreadAsCustomerIsNotReported()
 await testEllipsizedSelfReplyMisreadAsCustomerIsNotReported()
+clearMarketingActionStore()
 await testMarketingLikeIsSkippedDuringActiveReplySession()
+clearMarketingActionStore()
 await testMarketingLikeEntersMomentsBeforeRecognition()
+clearMarketingActionStore()
 await testMarketingLikeUsesMomentsWindowAndClicksMenuThenLike()
+clearMarketingActionStore()
 await testMarketingLikeClosesMomentsWindowAfterSuccess()
-await testMarketingLikeSkipsAlreadyLikedCandidateAndUsesNextMoment()
+clearMarketingActionStore()
+await testMarketingLikeDoesNotTrustModelAlreadyLikedAsFinalState()
+clearMarketingActionStore()
 await testMarketingLikeSkipsWhenOpenedMenuIsUnlikeAction()
+clearMarketingActionStore()
 await testMarketingLikeAllowsMenuPointBesidePostBounds()
+clearMarketingActionStore()
 await testMarketingLikeUsesLocalMenuPointWithoutModelCoordinates()
+clearMarketingActionStore()
 await testMarketingLikePrefersBlueActionButtonOverArticleEllipsis()
+clearMarketingActionStore()
 await testMarketingLikeUsesRightEdgeBlueButtonInNarrowMomentsWindow()
+clearMarketingActionStore()
+await testMarketingLikePrefersTwoDotMenuOverThreeDotFallback()
+clearMarketingActionStore()
+await testMarketingLikeUsesLocalOpenedMenuStatusWithoutSecondVision()
+clearMarketingActionStore()
+await testMarketingLikeSkipsLocalUnlikeMenuWithoutSecondVision()
+clearMarketingActionStore()
+await testMarketingLikeSkipsRepeatedLocalVisualDigestBeforeVision()
+clearMarketingActionStore()
+await testMarketingLikeReadsLegacyActionRecordFingerprint()
+clearMarketingActionStore()
 await testMarketingLikeSkipsWhenMomentsWindowIsNotFound()
+clearMarketingActionStore()
 await testMarketingLikeSkipsWhenLikeMenuIsNotConfirmed()
+clearMarketingActionStore()
 await testMarketingLikeSkipsWhenLocalMenuPointIsNotFound()
+clearMarketingActionStore()
 await testMarketingLikeClicksSafeCandidateAndDedupesPost()
+clearMarketingActionStore()
 await testMarketingLikeRejectsLowConfidenceCandidateWithoutClicking()
+clearMarketingActionStore()
 await testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails()

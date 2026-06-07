@@ -80,6 +80,10 @@ const MARKETING_MENU_DOT_MIN_PIXELS = 8
 const MARKETING_MENU_DOT_PAIR_SPACING_PX = 8
 const MARKETING_MENU_DOT_MERGE_X_PX = 18
 const MARKETING_MENU_DOT_MERGE_Y_PX = 10
+const MARKETING_LOCAL_DIGEST_CROP_WIDTH_PX = 280
+const MARKETING_LOCAL_DIGEST_CROP_HEIGHT_PX = 220
+const MARKETING_LOCAL_DIGEST_GRID_SIZE = 8
+const MARKETING_LOCAL_DIGEST_COLOR_BUCKET_SIZE = 32
 const MARKETING_BLUE_MENU_SCAN_START_RATIO = 0.62
 const MARKETING_BLUE_MENU_COMPONENT_MIN_PIXELS = 90
 const MARKETING_BLUE_MENU_COMPONENT_MIN_WIDTH_PX = 18
@@ -87,6 +91,11 @@ const MARKETING_BLUE_MENU_COMPONENT_MIN_HEIGHT_PX = 16
 const MARKETING_BLUE_MENU_COMPONENT_MAX_WIDTH_PX = 80
 const MARKETING_BLUE_MENU_COMPONENT_MAX_HEIGHT_PX = 70
 const MARKETING_BLUE_MENU_DOT_MIN_PIXELS = 8
+const MARKETING_LIKE_STATUS_SCAN_LEFT_PX = 36
+const MARKETING_LIKE_STATUS_SCAN_RIGHT_PX = 36
+const MARKETING_LIKE_STATUS_SCAN_VERTICAL_PX = 22
+const MARKETING_LIKE_STATUS_MIN_RED_PIXELS = 18
+const MARKETING_LIKE_STATUS_MIN_LIGHT_PIXELS = 80
 const MARKETING_CLOSE_AFTER_SUCCESS_MIN_DELAY_MS = 1200
 const MARKETING_CLOSE_AFTER_SUCCESS_MAX_DELAY_MS = 2000
 
@@ -141,6 +150,9 @@ type MarketingActionRecord = {
   action: MarketingActionType
   author: string
   postFingerprint: string
+  timeText?: string
+  localVisualDigest?: string
+  outcome?: 'liked' | 'commented' | 'skipped'
   createdAt: number
 }
 
@@ -159,7 +171,12 @@ type MarketingLikeClickResult = {
 type MarketingMenuPointCandidate = {
   point: MarketingMomentPoint
   score: number
-  source?: 'blue_action_button' | 'dark_ellipsis'
+  source?: 'blue_action_button' | 'dark_two_dot' | 'dark_three_dot'
+}
+
+type MarketingLocalVisualDigest = {
+  point: MarketingMomentPoint
+  digest: string
 }
 
 export class WeChatNativeDriver {
@@ -640,6 +657,11 @@ export class WeChatNativeDriver {
         return this.skipMarketingAction('moments_window_not_found', '未找到朋友圈独立窗口，已跳过本轮互动')
       }
       const screenshot = await captureWeChatWindow(momentsWindow)
+      const localVisualDigests = action === 'like' ? this.buildMarketingLocalVisualDigests(screenshot) : []
+      const localDigestDuplicateError = this.getMarketingLocalVisualDigestDuplicateError(action, localVisualDigests)
+      if (localDigestDuplicateError) {
+        return this.skipMarketingAction(localDigestDuplicateError, '朋友圈动态本地摘要已处理过，已跳过本轮点赞')
+      }
       const recognition = await recognizeMarketingMomentsWithVision(
         screenshot.dataUrl,
         momentsWindow,
@@ -651,8 +673,29 @@ export class WeChatNativeDriver {
         return this.skipMarketingAction(selection.error || 'no_candidate', '没有可安全互动的朋友圈动态')
       }
       const candidate = selection.candidate
+      let menuPoint: MarketingMomentPoint | null = null
+      const point = candidate.commentPoint
+      if (action === 'comment' && !point) {
+        return this.skipMarketingAction('missing_action_point', '朋友圈互动点位缺失', candidate.author)
+      }
+      if (action === 'like') {
+        menuPoint = this.resolveMarketingLikeMenuPoint(screenshot, recognition.moments, selection.candidateIndex, candidate)
+        if (!menuPoint) {
+          return this.skipMarketingAction('like_menu_point_not_found', '未在朋友圈截图内确认到可匹配的点赞菜单入口', candidate.author)
+        }
+        candidate.localVisualDigest = this.resolveMarketingLocalVisualDigest(localVisualDigests, menuPoint)
+      }
+
       const postFingerprint = this.buildMarketingPostFingerprint(candidate)
-      const limitError = this.getMarketingLimitError(action, rawConfig, candidate.author, postFingerprint)
+      const legacyPostFingerprint = this.buildMarketingLegacyPostBoundsFingerprint(candidate)
+      const limitError = this.getMarketingLimitError(
+        action,
+        rawConfig,
+        candidate.author,
+        postFingerprint,
+        candidate.localVisualDigest,
+        legacyPostFingerprint
+      )
       if (limitError) {
         return this.skipMarketingAction(limitError, '朋友圈互动已达到配置上限或已处理过该动态', candidate.author)
       }
@@ -665,15 +708,7 @@ export class WeChatNativeDriver {
         }
       }
 
-      const point = candidate.commentPoint
-      if (action === 'comment' && !point) {
-        return this.skipMarketingAction('missing_action_point', '朋友圈互动点位缺失', candidate.author)
-      }
       if (action === 'like') {
-        const menuPoint = this.resolveMarketingLikeMenuPoint(screenshot, recognition.moments, selection.candidateIndex, candidate)
-        if (!menuPoint) {
-          return this.skipMarketingAction('like_menu_point_not_found', '未在朋友圈截图内确认到可匹配的点赞菜单入口', candidate.author)
-        }
         const likeResult = await this.clickMarketingLikeThroughMenu(momentsWindow, candidate, menuPoint)
         if (!likeResult.ok) {
           if (likeResult.error === 'like_menu_is_unlike' || likeResult.error === 'like_menu_action_unconfirmed') {
@@ -889,6 +924,123 @@ export class WeChatNativeDriver {
     return { y: top, h: bottom - top }
   }
 
+  private buildMarketingLocalVisualDigests(screenshot: WeChatScreenshot): MarketingLocalVisualDigest[] {
+    const menuCandidates = this.findMarketingMenuPointCandidates(screenshot)
+    if (menuCandidates.length === 0) {
+      return []
+    }
+    try {
+      const image = nativeImage.createFromBuffer(screenshot.png)
+      if (!image || image.isEmpty()) {
+        return []
+      }
+      const size = image.getSize()
+      if (!size.width || !size.height || typeof image.toBitmap !== 'function') {
+        return []
+      }
+      const bitmap = image.toBitmap()
+      return menuCandidates
+        .map((candidate) => ({
+          point: candidate.point,
+          digest: this.buildMarketingLocalVisualDigest(bitmap, size.width, size.height, candidate.point)
+        }))
+        .filter((item) => !!item.digest)
+    } catch (error) {
+      console.warn('个人微信朋友圈本地动态摘要生成失败，已跳过本地预拦截', error)
+      return []
+    }
+  }
+
+  private buildMarketingLocalVisualDigest(
+    bitmap: Buffer,
+    imageWidth: number,
+    imageHeight: number,
+    point: MarketingMomentPoint
+  ): string {
+    const left = clampNumber(Math.round(point.x - MARKETING_LOCAL_DIGEST_CROP_WIDTH_PX), 0, Math.max(0, imageWidth - 1))
+    const top = clampNumber(Math.round(point.y - MARKETING_LOCAL_DIGEST_CROP_HEIGHT_PX / 2), 0, Math.max(0, imageHeight - 1))
+    const right = clampNumber(Math.round(point.x + MARKETING_ACTION_POINT_PADDING_PX), left + 1, imageWidth)
+    const bottom = clampNumber(Math.round(point.y + MARKETING_LOCAL_DIGEST_CROP_HEIGHT_PX / 2), top + 1, imageHeight)
+    const cells: string[] = []
+    for (let row = 0; row < MARKETING_LOCAL_DIGEST_GRID_SIZE; row += 1) {
+      for (let col = 0; col < MARKETING_LOCAL_DIGEST_GRID_SIZE; col += 1) {
+        const sampleLeft = Math.floor(left + ((right - left) * col) / MARKETING_LOCAL_DIGEST_GRID_SIZE)
+        const sampleTop = Math.floor(top + ((bottom - top) * row) / MARKETING_LOCAL_DIGEST_GRID_SIZE)
+        const sampleRight = Math.floor(left + ((right - left) * (col + 1)) / MARKETING_LOCAL_DIGEST_GRID_SIZE)
+        const sampleBottom = Math.floor(top + ((bottom - top) * (row + 1)) / MARKETING_LOCAL_DIGEST_GRID_SIZE)
+        cells.push(this.buildMarketingLocalVisualDigestCell(bitmap, imageWidth, sampleLeft, sampleTop, sampleRight, sampleBottom))
+      }
+    }
+    return createHash('sha256')
+      .update(`|${Math.round(point.x)}:${Math.round(point.y)}|${cells.join(',')}`)
+      .digest('hex')
+      .slice(0, 24)
+  }
+
+  private buildMarketingLocalVisualDigestCell(
+    bitmap: Buffer,
+    imageWidth: number,
+    left: number,
+    top: number,
+    right: number,
+    bottom: number
+  ): string {
+    let red = 0
+    let green = 0
+    let blue = 0
+    let count = 0
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const index = (y * imageWidth + x) * 4
+        red += bitmap[index]
+        green += bitmap[index + 1]
+        blue += bitmap[index + 2]
+        count += 1
+      }
+    }
+    if (count <= 0) {
+      return '0-0-0'
+    }
+    return [
+      Math.floor((red / count) / MARKETING_LOCAL_DIGEST_COLOR_BUCKET_SIZE),
+      Math.floor((green / count) / MARKETING_LOCAL_DIGEST_COLOR_BUCKET_SIZE),
+      Math.floor((blue / count) / MARKETING_LOCAL_DIGEST_COLOR_BUCKET_SIZE)
+    ].join('-')
+  }
+
+  private resolveMarketingLocalVisualDigest(
+    digests: MarketingLocalVisualDigest[],
+    menuPoint: MarketingMomentPoint
+  ): string | null {
+    const matched = digests
+      .map((item) => ({
+        item,
+        distance: Math.abs(item.point.x - menuPoint.x) + Math.abs(item.point.y - menuPoint.y)
+      }))
+      .sort((a, b) => a.distance - b.distance)[0]
+    return matched && matched.distance <= MARKETING_MENU_DOT_MERGE_X_PX + MARKETING_MENU_DOT_MERGE_Y_PX
+      ? matched.item.digest
+      : null
+  }
+
+  private getMarketingLocalVisualDigestDuplicateError(
+    action: MarketingActionType,
+    digests: MarketingLocalVisualDigest[]
+  ): string {
+    if (action !== 'like' || digests.length === 0) {
+      return ''
+    }
+    const today = this.getMarketingDateKey()
+    const handledDigests = new Set(this.marketingActionRecords
+      .filter((record) => record.date === today && record.action === 'like' && record.localVisualDigest)
+      .map((record) => String(record.localVisualDigest)))
+    if (handledDigests.size === 0) {
+      return ''
+    }
+    const allVisibleHandled = digests.every((item) => handledDigests.has(item.digest))
+    return allVisibleHandled ? 'duplicate_local_visual_digest' : ''
+  }
+
   private findMarketingMenuPointCandidates(screenshot: WeChatScreenshot): MarketingMenuPointCandidate[] {
     try {
       const image = nativeImage.createFromBuffer(screenshot.png)
@@ -921,7 +1073,7 @@ export class WeChatNativeDriver {
               y
             },
             score: first + second + (hasThirdDot ? third : 0),
-            source: 'dark_ellipsis'
+            source: hasThirdDot ? 'dark_three_dot' : 'dark_two_dot'
           })
         }
       }
@@ -945,7 +1097,13 @@ export class WeChatNativeDriver {
   }
 
   private getMarketingMenuCandidatePriority(candidate: MarketingMenuPointCandidate): number {
-    return candidate.source === 'blue_action_button' ? 0 : 1
+    if (candidate.source === 'blue_action_button') {
+      return 0
+    }
+    if (candidate.source === 'dark_two_dot') {
+      return 1
+    }
+    return 2
   }
 
   private findMarketingBlueActionButtonCandidates(
@@ -1178,7 +1336,7 @@ export class WeChatNativeDriver {
       })
       return { ok: false, error: 'like_menu_not_confirmed', menuPoint }
     }
-    const menuAction = await this.confirmOpenedMarketingLikeMenuAction(window, candidate, menuScreenshot)
+    const menuAction = this.detectOpenedMarketingLikeMenuAction(menuScreenshot, confirmPoint)
     if (menuAction !== 'like') {
       console.warn('个人微信朋友圈点赞菜单动作不是明确的赞，已跳过避免取消点赞', {
         author: candidate.author,
@@ -1200,69 +1358,59 @@ export class WeChatNativeDriver {
     return { ok: true, menuPoint, confirmPoint }
   }
 
-  private async confirmOpenedMarketingLikeMenuAction(
-    window: WindowBounds,
-    candidate: MarketingMomentCandidate,
-    menuScreenshot: WeChatScreenshot
-  ): Promise<MarketingLikeMenuAction> {
-    try {
-      const recognition = await recognizeMarketingMomentsWithVision(
-        menuScreenshot.dataUrl,
-        window,
-        this.lastSnapshotDigest,
-        this.runtimeConfig
-      )
-      const menuAction = this.resolveOpenedMarketingLikeMenuAction(candidate, recognition.moments)
-      console.info('个人微信朋友圈点赞菜单动作二次识别完成', {
-        author: candidate.author,
-        menuAction,
-        candidateCount: recognition.moments.length
-      })
-      return menuAction
-    } catch (error) {
-      console.warn('个人微信朋友圈点赞菜单动作二次识别异常，已按不安全处理', {
-        author: candidate.author,
-        error
-      })
-      return 'unknown'
-    }
-  }
-
-  private resolveOpenedMarketingLikeMenuAction(
-    candidate: MarketingMomentCandidate,
-    moments: MarketingMomentCandidate[]
+  private detectOpenedMarketingLikeMenuAction(
+    screenshot: WeChatScreenshot,
+    confirmPoint: MarketingMomentPoint
   ): MarketingLikeMenuAction {
-    if (!Array.isArray(moments) || moments.length === 0) {
+    try {
+      const image = nativeImage.createFromBuffer(screenshot.png)
+      if (!image || image.isEmpty()) {
+        return 'unknown'
+      }
+      const size = image.getSize()
+      if (!size.width || !size.height || typeof image.toBitmap !== 'function') {
+        return 'unknown'
+      }
+      const bitmap = image.toBitmap()
+      const left = clampNumber(Math.round(confirmPoint.x - MARKETING_LIKE_STATUS_SCAN_LEFT_PX), 0, size.width - 1)
+      const right = clampNumber(Math.round(confirmPoint.x + MARKETING_LIKE_STATUS_SCAN_RIGHT_PX), left, size.width - 1)
+      const top = clampNumber(Math.round(confirmPoint.y - MARKETING_LIKE_STATUS_SCAN_VERTICAL_PX), 0, size.height - 1)
+      const bottom = clampNumber(Math.round(confirmPoint.y + MARKETING_LIKE_STATUS_SCAN_VERTICAL_PX), top, size.height - 1)
+      let redPixels = 0
+      let lightPixels = 0
+      for (let y = top; y <= bottom; y += 1) {
+        for (let x = left; x <= right; x += 1) {
+          const offset = (y * size.width + x) * 4
+          const red = bitmap[offset]
+          const green = bitmap[offset + 1]
+          const blue = bitmap[offset + 2]
+          const alpha = bitmap[offset + 3]
+          if (alpha <= 180) {
+            continue
+          }
+          if (red >= 180 && green <= 120 && blue <= 120 && red - Math.max(green, blue) >= 60) {
+            redPixels += 1
+            continue
+          }
+          if (red >= 185 && green >= 185 && blue >= 185) {
+            lightPixels += 1
+          }
+        }
+      }
+      if (redPixels >= MARKETING_LIKE_STATUS_MIN_RED_PIXELS) {
+        console.info('个人微信朋友圈点赞菜单本地识别为取消，已跳过避免误触', { confirmPoint, redPixels, lightPixels })
+        return 'unlike'
+      }
+      if (lightPixels >= MARKETING_LIKE_STATUS_MIN_LIGHT_PIXELS) {
+        console.info('个人微信朋友圈点赞菜单本地识别为赞', { confirmPoint, redPixels, lightPixels })
+        return 'like'
+      }
+      console.warn('个人微信朋友圈点赞菜单本地动作识别不明确，已按不安全处理', { confirmPoint, redPixels, lightPixels })
+      return 'unknown'
+    } catch (error) {
+      console.warn('个人微信朋友圈点赞菜单本地动作识别异常，已按不安全处理', error)
       return 'unknown'
     }
-    const matched = moments
-      .map((moment) => ({
-        moment,
-        score: this.getMarketingMomentMatchScore(candidate, moment)
-      }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score)[0]?.moment || moments[0]
-    if (matched.alreadyLiked === true || matched.likeMenuAction === 'unlike') {
-      return 'unlike'
-    }
-    if (matched.likeMenuAction === 'like') {
-      return 'like'
-    }
-    return 'unknown'
-  }
-
-  private getMarketingMomentMatchScore(left: MarketingMomentCandidate, right: MarketingMomentCandidate): number {
-    let score = 0
-    if (String(left.author || '').trim() && String(left.author || '').trim() === String(right.author || '').trim()) {
-      score += 2
-    }
-    if (String(left.content || '').trim() && String(left.content || '').trim() === String(right.content || '').trim()) {
-      score += 2
-    }
-    if (typeof left.visualIndex === 'number' && left.visualIndex === right.visualIndex) {
-      score += 1
-    }
-    return score
   }
 
   private findMarketingLikeConfirmPoint(screenshot: WeChatScreenshot, menuPoint: MarketingMomentPoint): MarketingMomentPoint | null {
@@ -1356,9 +1504,6 @@ export class WeChatNativeDriver {
       return 'vision_low_confidence'
     }
     if (action === 'like') {
-      if (candidate.alreadyLiked === true) {
-        return 'already_liked'
-      }
       if (candidate.suitableForLike === false) {
         return 'like_not_suitable'
       }
@@ -1393,7 +1538,7 @@ export class WeChatNativeDriver {
     if (action !== 'like') {
       return this.isPointInsideBounds(point, bounds)
     }
-    // 朋友圈点赞入口是动态右侧的“...”菜单，可能在正文区域右侧；先放宽菜单候选区，最终仍要截图确认点赞菜单。
+    // 朋友圈点赞入口是动态右侧的“..”菜单，可能在正文区域右侧；先放宽菜单候选区，最终仍要截图确认点赞菜单。
     return point.x >= bounds.x - MARKETING_ACTION_POINT_PADDING_PX &&
       point.y >= bounds.y - MARKETING_ACTION_POINT_PADDING_PX &&
       point.x <= bounds.x + bounds.w + MARKETING_LIKE_POINT_RIGHT_EXTENSION_PX &&
@@ -1442,12 +1587,19 @@ export class WeChatNativeDriver {
     action: MarketingActionType,
     rawConfig: Record<string, any>,
     author: string,
-    postFingerprint: string
+    postFingerprint: string,
+    localVisualDigest?: string | null,
+    legacyPostFingerprint?: string
   ): string {
     const today = this.getMarketingDateKey()
     const todayRecords = this.marketingActionRecords.filter((record) => record.date === today && record.action === action)
-    if (todayRecords.some((record) => record.postFingerprint === postFingerprint)) {
+    if (todayRecords.some((record) => record.postFingerprint === postFingerprint ||
+      (!!legacyPostFingerprint && record.postFingerprint === legacyPostFingerprint))) {
       return 'duplicate_post'
+    }
+    if (action === 'like' && localVisualDigest &&
+      todayRecords.some((record) => record.localVisualDigest === localVisualDigest)) {
+      return 'duplicate_local_visual_digest'
     }
     const totalLimit = this.readMarketingTotalLimit(action, rawConfig)
     if (totalLimit > 0 && todayRecords.length >= totalLimit) {
@@ -1535,11 +1687,14 @@ export class WeChatNativeDriver {
       action,
       author: String(candidate.author || '').trim(),
       postFingerprint,
+      timeText: String(candidate.timeText || '').trim(),
+      localVisualDigest: String(candidate.localVisualDigest || '').trim(),
+      outcome: action === 'like' ? 'liked' : 'commented',
       createdAt: Date.now()
     })
     this.cleanupMarketingActionRecords()
     const store: MarketingActionStore = {
-      version: 1,
+      version: 2,
       records: this.marketingActionRecords.slice(-MAX_MARKETING_RECORDS)
     }
     try {
@@ -1569,10 +1724,25 @@ export class WeChatNativeDriver {
   }
 
   private buildMarketingPostFingerprint(candidate: MarketingMomentCandidate): string {
+    const timeText = String(candidate.timeText || '').trim()
+    const localVisualDigest = String(candidate.localVisualDigest || '').trim()
     const source = [
       String(candidate.author || '').trim(),
       this.normalizeFingerprintContent(candidate.content || ''),
-      candidate.postBounds ? `${Math.round(candidate.postBounds.x)}:${Math.round(candidate.postBounds.y)}:${Math.round(candidate.postBounds.w)}:${Math.round(candidate.postBounds.h)}` : ''
+      timeText || localVisualDigest ||
+        (candidate.postBounds ? `${Math.round(candidate.postBounds.x)}:${Math.round(candidate.postBounds.y)}:${Math.round(candidate.postBounds.w)}:${Math.round(candidate.postBounds.h)}` : '')
+    ].join('|')
+    return createHash('sha256').update(source).digest('hex').slice(0, 24)
+  }
+
+  private buildMarketingLegacyPostBoundsFingerprint(candidate: MarketingMomentCandidate): string {
+    if (!candidate.postBounds) {
+      return ''
+    }
+    const source = [
+      String(candidate.author || '').trim(),
+      this.normalizeFingerprintContent(candidate.content || ''),
+      `${Math.round(candidate.postBounds.x)}:${Math.round(candidate.postBounds.y)}:${Math.round(candidate.postBounds.w)}:${Math.round(candidate.postBounds.h)}`
     ].join('|')
     return createHash('sha256').update(source).digest('hex').slice(0, 24)
   }

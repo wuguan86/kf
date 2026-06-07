@@ -181,6 +181,7 @@ const normalizeMarketingMoments = (value: unknown): MarketingMomentCandidate[] =
       return {
         author,
         content,
+        timeText: String(raw.timeText ?? raw.time ?? raw.publishTime ?? '').trim() || null,
         visualIndex: normalizeVisualIndex(raw.visualIndex ?? raw.index ?? raw.order),
         suitableForLike: typeof raw.suitableForLike === 'boolean' ? raw.suitableForLike : null,
         alreadyLiked: typeof raw.alreadyLiked === 'boolean' ? raw.alreadyLiked : null,
