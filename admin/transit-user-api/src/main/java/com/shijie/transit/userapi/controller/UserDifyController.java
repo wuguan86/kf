@@ -575,8 +575,14 @@ public class UserDifyController {
         List<KnowledgeBaseEntity> knowledgeBases = roleKnowledgeBaseService.listRoleKnowledgeBases(userId, role.getId());
         List<String> datasetIds = new ArrayList<>();
         for (KnowledgeBaseEntity knowledgeBase : knowledgeBases) {
-            if (StringUtils.hasText(knowledgeBase.getDifyDatasetId())) {
+            if (!StringUtils.hasText(knowledgeBase.getDifyDatasetId())) {
+                continue;
+            }
+            if (hasKnowledgeBaseFiles(userId, knowledgeBase)) {
                 datasetIds.add(knowledgeBase.getDifyDatasetId());
+            } else {
+                log.info("知识库未上传文件，跳过检索 userId={} roleId={} kbId={}",
+                        userId, role.getId(), knowledgeBase.getId());
             }
         }
         if (!datasetIds.isEmpty()) {
@@ -586,11 +592,22 @@ public class UserDifyController {
             datasetIds.add(role.getKnowledgeBaseId());
             return datasetIds;
         }
-        KnowledgeBaseEntity fallback = ensureDefaultRoleKnowledgeBase(userId, role);
-        if (StringUtils.hasText(fallback.getDifyDatasetId())) {
-            datasetIds.add(fallback.getDifyDatasetId());
+        log.info("角色未绑定知识库，跳过知识库检索 userId={} roleId={}", userId, role.getId());
+        return List.of();
+    }
+
+    private boolean hasKnowledgeBaseFiles(Long userId, KnowledgeBaseEntity knowledgeBase) {
+        if (knowledgeBase == null || knowledgeBase.getId() == null) {
+            return false;
         }
-        return datasetIds;
+        try {
+            List<KnowledgeBaseFileEntity> files = knowledgeBaseService.listFiles(userId, knowledgeBase.getId());
+            return files != null && !files.isEmpty();
+        } catch (Exception ex) {
+            log.warn("检查知识库文件失败，跳过本次知识库检索 userId={} kbId={} error={}",
+                    userId, knowledgeBase.getId(), ex.getMessage());
+            return false;
+        }
     }
 
     private KnowledgeBaseEntity ensureDefaultRoleKnowledgeBase(Long userId, RoleEntity role) {
