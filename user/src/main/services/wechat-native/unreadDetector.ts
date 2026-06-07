@@ -22,6 +22,8 @@ const LIST_BOTTOM_RATIO = 0.92
 const RED_PIXEL_MIN_COUNT = 8
 const RED_CLUSTER_MAX_SIZE = 42
 const RED_CLUSTER_MIN_SIZE = 4
+const RED_BADGE_MAX_HEIGHT = 24
+const RED_BADGE_MAX_AREA = 620
 
 const isUnreadRedPixel = (red: number, green: number, blue: number): boolean => {
   return red >= 170 && green <= 105 && blue <= 105 && red - Math.max(green, blue) >= 70
@@ -94,12 +96,15 @@ export const findUnreadConversationCandidates = (
     .map((cluster, index): UnreadConversationCandidate | null => {
       const width = cluster.maxX - cluster.minX + 1
       const height = cluster.maxY - cluster.minY + 1
+      const area = width * height
       if (
         cluster.count < RED_PIXEL_MIN_COUNT ||
         width < RED_CLUSTER_MIN_SIZE ||
         height < RED_CLUSTER_MIN_SIZE ||
         width > RED_CLUSTER_MAX_SIZE ||
-        height > RED_CLUSTER_MAX_SIZE
+        height > RED_CLUSTER_MAX_SIZE ||
+        height > RED_BADGE_MAX_HEIGHT ||
+        area > RED_BADGE_MAX_AREA
       ) {
         return null
       }

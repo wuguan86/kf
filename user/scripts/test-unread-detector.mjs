@@ -88,5 +88,22 @@ function testIgnoresRedDotOutsideConversationList() {
   assert.deepEqual(candidates, [])
 }
 
+function testIgnoresLargeRedAvatarBlockInConversationList() {
+  const width = 400
+  const height = 300
+  const image = createBitmap(width, height)
+  image.drawRedSquare(72, 120, 34)
+  const { findUnreadConversationCandidates } = loadUnreadDetector(width, height, image.bitmap)
+
+  const candidates = findUnreadConversationCandidates(
+    { dataUrl: '', png: Buffer.from('mock'), width, height },
+    { hwnd: 1, title: '寰俊', className: 'Weixin', processName: 'Weixin', x: 10, y: 20, width: 800, height: 600 },
+    'personal'
+  )
+
+  assert.deepEqual(candidates, [])
+}
+
 testFindsUnreadRedDotInConversationList()
 testIgnoresRedDotOutsideConversationList()
+testIgnoresLargeRedAvatarBlockInConversationList()
