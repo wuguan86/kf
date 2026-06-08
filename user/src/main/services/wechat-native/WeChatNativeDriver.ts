@@ -674,6 +674,7 @@ export class WeChatNativeDriver {
       const localVisualDigests = this.buildMarketingLocalVisualDigests(screenshot)
       const localDigestDuplicateError = this.getMarketingLocalVisualDigestDuplicateError(action, localVisualDigests)
       if (localDigestDuplicateError) {
+        await this.closeMomentsWindowAfterSkippedMarketing(momentsWindow, localDigestDuplicateError, '')
         return this.skipMarketingAction(localDigestDuplicateError, '朋友圈动态本地摘要已处理过，已跳过本轮点赞')
       }
       const recognition = await recognizeMarketingMomentsWithVision(
@@ -711,6 +712,7 @@ export class WeChatNativeDriver {
         legacyPostFingerprint
       )
       if (limitError) {
+        await this.closeMomentsWindowAfterSkippedMarketing(momentsWindow, limitError, candidate.author)
         return this.skipMarketingAction(limitError, '朋友圈互动已达到配置上限或已处理过该动态', candidate.author)
       }
 
@@ -869,6 +871,36 @@ export class WeChatNativeDriver {
       })
     } catch (closeError) {
       console.warn('个人微信朋友圈互动菜单不安全，关闭朋友圈窗口异常', {
+        error,
+        author,
+        hwnd: window.hwnd,
+        closeError
+      })
+    }
+  }
+
+  private async closeMomentsWindowAfterSkippedMarketing(
+    window: WindowBounds,
+    error: string,
+    author: string
+  ): Promise<void> {
+    try {
+      const closed = await closeMomentsWindow(window)
+      if (!closed) {
+        console.warn('个人微信朋友圈互动命中上限或重复记录，关闭朋友圈窗口失败', {
+          error,
+          author,
+          hwnd: window.hwnd
+        })
+        return
+      }
+      console.info('个人微信朋友圈互动命中上限或重复记录，已关闭朋友圈窗口回到会话', {
+        error,
+        author,
+        hwnd: window.hwnd
+      })
+    } catch (closeError) {
+      console.warn('个人微信朋友圈互动命中上限或重复记录，关闭朋友圈窗口异常', {
         error,
         author,
         hwnd: window.hwnd,

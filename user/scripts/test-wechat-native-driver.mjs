@@ -2900,6 +2900,7 @@ async function testMarketingLikeSkipsLocalUnlikeMenuWithoutSecondVision() {
 
 async function testMarketingLikeSkipsRepeatedLocalVisualDigestBeforeVision() {
   const clicked = []
+  const closed = []
   let captureCount = 0
   let recognizeCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -2940,6 +2941,10 @@ async function testMarketingLikeSkipsRepeatedLocalVisualDigestBeforeVision() {
       clicked.push({ hwnd: window.hwnd, point })
       return true
     },
+    closeMomentsWindow: async (window) => {
+      closed.push(window.hwnd)
+      return true
+    },
     pasteAndSendText: async () => true
   })
   const driver = new WeChatNativeDriver()
@@ -2969,10 +2974,12 @@ async function testMarketingLikeSkipsRepeatedLocalVisualDigestBeforeVision() {
   assert.equal(secondResult.error, 'duplicate_local_visual_digest')
   assert.equal(recognizeCount, 1)
   assert.equal(clicked.length, 2)
+  assert.deepEqual(closed, [200, 200])
 }
 
 async function testMarketingLikeReadsLegacyActionRecordFingerprint() {
   const clicked = []
+  const closed = []
   let recognizeCount = 0
   const legacyBounds = { x: 180, y: 120, w: 520, h: 180 }
   writeMarketingActionStore({
@@ -3020,6 +3027,10 @@ async function testMarketingLikeReadsLegacyActionRecordFingerprint() {
       clicked.push({ hwnd: window.hwnd, point })
       return true
     },
+    closeMomentsWindow: async (window) => {
+      closed.push(window.hwnd)
+      return true
+    },
     pasteAndSendText: async () => true
   })
   const driver = new WeChatNativeDriver()
@@ -3039,6 +3050,7 @@ async function testMarketingLikeReadsLegacyActionRecordFingerprint() {
   assert.equal(result.error, 'duplicate_post')
   assert.equal(recognizeCount, 1)
   assert.deepEqual(clicked, [])
+  assert.deepEqual(closed, [200])
 }
 
 async function testMarketingLikeSkipsWhenMomentsWindowIsNotFound() {
