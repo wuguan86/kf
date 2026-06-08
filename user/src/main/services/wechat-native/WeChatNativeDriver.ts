@@ -43,6 +43,7 @@ const MAX_RECENT_MESSAGE_CONTENT_FINGERPRINTS = 1000
 const MAX_RECENT_SENT_SELF_REPLY_CONTENTS = 120
 const MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH = 8
 const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
+const LOCKED_UNREAD_CONTACT_TTL_MS = 30_000
 const IMAGE_MESSAGE_CACHE_TTL_MS = 2 * 60_000
 const IMAGE_CROP_PADDING_PX = 6
 const IMAGE_CROP_REFINEMENT_MIN_SIZE_PX = 40
@@ -151,6 +152,19 @@ type CachedImageMessage = {
   expiresAt: number
 }
 
+type LockedUnreadConversationContact = {
+  contact: string
+  candidateId: string
+  expiresAt: number
+  conversationType?: 'SINGLE' | 'GROUP' | 'SYSTEM'
+  accountCategory?: 'NORMAL' | 'FILE_HELPER' | 'TENCENT_NEWS' | 'OFFICIAL_ACCOUNT' | 'SERVICE_ACCOUNT' | 'CUSTOMER_SERVICE' | 'UNKNOWN'
+}
+
+type UnreadCandidateCheckResult = {
+  shouldSkip: boolean
+  recognized: ConversationListItemRecognition | null
+}
+
 type MarketingActionType = 'like' | 'comment'
 
 type MarketingActionRecord = {
@@ -219,6 +233,7 @@ export class WeChatNativeDriver {
   private latestSnapshotHasPixelGuard = false
   private startupBaselinePending = false
   private latestSnapshotFromUnreadSwitch = false
+  private lockedUnreadConversationContact: LockedUnreadConversationContact | null = null
   private cachedImageMessages = new Map<string, CachedImageMessage>()
   private marketingCommandRunning = false
   private marketingActionStoreLoaded = false
@@ -234,6 +249,7 @@ export class WeChatNativeDriver {
       tenantId: String(config.tenantId || '1').trim() || '1',
       channel: nextChannel
     }
+    this.lockedUnreadConversationContact = null
     console.info('新方式视觉解析配置已更新', {
       hasBackendBaseUrl: !!this.runtimeConfig.backendBaseUrl,
       hasToken: !!this.runtimeConfig.token,
@@ -268,6 +284,7 @@ export class WeChatNativeDriver {
     this.latestSnapshotHasPixelGuard = false
     this.startupBaselinePending = true
     this.latestSnapshotFromUnreadSwitch = false
+    this.lockedUnreadConversationContact = null
     this.cachedImageMessages.clear()
     this.marketingCommandRunning = false
     this.lastWechatActivityAt = 0
@@ -297,6 +314,7 @@ export class WeChatNativeDriver {
     this.latestSnapshotHasPixelGuard = false
     this.startupBaselinePending = false
     this.latestSnapshotFromUnreadSwitch = false
+    this.lockedUnreadConversationContact = null
     this.cachedImageMessages.clear()
     this.marketingCommandRunning = false
     console.info('新方式微信视觉驱动已停止')
@@ -1999,8 +2017,8 @@ export class WeChatNativeDriver {
             candidateId: candidate.id
           })
         } else {
-          const shouldSkipCandidate = await this.shouldSkipUnreadCandidate(screenshot, window, candidate)
-          if (!shouldSkipCandidate) {
+          const candidateCheck = await this.checkUnreadCandidateBeforeClick(screenshot, window, candidate)
+          if (!candidateCheck.shouldSkip) {
             console.info('新方式检测到未读会话红点，准备拟人化切换会话', {
               candidateId: candidate.id,
               centerX: candidate.centerX,
@@ -2010,6 +2028,7 @@ export class WeChatNativeDriver {
             })
             switchedUnreadConversation = await clickConversationCandidate(window, candidate)
             if (switchedUnreadConversation) {
+              this.lockUnreadConversationContact(candidate, candidateCheck.recognized)
               const settleMs = UNREAD_SWITCH_SETTLE_MIN_MS +
                 Math.floor(Math.random() * (UNREAD_SWITCH_SETTLE_MAX_MS - UNREAD_SWITCH_SETTLE_MIN_MS + 1))
               await wait(settleMs)
@@ -2051,7 +2070,8 @@ export class WeChatNativeDriver {
         this.runtimeConfig
       )
       this.latestSnapshotScreenshot = screenshot
-      const guardedSnapshot = this.applySnapshotVisionGuard(snapshot, screenshot)
+      const contactGuardedSnapshot = this.applySnapshotContactGuard(snapshot)
+      const guardedSnapshot = this.applySnapshotVisionGuard(contactGuardedSnapshot, screenshot)
       this.latestSnapshotFromUnreadSwitch = switchedUnreadConversation
       this.lastSnapshotDigest = snapshot.snapshotDigest || diff.digest
       this.consecutiveVisionFailures = 0
@@ -2076,6 +2096,79 @@ export class WeChatNativeDriver {
   private async readSnapshot(window: WindowBounds): Promise<ParsedWeChatSnapshot> {
     const snapshot = await this.readSnapshotIfChanged(window)
     return snapshot || { contact: window.title || '微信', messages: [] }
+  }
+
+  private applySnapshotContactGuard(snapshot: ParsedWeChatSnapshot): ParsedWeChatSnapshot {
+    const lockedContact = this.getActiveLockedUnreadConversationContact()
+    if (!lockedContact || !this.isGenericWechatContact(snapshot.contact)) {
+      if (lockedContact && this.hasReliableContactName(snapshot.contact) && snapshot.contact.trim() !== lockedContact.contact) {
+        this.lockedUnreadConversationContact = null
+      }
+      return snapshot
+    }
+
+    console.info('个人微信联系人本地守卫已使用未读会话列表识别结果修正泛化联系人名称', {
+      fromContact: snapshot.contact,
+      toContact: lockedContact.contact,
+      candidateId: lockedContact.candidateId,
+      messageCount: snapshot.messages.length
+    })
+    return {
+      ...snapshot,
+      contact: lockedContact.contact,
+      conversationType: snapshot.conversationType || lockedContact.conversationType,
+      accountCategory: snapshot.accountCategory || lockedContact.accountCategory
+    }
+  }
+
+  private lockUnreadConversationContact(candidate: UnreadConversationCandidate, recognized: ConversationListItemRecognition | null): void {
+    if (this.channel !== 'personal' || !recognized) {
+      return
+    }
+    const contact = String(recognized.contact || '').trim()
+    const confidence = typeof recognized.confidence === 'number' ? recognized.confidence : 0
+    if (!this.hasReliableContactName(contact) || confidence < 0.5) {
+      return
+    }
+
+    this.lockedUnreadConversationContact = {
+      contact,
+      candidateId: candidate.id,
+      expiresAt: Date.now() + LOCKED_UNREAD_CONTACT_TTL_MS,
+      conversationType: recognized.conversationType,
+      accountCategory: recognized.accountCategory
+    }
+    console.info('个人微信已锁定自动切换未读会话的联系人名称', {
+      contact,
+      candidateId: candidate.id,
+      confidence
+    })
+  }
+
+  private getActiveLockedUnreadConversationContact(): LockedUnreadConversationContact | null {
+    if (!this.lockedUnreadConversationContact) {
+      return null
+    }
+    if (this.lockedUnreadConversationContact.expiresAt <= Date.now()) {
+      this.lockedUnreadConversationContact = null
+      return null
+    }
+    return this.lockedUnreadConversationContact
+  }
+
+  private hasReliableContactName(contact: string): boolean {
+    const normalized = String(contact || '').trim()
+    return normalized.length > 0 && !this.isGenericWechatContact(normalized)
+  }
+
+  private isGenericWechatContact(contact: string): boolean {
+    const normalized = String(contact || '').trim().toLowerCase().replace(/\s+/g, '')
+    return !normalized ||
+      normalized === '微信' ||
+      normalized === 'wechat' ||
+      normalized === 'weixin' ||
+      normalized === '微信用户' ||
+      normalized === '微信联系人'
   }
 
   private applySnapshotVisionGuard(snapshot: ParsedWeChatSnapshot, screenshot: WeChatScreenshot): ParsedWeChatSnapshot {
@@ -2115,7 +2208,7 @@ export class WeChatNativeDriver {
 
   private hasReliableCustomerTriggerGeometry(message: ParsedWeChatMessage): boolean {
     if (message.bounds) {
-      return true
+      return { shouldSkip: true, recognized }
     }
     return !this.latestSnapshotHasPixelGuard
   }
@@ -2151,21 +2244,21 @@ export class WeChatNativeDriver {
     }
   }
 
-  private async shouldSkipUnreadCandidate(
+  private async checkUnreadCandidateBeforeClick(
     screenshot: { dataUrl: string; png: Buffer; width: number; height: number },
     window: WindowBounds,
     candidate: UnreadConversationCandidate
-  ): Promise<boolean> {
+  ): Promise<UnreadCandidateCheckResult> {
     try {
       const recognized = await recognizeUnreadConversationCandidate(screenshot, window, candidate, this.channel, this.runtimeConfig)
       if (!recognized) {
-        return false
+        return { shouldSkip: false, recognized: null }
       }
       const confidence = typeof recognized.confidence === 'number' ? recognized.confidence : 0
       const specialRule = getSpecialConversationRule(recognized.contact, recognized.accountCategory, recognized.skipReason)
       const shouldSkip = recognized.skipAutoReply || (specialRule?.source === 'contact') || (specialRule?.source === 'category' && confidence >= 0.5)
       if (!shouldSkip) {
-        return false
+        return { shouldSkip: false, recognized }
       }
       if (specialRule) {
         recognized.accountCategory = specialRule.accountCategory
@@ -2180,13 +2273,13 @@ export class WeChatNativeDriver {
         confidence,
         skipReason: recognized.skipReason
       })
-      return true
+      return { shouldSkip: true, recognized }
     } catch (error) {
       console.warn('新方式点击前会话预判失败，降级为继续原流程', {
         candidateId: candidate.id,
         error
       })
-      return false
+      return { shouldSkip: false, recognized: null }
     }
   }
 

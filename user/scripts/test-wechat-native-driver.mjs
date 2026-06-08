@@ -701,6 +701,58 @@ async function testReplySessionUnlockAllowsSwitchingUnreadConversation() {
   assert.equal(result.messages[0].contact, '新会话')
 }
 
+async function testUnreadConversationLockedContactOverridesGenericVisionContact() {
+  const clickedCandidates = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=current',
+      png: Buffer.from('same-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-locked-contact', changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-summer',
+      x: 82,
+      y: 132,
+      width: 14,
+      height: 14,
+      centerX: 89,
+      centerY: 139,
+      score: 16
+    }],
+    recognizeUnreadConversationCandidate: async () => ({
+      contact: '夏天',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL',
+      skipAutoReply: false,
+      skipReason: '',
+      confidence: 0.96
+    }),
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '微信',
+      messages: [{ content: '今天工作还挺顺利的', isSelf: false, uiId: 'customer-locked-contact' }],
+      snapshotDigest: 'digest-after-locked-contact',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.deepEqual(clickedCandidates, ['unread-summer'])
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].contact, '夏天')
+}
+
 async function testSpecialConversationGetsExitedAfterOpen() {
   const exits = []
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -3640,6 +3692,7 @@ await testSpecialConversationNameFallbackSkipsBeforeClick()
 await testCustomerServiceConversationNameFallbackSkipsBeforeClick()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
 await testReplySessionUnlockAllowsSwitchingUnreadConversation()
+await testUnreadConversationLockedContactOverridesGenericVisionContact()
 await testSpecialConversationGetsExitedAfterOpen()
 await testSpecialConversationNameFallbackExitsAfterOpen()
 await testCustomerServiceConversationNameFallbackExitsAfterOpen()
