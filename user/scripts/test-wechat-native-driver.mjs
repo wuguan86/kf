@@ -3300,7 +3300,7 @@ async function testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails() {
 
     assert.equal(result.ok, true)
     assert.equal(result.skipped, true)
-    assert.equal(result.error, 'comment_generation_failed')
+    assert.equal(result.error, 'comment_generation_request_failed')
     assert.deepEqual(clickedPoints, [])
     assert.deepEqual(comments, [])
   } finally {
@@ -3386,6 +3386,61 @@ async function testMarketingCommentUsesLocalMenuPointWithoutModelCommentPoint() 
   } finally {
     globalThis.fetch = originalFetch
   }
+}
+
+async function testMarketingCommentReportsMissingGenerationBackendBeforeMenuClick() {
+  const clickedPoints = []
+  let captureCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-comment-missing-backend-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'marketing-comment-missing-backend-ellipsis' : 'menu-open-comment-local'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-comment-missing-backend', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: 'comment-missing-backend-customer',
+          content: 'local menu is available but comment backend is missing',
+          verticalRange: { y: 120, h: 220 },
+          suitableForComment: true,
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (_window, point) => {
+      clickedPoints.push(point)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.command({
+    action: 'marketing_comment',
+    config: {
+      enabled: true,
+      maxDailyCommentsPerFriend: 5,
+      maxDailyTotalComments: 100
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.skipped, true)
+  assert.equal(result.error, 'comment_generation_backend_missing')
+  assert.deepEqual(clickedPoints, [])
 }
 
 async function testMarketingCommentSkipsWhenOpenedMenuCommentActionUnknown() {
@@ -3522,7 +3577,7 @@ async function testMarketingCommentSkipsUnsafeGeneratedContent() {
 
     assert.equal(result.ok, true)
     assert.equal(result.skipped, true)
-    assert.equal(result.error, 'comment_generation_failed')
+    assert.equal(result.error, 'comment_generation_content_unsafe')
     assert.deepEqual(clickedPoints, [])
     assert.deepEqual(comments, [])
   } finally {
@@ -3603,6 +3658,8 @@ clearMarketingActionStore()
 await testMarketingLikeRejectsLowConfidenceCandidateWithoutClicking()
 clearMarketingActionStore()
 await testMarketingCommentUsesLocalMenuPointWithoutModelCommentPoint()
+clearMarketingActionStore()
+await testMarketingCommentReportsMissingGenerationBackendBeforeMenuClick()
 clearMarketingActionStore()
 await testMarketingCommentSkipsWhenOpenedMenuCommentActionUnknown()
 clearMarketingActionStore()

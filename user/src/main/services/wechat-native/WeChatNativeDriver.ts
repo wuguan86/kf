@@ -185,6 +185,12 @@ type MarketingLocalVisualDigest = {
   digest: string
 }
 
+type MarketingCommentGenerationResult = {
+  content: string
+  error?: string
+  message?: string
+}
+
 export class WeChatNativeDriver {
   private running = false
   private managedMode: ManagedMode = 'full'
@@ -708,9 +714,14 @@ export class WeChatNativeDriver {
 
       let commentContent = ''
       if (action === 'comment') {
-        commentContent = await this.generateMarketingComment(candidate, rawConfig)
+        const commentGeneration = await this.generateMarketingComment(candidate, rawConfig)
+        commentContent = commentGeneration.content
         if (!commentContent) {
-          return this.skipMarketingAction('comment_generation_failed', '评论生成失败，已跳过本轮朋友圈评论', candidate.author)
+          return this.skipMarketingAction(
+            commentGeneration.error || 'comment_generation_failed',
+            commentGeneration.message || '评论生成失败，已跳过本轮朋友圈评论',
+            candidate.author
+          )
         }
       }
 
@@ -1715,12 +1726,25 @@ export class WeChatNativeDriver {
     return Math.max(1, Number(rawConfig?.[key] ?? 1) || 1)
   }
 
-  private async generateMarketingComment(candidate: MarketingMomentCandidate, rawConfig: Record<string, any>): Promise<string> {
+  private async generateMarketingComment(
+    candidate: MarketingMomentCandidate,
+    rawConfig: Record<string, any>
+  ): Promise<MarketingCommentGenerationResult> {
     const backendUrl = String(rawConfig?.backendUrl || this.runtimeConfig.backendBaseUrl || '').replace(/\/api\/?$/, '').replace(/\/$/, '')
     const token = String(rawConfig?.token || this.runtimeConfig.token || '').trim()
     const tenantId = String(rawConfig?.tenantId || this.runtimeConfig.tenantId || '1').trim() || '1'
     if (!backendUrl || !token || typeof fetch !== 'function') {
-      return ''
+      console.warn('个人微信朋友圈评论生成缺少后端配置，已跳过本轮评论', {
+        author: candidate.author,
+        hasBackendUrl: !!backendUrl,
+        hasToken: !!token,
+        hasFetch: typeof fetch === 'function'
+      })
+      return {
+        content: '',
+        error: 'comment_generation_backend_missing',
+        message: '评论生成后端配置缺失，已跳过本轮朋友圈评论'
+      }
     }
     try {
       const response = await fetch(`${backendUrl}/api/user/marketing/comment/generate`, {
@@ -1738,12 +1762,37 @@ export class WeChatNativeDriver {
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok || !payload || payload.code !== 0) {
-        return ''
+        console.warn('个人微信朋友圈评论生成接口返回失败，已跳过本轮评论', {
+          author: candidate.author,
+          status: response.status,
+          code: payload?.code,
+          message: payload?.msg || payload?.message
+        })
+        return {
+          content: '',
+          error: 'comment_generation_api_failed',
+          message: '评论生成接口返回失败，已跳过本轮朋友圈评论'
+        }
       }
-      return this.normalizeGeneratedMarketingComment(candidate, payload.data)
+      const content = this.normalizeGeneratedMarketingComment(candidate, payload.data)
+      if (!content) {
+        console.warn('个人微信朋友圈评论生成内容未通过安全过滤，已跳过本轮评论', {
+          author: candidate.author
+        })
+        return {
+          content: '',
+          error: 'comment_generation_content_unsafe',
+          message: '评论内容未通过安全过滤，已跳过本轮朋友圈评论'
+        }
+      }
+      return { content }
     } catch (error) {
       console.warn('个人微信朋友圈评论生成失败，已跳过本轮评论', { author: candidate.author, error })
-      return ''
+      return {
+        content: '',
+        error: 'comment_generation_request_failed',
+        message: '评论生成请求异常，已跳过本轮朋友圈评论'
+      }
     }
   }
 

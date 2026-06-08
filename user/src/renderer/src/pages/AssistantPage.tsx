@@ -510,6 +510,30 @@ const LoaderIcon = () => (
   </svg>
 )
 
+const formatMarketingCommentSkipMessage = (result: any): string => {
+  const reason = String(result?.error || '')
+  const detail = String(result?.message || '').trim()
+  if (reason === 'comment_generation_backend_missing') {
+    return '朋友圈自动评论跳过：评论生成后端配置缺失，请检查登录状态和后端地址'
+  }
+  if (reason === 'comment_generation_api_failed') {
+    return '朋友圈自动评论跳过：评论生成接口返回失败，请检查 Dify 评论工作流配置'
+  }
+  if (reason === 'comment_generation_request_failed') {
+    return '朋友圈自动评论跳过：评论生成请求异常，请检查后端服务和网络'
+  }
+  if (reason === 'comment_generation_content_unsafe') {
+    return '朋友圈自动评论跳过：生成内容未通过安全过滤'
+  }
+  if (reason === 'comment_menu_point_not_found') {
+    return '朋友圈自动评论跳过：未识别到该动态的评论菜单入口'
+  }
+  if (reason === 'comment_menu_action_unconfirmed') {
+    return '朋友圈自动评论跳过：评论菜单未通过本地安全确认'
+  }
+  return detail ? `朋友圈自动评论跳过：${detail}` : `朋友圈自动评论跳过：${reason || '未找到可安全互动的动态'}`
+}
+
 function AssistantPage(props: Props): JSX.Element {
   const { backendBaseUrl, tenantId, userToken, onLogout } = props
   const { toast, showToast } = useToast()
@@ -1437,7 +1461,9 @@ function AssistantPage(props: Props): JSX.Element {
                 })
               )
               if (result?.skipped) {
+                const skipMessage = formatMarketingCommentSkipMessage(result)
                 console.info('朋友圈自动评论本轮跳过', { reason: result.error, message: result.message })
+                setDifyResponse(skipMessage)
               }
               eventBus.emit('points-updated')
             }
