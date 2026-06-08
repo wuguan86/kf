@@ -1052,6 +1052,106 @@ async function testRepliedTextCustomerMessageDoesNotTriggerAfterShortTtlExpired(
   }
 }
 
+async function testShortCustomerTextCanTriggerAgainAfterShortTtlWithDifferentBounds() {
+  let parseCount = 0
+  let nowMs = 1_800_003_000_000
+  const originalDateNow = Date.now
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=short-text-repeat',
+      png: Buffer.from(`short-text-repeat-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-short-text-repeat-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'short-text-repeat-customer',
+        messages: [
+          {
+            content: '好吧',
+            isSelf: false,
+            uiId: `short-text-repeat-${parseCount}`,
+            bounds: parseCount === 1
+              ? { x: 120, y: 160, w: 68, h: 34 }
+              : { x: 120, y: 230, w: 68, h: 34 }
+          }
+        ],
+        snapshotDigest: `digest-short-text-repeat-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+
+  try {
+    Date.now = () => nowMs
+    const firstDriver = new WeChatNativeDriver()
+    await firstDriver.start()
+    const firstResult = await firstDriver.poll()
+
+    nowMs += 2 * 60 * 1000
+    const secondDriver = new WeChatNativeDriver()
+    await secondDriver.start()
+    const secondResult = await secondDriver.poll()
+
+    assert.equal(firstResult.messages.length, 1)
+    assert.equal(firstResult.messages[0].trigger_reply, true)
+    assert.equal(secondResult.messages.length, 1)
+    assert.equal(secondResult.messages[0].trigger_reply, true)
+  } finally {
+    Date.now = originalDateNow
+  }
+}
+
+async function testNewNonLatestCustomerMessageIsDisplayedWithoutTriggeringReply() {
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=non-latest-display',
+      png: Buffer.from('non-latest-display-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-non-latest-display', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'non-latest-display-customer',
+      messages: [
+        {
+          content: '好吧',
+          isSelf: false,
+          uiId: 'non-latest-display-1',
+          bounds: { x: 120, y: 160, w: 68, h: 34 }
+        },
+        {
+          content: '那我工作去了',
+          isSelf: false,
+          uiId: 'non-latest-display-2',
+          bounds: { x: 120, y: 220, w: 118, h: 34 }
+        }
+      ],
+      snapshotDigest: 'digest-non-latest-display-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  driver.seenMessageFingerprints.add('existing-baseline')
+  const result = await driver.poll()
+
+  assert.equal(result.messages.length, 2)
+  assert.equal(result.messages[0].content, '好吧')
+  assert.equal(result.messages[0].trigger_reply, false)
+  assert.equal(result.messages[1].content, '那我工作去了')
+  assert.equal(result.messages[1].trigger_reply, true)
+}
+
 async function testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage() {
   let parseCount = 0
   writeRepliedMessageStore({
@@ -3701,6 +3801,8 @@ await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
 await testRepliedTextCustomerMessageDoesNotTriggerAfterShortTtlExpired()
+await testShortCustomerTextCanTriggerAgainAfterShortTtlWithDifferentBounds()
+await testNewNonLatestCustomerMessageIsDisplayedWithoutTriggeringReply()
 await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()

@@ -33,6 +33,9 @@ import type {
 const MAX_PERSISTED_REPLIED_MESSAGES = 200
 const REPLIED_CUSTOMER_FINGERPRINT_TTL_MS = 24 * 60 * 60_000
 const IMAGE_REPLIED_CUSTOMER_FINGERPRINT_TTL_MS = 24 * 60 * 60_000
+const SHORT_TEXT_REPLIED_CUSTOMER_FINGERPRINT_TTL_MS = 90_000
+const SHORT_TEXT_MESSAGE_CONTENT_FINGERPRINT_TTL_MS = 90_000
+const RECENT_MESSAGE_CONTENT_FINGERPRINT_TTL_MS = 24 * 60 * 60_000
 const NATIVE_POLL_INTERVAL_MS = 1500
 const MAX_CONSECUTIVE_VISION_FAILURES = 3
 const UNREAD_SWITCH_SETTLE_MIN_MS = 320
@@ -42,6 +45,8 @@ const RECENT_SENT_SELF_REPLY_TTL_MS = 5 * 60_000
 const MAX_RECENT_MESSAGE_CONTENT_FINGERPRINTS = 1000
 const MAX_RECENT_SENT_SELF_REPLY_CONTENTS = 120
 const MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH = 8
+const SHORT_TEXT_REPLY_CONTENT_MAX_LENGTH = 6
+const MESSAGE_BOUNDS_FINGERPRINT_BUCKET_PX = 16
 const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
 const LOCKED_UNREAD_CONTACT_TTL_MS = 30_000
 const IMAGE_MESSAGE_CACHE_TTL_MS = 2 * 60_000
@@ -395,6 +400,7 @@ export class WeChatNativeDriver {
     const currentSnapshotLatestFingerprintByContent = this.buildLatestFingerprintByContent(snapshot)
     let hasNewReplyTrigger = false
     this.cleanupRecentSentSelfReplyContents(Date.now())
+    this.cleanupExpiredRecentMessageContentFingerprints(Date.now())
     this.cleanupCachedImageMessages(Date.now())
     for (const parsedMessage of snapshot.messages) {
       const parsedMessageType = this.normalizeMessageType(parsedMessage)
@@ -456,10 +462,11 @@ export class WeChatNativeDriver {
 
       const isLatestVisibleCustomerMessage = fingerprint === latestVisibleCustomerKey
       const hasRepliedCustomerMessage = this.hasRepliedCustomerFingerprint(customerReplyFingerprint)
-      const shouldDisplayCustomerMessage = isLatestVisibleCustomerMessage &&
-        hasReliableCustomerTriggerGeometry &&
+      const shouldDisplayCustomerMessage = hasReliableCustomerTriggerGeometry &&
         !hasRepliedCustomerMessage
-      const shouldTriggerReply = shouldDisplayCustomerMessage && this.managedMode === 'full'
+      const shouldTriggerReply = shouldDisplayCustomerMessage &&
+        isLatestVisibleCustomerMessage &&
+        this.managedMode === 'full'
 
       if (shouldTriggerReply) {
         hasNewReplyTrigger = true
@@ -2208,7 +2215,7 @@ export class WeChatNativeDriver {
 
   private hasReliableCustomerTriggerGeometry(message: ParsedWeChatMessage): boolean {
     if (message.bounds) {
-      return { shouldSkip: true, recognized }
+      return true
     }
     return !this.latestSnapshotHasPixelGuard
   }
@@ -2343,6 +2350,14 @@ export class WeChatNativeDriver {
         break
       }
       this.recentMessageContentFingerprints.delete(oldestFingerprint)
+    }
+  }
+
+  private cleanupExpiredRecentMessageContentFingerprints(now: number): void {
+    for (const [fingerprint, markedAt] of this.recentMessageContentFingerprints.entries()) {
+      if (now - markedAt >= this.getRecentMessageContentFingerprintTtlMs(fingerprint)) {
+        this.recentMessageContentFingerprints.delete(fingerprint)
+      }
     }
   }
 
@@ -2510,7 +2525,7 @@ export class WeChatNativeDriver {
     if (type === 'image' || type === 'sticker') {
       return this.buildImageMessageStableFingerprint(contact, message, message.isSelf)
     }
-    return this.buildContentFingerprint(contact, message.content, message.isSelf)
+    return this.buildTextMessageStableFingerprint(contact, message, message.isSelf)
   }
 
   private buildCustomerReplyFingerprint(contact: string, message: ParsedWeChatMessage): string {
@@ -2518,7 +2533,15 @@ export class WeChatNativeDriver {
     if (type === 'image' || type === 'sticker') {
       return this.buildImageMessageStableFingerprint(contact, message, false)
     }
-    return this.buildContentFingerprint(contact, message.content, false)
+    return this.buildTextMessageStableFingerprint(contact, message, false)
+  }
+
+  private buildTextMessageStableFingerprint(contact: string, message: ParsedWeChatMessage, isSelf: boolean): string {
+    const normalizedContent = this.normalizeFingerprintContent(message.content)
+    if (this.isShortReplyTextContent(normalizedContent)) {
+      return `${contact}:${isSelf ? 'self' : 'customer'}:short-text:${normalizedContent}:${this.buildMessageBoundsBucket(message.bounds)}`
+    }
+    return this.buildContentFingerprint(contact, normalizedContent, isSelf)
   }
 
   private buildImageMessageStableFingerprint(contact: string, message: ParsedWeChatMessage, isSelf: boolean): string {
@@ -2532,7 +2555,33 @@ export class WeChatNativeDriver {
     if (fingerprint.includes(':customer:image:') || fingerprint.includes(':customer:sticker:')) {
       return IMAGE_REPLIED_CUSTOMER_FINGERPRINT_TTL_MS
     }
+    if (fingerprint.includes(':customer:short-text:')) {
+      return SHORT_TEXT_REPLIED_CUSTOMER_FINGERPRINT_TTL_MS
+    }
     return REPLIED_CUSTOMER_FINGERPRINT_TTL_MS
+  }
+
+  private getRecentMessageContentFingerprintTtlMs(fingerprint: string): number {
+    if (fingerprint.includes(':short-text:')) {
+      return SHORT_TEXT_MESSAGE_CONTENT_FINGERPRINT_TTL_MS
+    }
+    return RECENT_MESSAGE_CONTENT_FINGERPRINT_TTL_MS
+  }
+
+  private isShortReplyTextContent(normalizedContent: string): boolean {
+    const length = Array.from(normalizedContent).length
+    return length > 0 && length <= SHORT_TEXT_REPLY_CONTENT_MAX_LENGTH
+  }
+
+  private buildMessageBoundsBucket(bounds?: WeChatMessageBounds): string {
+    if (!bounds) {
+      return 'no-bounds'
+    }
+    const x = Math.round(bounds.x / MESSAGE_BOUNDS_FINGERPRINT_BUCKET_PX)
+    const y = Math.round(bounds.y / MESSAGE_BOUNDS_FINGERPRINT_BUCKET_PX)
+    const w = Math.round(bounds.w / MESSAGE_BOUNDS_FINGERPRINT_BUCKET_PX)
+    const h = Math.round(bounds.h / MESSAGE_BOUNDS_FINGERPRINT_BUCKET_PX)
+    return `${x}:${y}:${w}:${h}`
   }
 
   private buildImageReplySignature(message: ParsedWeChatMessage): string {
