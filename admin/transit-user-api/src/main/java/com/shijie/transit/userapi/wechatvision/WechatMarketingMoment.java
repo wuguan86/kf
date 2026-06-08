@@ -6,6 +6,7 @@ public record WechatMarketingMoment(
     String timeText,
     Integer visualIndex,
     Boolean suitableForLike,
+    Boolean suitableForComment,
     Boolean alreadyLiked,
     String likeMenuAction,
     WechatMarketingVerticalRange verticalRange,
@@ -26,7 +27,7 @@ public record WechatMarketingMoment(
       WechatMarketingPoint commentPoint,
       Double confidence) {
     // 兼容旧构造签名，避免开发热加载期间旧调用直接触发朋友圈视觉解析异常。
-    this(author, content, null, visualIndex, suitableForLike, alreadyLiked, null,
+    this(author, content, null, visualIndex, suitableForLike, null, alreadyLiked, null,
         verticalRange, postBounds, likePoint, commentPoint, confidence);
   }
 }

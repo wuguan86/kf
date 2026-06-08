@@ -295,6 +295,26 @@ function createMarketingMenuNativeImageMock() {
           }
         }
       }
+      if (marker.includes('menu-open-comment-local')) {
+        for (let y = 252; y <= 298; y++) {
+          for (let x = 520; x <= 664; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 48
+            bitmap[offset + 1] = 48
+            bitmap[offset + 2] = 48
+            bitmap[offset + 3] = 255
+          }
+        }
+        for (let y = 270; y <= 282; y++) {
+          for (let x = 604; x <= 636; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 245
+            bitmap[offset + 1] = 245
+            bitmap[offset + 2] = 245
+            bitmap[offset + 3] = 255
+          }
+        }
+      }
       if (marker.includes('menu-open-near-article-button')) {
         for (let y = 444; y <= 486; y++) {
           for (let x = 660; x <= 802; x++) {
@@ -3220,10 +3240,12 @@ async function testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails() {
     throw new Error('generate failed')
   }
   const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
     findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
     captureWeChatWindow: async () => ({
       dataUrl: 'data:image/png;base64=marketing-comment',
-      png: Buffer.from('marketing-comment'),
+      png: Buffer.from('marketing-comment-ellipsis'),
       width: 900,
       height: 700
     }),
@@ -3235,13 +3257,238 @@ async function testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails() {
       conversationType: 'SINGLE',
       accountCategory: 'NORMAL'
     }),
+    clickMomentsEntry: async () => true,
     recognizeMarketingMomentsWithVision: async () => ({
       moments: [
         {
           author: '客户A',
           content: '今天新品到店',
+          verticalRange: { y: 120, h: 180 },
           postBounds: { x: 180, y: 120, w: 520, h: 180 },
           commentPoint: { x: 690, y: 270 },
+          suitableForComment: true,
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (_window, point) => {
+      clickedPoints.push(point)
+      return true
+    },
+    pasteMarketingComment: async (_window, content) => {
+      comments.push(content)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  try {
+    await driver.start()
+    const result = await driver.command({
+      action: 'marketing_comment',
+      config: {
+        enabled: true,
+        maxDailyCommentsPerFriend: 5,
+        maxDailyTotalComments: 100,
+        backendUrl: 'http://127.0.0.1:18080',
+        token: 'token',
+        tenantId: '1'
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.skipped, true)
+    assert.equal(result.error, 'comment_generation_failed')
+    assert.deepEqual(clickedPoints, [])
+    assert.deepEqual(comments, [])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+async function testMarketingCommentUsesLocalMenuPointWithoutModelCommentPoint() {
+  const clickedPoints = []
+  const comments = []
+  const originalFetch = globalThis.fetch
+  let captureCount = 0
+  let fetchBody = null
+  globalThis.fetch = async (_url, options) => {
+    fetchBody = JSON.parse(String(options?.body || '{}'))
+    return {
+      ok: true,
+      json: async () => ({ code: 0, data: '挺有意思的' })
+    }
+  }
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-comment-local-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'marketing-comment-local-ellipsis' : 'menu-open-comment-local'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-comment-local', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: 'comment-local-customer',
+          content: 'local menu should open comment box',
+          timeText: '2小时前',
+          verticalRange: { y: 120, h: 220 },
+          suitableForComment: true,
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (_window, point) => {
+      clickedPoints.push(point)
+      return true
+    },
+    pasteMarketingComment: async (_window, content) => {
+      comments.push(content)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  try {
+    await driver.start()
+    const result = await driver.command({
+      action: 'marketing_comment',
+      config: {
+        enabled: true,
+        maxDailyCommentsPerFriend: 5,
+        maxDailyTotalComments: 100,
+        backendUrl: 'http://127.0.0.1:18080',
+        token: 'token',
+        tenantId: '1'
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.performed, true)
+    assert.equal(clickedPoints.length, 2)
+    assert.ok(clickedPoints[0].x >= 590 && clickedPoints[0].x <= 610)
+    assert.ok(clickedPoints[1].x >= 600 && clickedPoints[1].x <= 640)
+    assert.deepEqual(comments, ['挺有意思的'])
+    assert.equal(fetchBody.timeText, '2小时前')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+async function testMarketingCommentSkipsWhenOpenedMenuCommentActionUnknown() {
+  const clickedPoints = []
+  const comments = []
+  const originalFetch = globalThis.fetch
+  let captureCount = 0
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ code: 0, data: '内容不错' })
+  })
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=marketing-comment-unknown-${captureCount}`,
+        png: Buffer.from(captureCount === 1 ? 'marketing-comment-unknown-ellipsis' : 'menu-open'),
+        width: 900,
+        height: 700
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-comment-unknown', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: 'comment-unknown-customer',
+          content: 'comment button is not clear',
+          verticalRange: { y: 120, h: 220 },
+          suitableForComment: true,
+          confidence: 0.95
+        }
+      ],
+      confidence: 0.95
+    }),
+    clickMarketingPoint: async (_window, point) => {
+      clickedPoints.push(point)
+      return true
+    },
+    pasteMarketingComment: async (_window, content) => {
+      comments.push(content)
+      return true
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  try {
+    await driver.start()
+    const result = await driver.command({
+      action: 'marketing_comment',
+      config: {
+        enabled: true,
+        maxDailyCommentsPerFriend: 5,
+        maxDailyTotalComments: 100,
+        backendUrl: 'http://127.0.0.1:18080',
+        token: 'token',
+        tenantId: '1'
+      }
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.skipped, true)
+    assert.equal(result.error, 'comment_menu_action_unconfirmed')
+    assert.equal(clickedPoints.length, 1)
+    assert.deepEqual(comments, [])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+async function testMarketingCommentSkipsUnsafeGeneratedContent() {
+  const clickedPoints = []
+  const comments = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ code: 0, data: '加我微信 wx123456 一起聊' })
+  })
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock(),
+    findWeChatWindow: async () => testWindow,
+    findWeChatMomentsWindow: async () => testMomentsWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=marketing-comment-unsafe',
+      png: Buffer.from('marketing-comment-unsafe-ellipsis'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'marketing-comment-unsafe', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '朋友圈', messages: [] }),
+    clickMomentsEntry: async () => true,
+    recognizeMarketingMomentsWithVision: async () => ({
+      moments: [
+        {
+          author: 'comment-unsafe-customer',
+          content: 'unsafe generated content should be blocked',
+          verticalRange: { y: 120, h: 220 },
+          suitableForComment: true,
           confidence: 0.95
         }
       ],
@@ -3354,5 +3601,11 @@ clearMarketingActionStore()
 await testMarketingLikeClicksSafeCandidateAndDedupesPost()
 clearMarketingActionStore()
 await testMarketingLikeRejectsLowConfidenceCandidateWithoutClicking()
+clearMarketingActionStore()
+await testMarketingCommentUsesLocalMenuPointWithoutModelCommentPoint()
+clearMarketingActionStore()
+await testMarketingCommentSkipsWhenOpenedMenuCommentActionUnknown()
+clearMarketingActionStore()
+await testMarketingCommentSkipsUnsafeGeneratedContent()
 clearMarketingActionStore()
 await testMarketingCommentDoesNotOpenCommentBoxWhenGenerationFails()

@@ -96,6 +96,12 @@ const MARKETING_LIKE_STATUS_SCAN_RIGHT_PX = 36
 const MARKETING_LIKE_STATUS_SCAN_VERTICAL_PX = 22
 const MARKETING_LIKE_STATUS_MIN_RED_PIXELS = 18
 const MARKETING_LIKE_STATUS_MIN_LIGHT_PIXELS = 80
+const MARKETING_COMMENT_CONFIRM_OFFSET_X_PX = 108
+const MARKETING_COMMENT_STATUS_SCAN_LEFT_PX = 36
+const MARKETING_COMMENT_STATUS_SCAN_RIGHT_PX = 36
+const MARKETING_COMMENT_STATUS_SCAN_VERTICAL_PX = 22
+const MARKETING_COMMENT_STATUS_MIN_LIGHT_PIXELS = 80
+const MARKETING_COMMENT_STATUS_MIN_DARK_PIXELS = 1600
 const MARKETING_CLOSE_AFTER_SUCCESS_MIN_DELAY_MS = 1200
 const MARKETING_CLOSE_AFTER_SUCCESS_MAX_DELAY_MS = 2000
 
@@ -657,7 +663,7 @@ export class WeChatNativeDriver {
         return this.skipMarketingAction('moments_window_not_found', '未找到朋友圈独立窗口，已跳过本轮互动')
       }
       const screenshot = await captureWeChatWindow(momentsWindow)
-      const localVisualDigests = action === 'like' ? this.buildMarketingLocalVisualDigests(screenshot) : []
+      const localVisualDigests = this.buildMarketingLocalVisualDigests(screenshot)
       const localDigestDuplicateError = this.getMarketingLocalVisualDigestDuplicateError(action, localVisualDigests)
       if (localDigestDuplicateError) {
         return this.skipMarketingAction(localDigestDuplicateError, '朋友圈动态本地摘要已处理过，已跳过本轮点赞')
@@ -674,14 +680,14 @@ export class WeChatNativeDriver {
       }
       const candidate = selection.candidate
       let menuPoint: MarketingMomentPoint | null = null
-      const point = candidate.commentPoint
-      if (action === 'comment' && !point) {
-        return this.skipMarketingAction('missing_action_point', '朋友圈互动点位缺失', candidate.author)
-      }
-      if (action === 'like') {
+      if (action === 'like' || action === 'comment') {
         menuPoint = this.resolveMarketingLikeMenuPoint(screenshot, recognition.moments, selection.candidateIndex, candidate)
         if (!menuPoint) {
-          return this.skipMarketingAction('like_menu_point_not_found', '未在朋友圈截图内确认到可匹配的点赞菜单入口', candidate.author)
+          return this.skipMarketingAction(
+            action === 'like' ? 'like_menu_point_not_found' : 'comment_menu_point_not_found',
+            action === 'like' ? '未在朋友圈截图内确认到可匹配的点赞菜单入口' : '未在朋友圈截图内确认到可匹配的评论菜单入口',
+            candidate.author
+          )
         }
         candidate.localVisualDigest = this.resolveMarketingLocalVisualDigest(localVisualDigests, menuPoint)
       }
@@ -712,18 +718,18 @@ export class WeChatNativeDriver {
         const likeResult = await this.clickMarketingLikeThroughMenu(momentsWindow, candidate, menuPoint)
         if (!likeResult.ok) {
           if (likeResult.error === 'like_menu_is_unlike' || likeResult.error === 'like_menu_action_unconfirmed') {
-            await this.closeMomentsWindowAfterUnsafeLikeMenu(momentsWindow, likeResult.error, candidate.author)
+            await this.closeMomentsWindowAfterUnsafeMarketingMenu(momentsWindow, likeResult.error, candidate.author)
           }
           return this.skipMarketingAction(likeResult.error || 'click_failed', '朋友圈点赞菜单确认或点击失败', candidate.author)
         }
       } else {
-        await focusWindow(momentsWindow.hwnd)
-        const clicked = await clickMarketingPoint(momentsWindow, point)
-        if (!clicked) {
-          return this.skipMarketingAction('click_failed', '朋友圈互动点位点击失败', candidate.author)
+        const commentResult = await this.clickMarketingCommentThroughMenu(momentsWindow, candidate, menuPoint)
+        if (!commentResult.ok) {
+          if (commentResult.error === 'comment_menu_action_unconfirmed') {
+            await this.closeMomentsWindowAfterUnsafeMarketingMenu(momentsWindow, commentResult.error, candidate.author)
+          }
+          return this.skipMarketingAction(commentResult.error || 'click_failed', '朋友圈评论菜单确认或点击失败', candidate.author)
         }
-      }
-      if (action === 'comment') {
         await wait(420 + Math.floor(Math.random() * 520))
         const commented = await pasteMarketingComment(momentsWindow, commentContent)
         if (!commented) {
@@ -828,7 +834,7 @@ export class WeChatNativeDriver {
     }
   }
 
-  private async closeMomentsWindowAfterUnsafeLikeMenu(
+  private async closeMomentsWindowAfterUnsafeMarketingMenu(
     window: WindowBounds,
     error: string,
     author: string
@@ -836,20 +842,20 @@ export class WeChatNativeDriver {
     try {
       const closed = await closeMomentsWindow(window)
       if (!closed) {
-        console.warn('个人微信朋友圈点赞菜单不安全，关闭朋友圈窗口失败', {
+        console.warn('个人微信朋友圈互动菜单不安全，关闭朋友圈窗口失败', {
           error,
           author,
           hwnd: window.hwnd
         })
         return
       }
-      console.info('个人微信朋友圈点赞菜单不安全，已关闭朋友圈窗口避免误触', {
+      console.info('个人微信朋友圈互动菜单不安全，已关闭朋友圈窗口避免误触', {
         error,
         author,
         hwnd: window.hwnd
       })
     } catch (closeError) {
-      console.warn('个人微信朋友圈点赞菜单不安全，关闭朋友圈窗口异常', {
+      console.warn('个人微信朋友圈互动菜单不安全，关闭朋友圈窗口异常', {
         error,
         author,
         hwnd: window.hwnd,
@@ -1027,12 +1033,12 @@ export class WeChatNativeDriver {
     action: MarketingActionType,
     digests: MarketingLocalVisualDigest[]
   ): string {
-    if (action !== 'like' || digests.length === 0) {
+    if (digests.length === 0) {
       return ''
     }
     const today = this.getMarketingDateKey()
     const handledDigests = new Set(this.marketingActionRecords
-      .filter((record) => record.date === today && record.action === 'like' && record.localVisualDigest)
+      .filter((record) => record.date === today && record.action === action && record.localVisualDigest)
       .map((record) => String(record.localVisualDigest)))
     if (handledDigests.size === 0) {
       return ''
@@ -1358,6 +1364,33 @@ export class WeChatNativeDriver {
     return { ok: true, menuPoint, confirmPoint }
   }
 
+  private async clickMarketingCommentThroughMenu(
+    window: WindowBounds,
+    candidate: MarketingMomentCandidate,
+    menuPoint: MarketingMomentPoint
+  ): Promise<MarketingLikeClickResult> {
+    await focusWindow(window.hwnd)
+    const menuClicked = await clickMarketingPoint(window, menuPoint)
+    if (!menuClicked) {
+      return { ok: false, error: 'click_failed', menuPoint }
+    }
+    await wait(280 + Math.floor(Math.random() * 220))
+    const menuScreenshot = await captureWeChatWindow(window)
+    const commentPoint = this.findMarketingCommentConfirmPoint(menuScreenshot, menuPoint)
+    if (!commentPoint) {
+      console.warn('个人微信朋友圈评论菜单未通过本地确认，已跳过评论', {
+        author: candidate.author,
+        menuPoint
+      })
+      return { ok: false, error: 'comment_menu_action_unconfirmed', menuPoint }
+    }
+    const confirmed = await clickMarketingPoint(window, commentPoint)
+    if (!confirmed) {
+      return { ok: false, error: 'comment_confirm_click_failed', menuPoint, confirmPoint: commentPoint }
+    }
+    return { ok: true, menuPoint, confirmPoint: commentPoint }
+  }
+
   private detectOpenedMarketingLikeMenuAction(
     screenshot: WeChatScreenshot,
     confirmPoint: MarketingMomentPoint
@@ -1409,6 +1442,69 @@ export class WeChatNativeDriver {
       return 'unknown'
     } catch (error) {
       console.warn('个人微信朋友圈点赞菜单本地动作识别异常，已按不安全处理', error)
+      return 'unknown'
+    }
+  }
+
+  private findMarketingCommentConfirmPoint(screenshot: WeChatScreenshot, menuPoint: MarketingMomentPoint): MarketingMomentPoint | null {
+    const likePoint = this.findMarketingLikeConfirmPoint(screenshot, menuPoint)
+    if (!likePoint) {
+      return null
+    }
+    const commentPoint = {
+      x: clampNumber(Math.round(likePoint.x + MARKETING_COMMENT_CONFIRM_OFFSET_X_PX), 0, screenshot.width),
+      y: likePoint.y
+    }
+    return this.detectOpenedMarketingCommentMenuAction(screenshot, commentPoint) === 'comment'
+      ? commentPoint
+      : null
+  }
+
+  private detectOpenedMarketingCommentMenuAction(
+    screenshot: WeChatScreenshot,
+    commentPoint: MarketingMomentPoint
+  ): 'comment' | 'unknown' {
+    try {
+      const image = nativeImage.createFromBuffer(screenshot.png)
+      if (!image || image.isEmpty()) {
+        return 'unknown'
+      }
+      const size = image.getSize()
+      if (!size.width || !size.height || typeof image.toBitmap !== 'function') {
+        return 'unknown'
+      }
+      const bitmap = image.toBitmap()
+      const left = clampNumber(Math.round(commentPoint.x - MARKETING_COMMENT_STATUS_SCAN_LEFT_PX), 0, size.width - 1)
+      const right = clampNumber(Math.round(commentPoint.x + MARKETING_COMMENT_STATUS_SCAN_RIGHT_PX), left, size.width - 1)
+      const top = clampNumber(Math.round(commentPoint.y - MARKETING_COMMENT_STATUS_SCAN_VERTICAL_PX), 0, size.height - 1)
+      const bottom = clampNumber(Math.round(commentPoint.y + MARKETING_COMMENT_STATUS_SCAN_VERTICAL_PX), top, size.height - 1)
+      let lightPixels = 0
+      let darkPixels = 0
+      for (let y = top; y <= bottom; y += 1) {
+        for (let x = left; x <= right; x += 1) {
+          const offset = (y * size.width + x) * 4
+          const red = bitmap[offset]
+          const green = bitmap[offset + 1]
+          const blue = bitmap[offset + 2]
+          const alpha = bitmap[offset + 3]
+          if (alpha > 180 && red >= 185 && green >= 185 && blue >= 185) {
+            lightPixels += 1
+            continue
+          }
+          if (alpha > 180 && red <= 90 && green <= 90 && blue <= 90) {
+            darkPixels += 1
+          }
+        }
+      }
+      if (lightPixels >= MARKETING_COMMENT_STATUS_MIN_LIGHT_PIXELS &&
+        darkPixels >= MARKETING_COMMENT_STATUS_MIN_DARK_PIXELS) {
+        console.info('个人微信朋友圈评论菜单本地识别为评论', { commentPoint, lightPixels, darkPixels })
+        return 'comment'
+      }
+      console.warn('个人微信朋友圈评论菜单本地动作识别不明确，已按不安全处理', { commentPoint, lightPixels, darkPixels })
+      return 'unknown'
+    } catch (error) {
+      console.warn('个人微信朋友圈评论菜单本地动作识别异常，已按不安全处理', error)
       return 'unknown'
     }
   }
@@ -1512,13 +1608,8 @@ export class WeChatNativeDriver {
       }
       return ''
     }
-    const actionPoint = action === 'like' ? candidate.likePoint : candidate.commentPoint
-    if (!candidate.postBounds || !actionPoint) {
-      return 'missing_action_point'
-    }
-    if (!this.isPointInsideScreenshot(actionPoint, screenshot) ||
-      !this.isMarketingActionPointInsideCandidate(action, actionPoint, candidate.postBounds)) {
-      return 'action_point_out_of_bounds'
+    if (candidate.suitableForComment !== true) {
+      return 'comment_not_suitable'
     }
     if (this.hasMarketingKeywordHit(rawConfig?.keywordFilter, candidate)) {
       return 'keyword_filtered'
@@ -1597,7 +1688,7 @@ export class WeChatNativeDriver {
       (!!legacyPostFingerprint && record.postFingerprint === legacyPostFingerprint))) {
       return 'duplicate_post'
     }
-    if (action === 'like' && localVisualDigest &&
+    if (localVisualDigest &&
       todayRecords.some((record) => record.localVisualDigest === localVisualDigest)) {
       return 'duplicate_local_visual_digest'
     }
@@ -1641,22 +1732,54 @@ export class WeChatNativeDriver {
         },
         body: JSON.stringify({
           postContent: candidate.content,
-          userNickname: candidate.author
+          userNickname: candidate.author,
+          timeText: candidate.timeText || ''
         })
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok || !payload || payload.code !== 0) {
         return ''
       }
-      const content = String(payload.data || '').replace(/^["']|["']$/g, '').trim()
-      if (!content || Array.from(content).length > MAX_MARKETING_COMMENT_LENGTH) {
-        return ''
-      }
-      return content
+      return this.normalizeGeneratedMarketingComment(candidate, payload.data)
     } catch (error) {
       console.warn('个人微信朋友圈评论生成失败，已跳过本轮评论', { author: candidate.author, error })
       return ''
     }
+  }
+
+  private normalizeGeneratedMarketingComment(candidate: MarketingMomentCandidate, rawContent: unknown): string {
+    const content = String(rawContent || '')
+      .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const charLength = Array.from(content).length
+    if (!content || charLength > MAX_MARKETING_COMMENT_LENGTH) {
+      return ''
+    }
+    // 朋友圈评论只能发送自然短句，任何联系方式、格式化输出或营销导向内容都按不安全处理。
+    const lowerContent = content.toLowerCase()
+    if (/https?:\/\//i.test(content) || /www\./i.test(content) || /@\S+/.test(content)) {
+      return ''
+    }
+    if (/1[3-9]\d{9}/.test(content)) {
+      return ''
+    }
+    if (/(?:微信|薇信|v信|wx|wechat)[:：\s-]*[a-z0-9_-]{3,}/i.test(content)) {
+      return ''
+    }
+    if (/^[{\[]/.test(content) || content.includes('```') || /^[-*#/>\s]/.test(content)) {
+      return ''
+    }
+    if (/(加我|联系|私信|购买|下单|优惠|代理|返利|扫码|进群)/.test(content)) {
+      return ''
+    }
+    const normalizedContent = lowerContent.replace(/\s+/g, '')
+    const normalizedPostContent = String(candidate.content || '').toLowerCase().replace(/\s+/g, '')
+    if (charLength >= 10 && normalizedPostContent.includes(normalizedContent)) {
+      return ''
+    }
+    return content
   }
 
   private async loadMarketingActionRecords(): Promise<void> {

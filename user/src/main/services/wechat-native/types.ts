@@ -29,6 +29,7 @@ export type MarketingMomentCandidate = {
   timeText?: string | null
   visualIndex?: number | null
   suitableForLike?: boolean | null
+  suitableForComment?: boolean | null
   alreadyLiked?: boolean | null
   likeMenuAction?: MarketingLikeMenuAction | null
   verticalRange?: MarketingMomentVerticalRange

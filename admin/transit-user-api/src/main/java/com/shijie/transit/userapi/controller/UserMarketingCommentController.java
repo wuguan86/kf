@@ -65,6 +65,7 @@ public class UserMarketingCommentController {
         ObjectNode inputs = objectMapper.createObjectNode();
         inputs.put("post_content", request.postContent());
         inputs.put("user_nickname", request.userNickname());
+        inputs.put("post_time_text", request.timeText() == null ? "" : request.timeText());
         inputs.put("user_custom_role", roleContent);
 
         String apiKey = difyProperties.getCommentWorkflowApiKey();
@@ -83,5 +84,5 @@ public class UserMarketingCommentController {
         }
     }
 
-    public record CommentGenerationRequest(String postContent, String userNickname) {}
+    public record CommentGenerationRequest(String postContent, String userNickname, String timeText) {}
 }

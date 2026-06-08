@@ -246,6 +246,7 @@ public class WechatVisionService {
           text(node.path("timeText")).trim(),
           parseMarketingVisualIndex(node),
           node.path("suitableForLike").isBoolean() ? node.path("suitableForLike").asBoolean() : null,
+          node.path("suitableForComment").isBoolean() ? node.path("suitableForComment").asBoolean() : null,
           node.path("alreadyLiked").isBoolean() ? node.path("alreadyLiked").asBoolean() : null,
           normalizeMarketingLikeMenuAction(node.path("likeMenuAction")),
           parseMarketingVerticalRange(node.path("verticalRange")),
@@ -375,14 +376,15 @@ public class WechatVisionService {
         - changed 固定返回 true。
         如果场景是 MARKETING_MOMENTS 或截图是朋友圈：
         - messages 返回空数组，重点输出 moments 数组。
-        - moments 每项字段固定为 author、content、timeText、visualIndex、suitableForLike、alreadyLiked、likeMenuAction、verticalRange、postBounds、likePoint、commentPoint、confidence。
+        - moments 每项字段固定为 author、content、timeText、visualIndex、suitableForLike、suitableForComment、alreadyLiked、likeMenuAction、verticalRange、postBounds、likePoint、commentPoint、confidence。
         - 只识别当前截图真实可见的朋友圈动态，不要推测屏幕外动态，不要补全看不清的昵称或内容。
         - timeText 是动态发布时间文本，例如“12小时前”“2天前”；看不清时返回空字符串，不能猜测。
-        - visualIndex 必须按当前截图内动态从上到下排序，从 0 开始；suitableForLike 表示这条动态语义上是否适合点赞。
+        - visualIndex 必须按当前截图内动态从上到下排序，从 0 开始；suitableForLike 表示这条动态语义上是否适合点赞，suitableForComment 表示这条动态语义上是否适合评论。
+        - 朋友圈评论只允许你给候选动态和 suitableForComment，不要给“必须点击”的最终裁决；右侧两个点菜单和评论按钮由客户端本地像素识别确认。
         - alreadyLiked 和 likeMenuAction 是兼容旧版本的可选字段；不要根据未打开菜单推测点赞菜单状态，无法从当前截图确定时返回 null 或 unknown。
         - 点赞入口是动态右侧“..”菜单；最终“赞/取消”由客户端打开菜单后做本地像素判断，大模型只负责候选动态和语义判断。
         - verticalRange 只描述该动态在当前截图内的粗略垂直范围，字段为 y、h；它只用于本地匹配，不是点击坐标。
-        - postBounds、likePoint、commentPoint 是兼容旧版本的可选字段；点赞坐标由客户端本地识别“..”菜单，不要为了补全字段而猜测坐标。
+        - postBounds、likePoint、commentPoint 是兼容旧版本的可选字段；点赞和评论坐标由客户端本地识别“..”菜单，不要为了补全字段而猜测坐标。
         - 如果没有把握、动态不完整、语义不适合点赞、按钮被遮挡或不在朋友圈页面，moments 返回空数组或降低 confidence。
         只输出真实可见内容，忽略搜索框、输入框、菜单、按钮、时间轴和其他系统控件。
         """;

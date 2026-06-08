@@ -184,6 +184,7 @@ const normalizeMarketingMoments = (value: unknown): MarketingMomentCandidate[] =
         timeText: String(raw.timeText ?? raw.time ?? raw.publishTime ?? '').trim() || null,
         visualIndex: normalizeVisualIndex(raw.visualIndex ?? raw.index ?? raw.order),
         suitableForLike: typeof raw.suitableForLike === 'boolean' ? raw.suitableForLike : null,
+        suitableForComment: typeof raw.suitableForComment === 'boolean' ? raw.suitableForComment : null,
         alreadyLiked: typeof raw.alreadyLiked === 'boolean' ? raw.alreadyLiked : null,
         likeMenuAction: normalizeMarketingLikeMenuAction(raw.likeMenuAction),
         verticalRange: normalizeVerticalRange(raw.verticalRange),
