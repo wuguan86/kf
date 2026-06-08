@@ -637,6 +637,10 @@
   background: #f0f9ff;
 }
 
+.fileItemError {
+  background: #fff7f7;
+}
+
 .fileIcon {
   margin-right: 12px;
   color: var(--text-secondary);
@@ -662,6 +666,35 @@
 .fileMeta {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.fileErrorText {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #b91c1c;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.clearFilesBtn {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  padding: 9px 12px;
+  color: var(--text-secondary);
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.clearFilesBtn:hover:not(:disabled) {
+  color: var(--color-primary);
+  background: #f9fafb;
+}
+
+.clearFilesBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .uploadStatus {
@@ -802,6 +835,86 @@
   background: rgba(22, 119, 255, 0.1);
   color: var(--color-primary);
   font-size: 13px;
+}
+
+.batchReviewLayout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.batchTaskList {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow-y: auto;
+  background: #fff;
+  min-height: 0;
+}
+
+.batchTaskItem {
+  position: relative;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: default;
+}
+
+.batchTaskItem:last-child {
+  border-bottom: 0;
+}
+
+.batchTaskItemActive {
+  background: rgba(22, 119, 255, 0.08);
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+.batchTaskName {
+  padding-right: 48px;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.batchTaskMeta {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.batchTaskError {
+  margin-top: 6px;
+  color: #b91c1c;
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.batchTaskRemoveBtn {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  border: 1px solid rgba(185, 28, 28, 0.2);
+  border-radius: 6px;
+  padding: 3px 7px;
+  color: #b91c1c;
+  background: #fff;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.batchTaskRemoveBtn:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.batchReviewPanel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .reviewLayout {

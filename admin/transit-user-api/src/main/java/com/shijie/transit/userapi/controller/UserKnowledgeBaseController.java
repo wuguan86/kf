@@ -87,6 +87,13 @@ public class UserKnowledgeBaseController {
     return Result.success(cleaningService.toResult(cleaningService.createTask(currentUserId(), id, file)));
   }
 
+  @PostMapping(value = "/{id}/cleaning-tasks/batch", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public Result<List<KnowledgeBaseCleaningService.CleaningBatchItemResult>> createCleaningTasks(
+      @PathVariable("id") Long id,
+      @RequestPart("files") List<MultipartFile> files) {
+    return Result.success(cleaningService.createBatchTasks(currentUserId(), id, files));
+  }
+
   @GetMapping("/{id}/cleaning-tasks/{taskId}")
   public Result<KnowledgeBaseCleaningService.CleaningTaskResult> getCleaningTask(
       @PathVariable("id") Long id,

@@ -12,6 +12,7 @@ import com.shijie.transit.userapi.mapper.KnowledgeBaseCleaningTaskMapper;
 import com.shijie.transit.userapi.mapper.KnowledgeBaseFileMapper;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
@@ -31,6 +32,7 @@ public class KnowledgeBaseCleaningService {
   private static final String STATUS_INDEXING = "INDEXING";
   private static final String STATUS_COMPLETED = "COMPLETED";
   private static final String STATUS_FAILED = "FAILED";
+  private static final int MAX_BATCH_FILE_COUNT = 10;
 
   private final KnowledgeBaseService knowledgeBaseService;
   private final KnowledgeBaseCleaningTaskMapper taskMapper;
@@ -97,6 +99,39 @@ public class KnowledgeBaseCleaningService {
       markFailed(task, "读取上传文件失败：" + safeMessage(ex));
     }
     return task;
+  }
+
+  public List<CleaningBatchItemResult> createBatchTasks(Long userId, Long knowledgeBaseId, List<? extends MultipartFile> files) {
+    if (files == null || files.isEmpty()) {
+      throw new IllegalArgumentException("请至少选择一个知识文件");
+    }
+    if (files.size() > MAX_BATCH_FILE_COUNT) {
+      throw new IllegalArgumentException("一次最多上传 10 个知识文件");
+    }
+    log.info("开始批量创建知识库清洗任务 userId={} knowledgeBaseId={} fileCount={}", userId, knowledgeBaseId, files.size());
+    List<CleaningBatchItemResult> results = new ArrayList<>();
+    for (MultipartFile file : files) {
+      String fileName = resolveOriginalFileName(file);
+      long fileSize = file == null ? 0L : file.getSize();
+      try {
+        KnowledgeBaseCleaningTaskEntity task = createTask(userId, knowledgeBaseId, file);
+        CleaningTaskResult taskResult = toResult(task);
+        results.add(new CleaningBatchItemResult(fileName, String.valueOf(fileSize), true, taskResult, ""));
+        log.info("知识库批量清洗文件任务创建成功 userId={} knowledgeBaseId={} fileName={} taskId={}",
+            userId, knowledgeBaseId, fileName, task.getId());
+      } catch (Exception ex) {
+        String errorMessage = safeMessage(ex);
+        results.add(new CleaningBatchItemResult(fileName, String.valueOf(fileSize), false, null, errorMessage));
+        log.warn("知识库批量清洗文件校验或创建失败 userId={} knowledgeBaseId={} fileName={} error={}",
+            userId, knowledgeBaseId, fileName, errorMessage);
+      }
+    }
+    log.info("知识库批量创建清洗任务完成 userId={} knowledgeBaseId={} successCount={} failureCount={}",
+        userId,
+        knowledgeBaseId,
+        results.stream().filter(CleaningBatchItemResult::success).count(),
+        results.stream().filter(item -> !item.success()).count());
+    return results;
   }
 
   public KnowledgeBaseCleaningTaskEntity getTask(Long userId, Long knowledgeBaseId, Long taskId) {
@@ -287,6 +322,13 @@ public class KnowledgeBaseCleaningService {
     return ex.getMessage();
   }
 
+  private String resolveOriginalFileName(MultipartFile file) {
+    if (file == null || !StringUtils.hasText(file.getOriginalFilename())) {
+      return "未命名文件";
+    }
+    return file.getOriginalFilename();
+  }
+
   public List<KnowledgeBaseCleaningTaskEntity> listRecentTasks(Long userId, Long knowledgeBaseId) {
     return taskMapper.selectList(new LambdaQueryWrapper<KnowledgeBaseCleaningTaskEntity>()
         .eq(KnowledgeBaseCleaningTaskEntity::getUserId, userId)
@@ -306,5 +348,13 @@ public class KnowledgeBaseCleaningService {
       List<KnowledgeBaseQaExtractionService.CleaningQaItem> items,
       String failedReason,
       String difyDocumentId) {
+  }
+
+  public record CleaningBatchItemResult(
+      String fileName,
+      String fileSize,
+      boolean success,
+      CleaningTaskResult task,
+      String errorMessage) {
   }
 }

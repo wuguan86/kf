@@ -2,6 +2,8 @@ package com.shijie.transit.userapi.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -13,16 +15,110 @@ import com.shijie.transit.common.db.entity.KnowledgeBaseFileEntity;
 import com.shijie.transit.userapi.dify.DifyClient;
 import com.shijie.transit.userapi.mapper.KnowledgeBaseCleaningTaskMapper;
 import com.shijie.transit.userapi.mapper.KnowledgeBaseFileMapper;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.client.RestClient;
 
 class KnowledgeBaseCleaningServiceTest {
 
   private final ObjectMapper objectMapper = new ObjectMapper();
+
+  @Test
+  void createBatchTasksCreatesOneTaskForEachValidFile() {
+    KnowledgeBaseCleaningTaskMapper taskMapper = mock(KnowledgeBaseCleaningTaskMapper.class);
+    AtomicLong idSequence = new AtomicLong(101L);
+    List<KnowledgeBaseCleaningTaskEntity> insertedTasks = new ArrayList<>();
+    when(taskMapper.insert(any(KnowledgeBaseCleaningTaskEntity.class))).thenAnswer(invocation -> {
+      KnowledgeBaseCleaningTaskEntity task = invocation.getArgument(0);
+      task.setId(idSequence.getAndIncrement());
+      insertedTasks.add(task);
+      return 1;
+    });
+    KnowledgeBaseCleaningService service = new KnowledgeBaseCleaningService(
+        fakeKnowledgeBaseService(),
+        taskMapper,
+        mock(KnowledgeBaseFileMapper.class),
+        new KnowledgeBaseDocumentParser(),
+        disabledExtractionService(),
+        new KnowledgeBaseQaMarkdownBuilder(),
+        new RecordingDifyClient(),
+        objectMapper,
+        Clock.systemDefaultZone());
+
+    List<KnowledgeBaseCleaningService.CleaningBatchItemResult> results = service.createBatchTasks(7L, 9L, List.of(
+        mockKnowledgeFile("价格说明.txt", "收费标准：专业版每月 299 元。"),
+        mockKnowledgeFile("售后政策.md", "支持 7 天无理由退货。")));
+
+    assertEquals(2, results.size());
+    assertTrue(results.get(0).success());
+    assertEquals("价格说明.txt", results.get(0).fileName());
+    assertEquals("101", results.get(0).task().taskId());
+    assertTrue(results.get(1).success());
+    assertEquals("售后政策.md", results.get(1).fileName());
+    assertEquals(2, insertedTasks.size());
+  }
+
+  @Test
+  void createBatchTasksKeepsValidFilesWhenAnotherFileFailsValidation() {
+    KnowledgeBaseCleaningTaskMapper taskMapper = mock(KnowledgeBaseCleaningTaskMapper.class);
+    when(taskMapper.insert(any(KnowledgeBaseCleaningTaskEntity.class))).thenAnswer(invocation -> {
+      KnowledgeBaseCleaningTaskEntity task = invocation.getArgument(0);
+      task.setId(201L);
+      return 1;
+    });
+    KnowledgeBaseCleaningService service = new KnowledgeBaseCleaningService(
+        fakeKnowledgeBaseService(),
+        taskMapper,
+        mock(KnowledgeBaseFileMapper.class),
+        new KnowledgeBaseDocumentParser(),
+        disabledExtractionService(),
+        new KnowledgeBaseQaMarkdownBuilder(),
+        new RecordingDifyClient(),
+        objectMapper,
+        Clock.systemDefaultZone());
+
+    List<KnowledgeBaseCleaningService.CleaningBatchItemResult> results = service.createBatchTasks(7L, 9L, List.of(
+        mockKnowledgeFile("可用资料.pdf", "可用资料"),
+        new MockMultipartFile("files", "脚本.exe", "application/octet-stream", "bad".getBytes(StandardCharsets.UTF_8))));
+
+    assertEquals(2, results.size());
+    assertTrue(results.get(0).success());
+    assertEquals("201", results.get(0).task().taskId());
+    assertFalse(results.get(1).success());
+    assertEquals("脚本.exe", results.get(1).fileName());
+    assertEquals("仅支持 PDF、Word、TXT、MD、Excel 文件", results.get(1).errorMessage());
+  }
+
+  @Test
+  void createBatchTasksRejectsMoreThanTenFiles() {
+    KnowledgeBaseCleaningService service = new KnowledgeBaseCleaningService(
+        fakeKnowledgeBaseService(),
+        mock(KnowledgeBaseCleaningTaskMapper.class),
+        mock(KnowledgeBaseFileMapper.class),
+        new KnowledgeBaseDocumentParser(),
+        disabledExtractionService(),
+        new KnowledgeBaseQaMarkdownBuilder(),
+        new RecordingDifyClient(),
+        objectMapper,
+        Clock.systemDefaultZone());
+    List<MockMultipartFile> files = new ArrayList<>();
+    for (int i = 0; i < 11; i++) {
+      files.add(mockKnowledgeFile("资料-" + i + ".txt", "内容-" + i));
+    }
+
+    IllegalArgumentException error = assertThrows(
+        IllegalArgumentException.class,
+        () -> service.createBatchTasks(7L, 9L, files));
+
+    assertEquals("一次最多上传 10 个知识文件", error.getMessage());
+  }
 
   @Test
   void confirmCreatesDifyTextDocumentAndRecordsFile() throws Exception {
@@ -136,6 +232,10 @@ class KnowledgeBaseCleaningServiceTest {
         "",
         "https://dashscope.aliyuncs.com",
         "qwen3.6-plus");
+  }
+
+  private MockMultipartFile mockKnowledgeFile(String fileName, String content) {
+    return new MockMultipartFile("files", fileName, "text/plain", content.getBytes(StandardCharsets.UTF_8));
   }
 
   private static class RecordingDifyClient extends DifyClient {
