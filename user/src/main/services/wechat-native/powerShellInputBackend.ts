@@ -4,6 +4,7 @@ import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } 
 import type { WeChatInputBackend } from './inputBackendTypes'
 import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
 import { getMomentsEntryPoint } from './momentsEntryPoint'
+import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
 
 const runPowerShell = async (script: string, timeoutMs = 10000): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -379,6 +380,9 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
     async pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
       const originalClipboardText = clipboard.readText()
       clipboard.writeText(content)
+      const sendPoint = getMarketingCommentSendPoint(bounds)
+      const sendX = Math.round(sendPoint.x + Math.random() * 8 - 4)
+      const sendY = Math.round(sendPoint.y + Math.random() * 6 - 3)
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
@@ -387,21 +391,44 @@ using System;
 using System.Runtime.InteropServices;
 public class NativeMarketingComment {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
 "@
+function Move-HumanLike([int]$targetX, [int]$targetY) {
+  $current = [System.Windows.Forms.Cursor]::Position
+  $steps = Get-Random -Minimum 4 -Maximum 8
+  for ($i = 1; $i -le $steps; $i++) {
+    $ratio = [double]$i / [double]$steps
+    $nextX = [int]($current.X + (($targetX - $current.X) * $ratio) + (Get-Random -Minimum -2 -Maximum 3))
+    $nextY = [int]($current.Y + (($targetY - $current.Y) * $ratio) + (Get-Random -Minimum -2 -Maximum 3))
+    [void][NativeMarketingComment]::SetCursorPos($nextX, $nextY)
+    Start-Sleep -Milliseconds (Get-Random -Minimum 18 -Maximum 52)
+  }
+  [void][NativeMarketingComment]::SetCursorPos($targetX, $targetY)
+}
+function Click-HumanLike([int]$targetX, [int]$targetY) {
+  Move-HumanLike $targetX $targetY
+  Start-Sleep -Milliseconds (Get-Random -Minimum 80 -Maximum 160)
+  [NativeMarketingComment]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
+  [NativeMarketingComment]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+}
 $hwnd = [IntPtr]${Math.round(bounds.hwnd)}
 [void][NativeMarketingComment]::SetForegroundWindow($hwnd)
 Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
 [System.Windows.Forms.SendKeys]::SendWait("^v")
 Start-Sleep -Milliseconds (Get-Random -Minimum 360 -Maximum 680)
-[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+Click-HumanLike ${sendX} ${sendY}
 Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
 `
 
       try {
         await runPowerShell(script, 12000)
-        console.info('PowerShell 输入后端已粘贴并发送朋友圈评论', {
+        console.info('PowerShell 输入后端已粘贴并点击朋友圈评论发送按钮', {
           contentLength: Array.from(content).length,
+          sendX,
+          sendY,
           processName: bounds.processName
         })
         return true

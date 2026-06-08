@@ -102,6 +102,8 @@ const MARKETING_COMMENT_STATUS_SCAN_RIGHT_PX = 36
 const MARKETING_COMMENT_STATUS_SCAN_VERTICAL_PX = 22
 const MARKETING_COMMENT_STATUS_MIN_LIGHT_PIXELS = 80
 const MARKETING_COMMENT_STATUS_MIN_DARK_PIXELS = 1600
+const MARKETING_COMMENT_STATUS_MIXED_MIN_LIGHT_PIXELS = 2000
+const MARKETING_COMMENT_STATUS_MIXED_MIN_DARK_PIXELS = 900
 const MARKETING_CLOSE_AFTER_SUCCESS_MIN_DELAY_MS = 1200
 const MARKETING_CLOSE_AFTER_SUCCESS_MAX_DELAY_MS = 2000
 
@@ -1507,8 +1509,11 @@ export class WeChatNativeDriver {
           }
         }
       }
-      if (lightPixels >= MARKETING_COMMENT_STATUS_MIN_LIGHT_PIXELS &&
-        darkPixels >= MARKETING_COMMENT_STATUS_MIN_DARK_PIXELS) {
+      const hasStandardCommentSignal = lightPixels >= MARKETING_COMMENT_STATUS_MIN_LIGHT_PIXELS &&
+        darkPixels >= MARKETING_COMMENT_STATUS_MIN_DARK_PIXELS
+      const hasMixedNarrowWindowCommentSignal = lightPixels >= MARKETING_COMMENT_STATUS_MIXED_MIN_LIGHT_PIXELS &&
+        darkPixels >= MARKETING_COMMENT_STATUS_MIXED_MIN_DARK_PIXELS
+      if (hasStandardCommentSignal || hasMixedNarrowWindowCommentSignal) {
         console.info('个人微信朋友圈评论菜单本地识别为评论', { commentPoint, lightPixels, darkPixels })
         return 'comment'
       }

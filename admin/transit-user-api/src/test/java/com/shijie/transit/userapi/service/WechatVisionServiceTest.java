@@ -316,6 +316,8 @@ class WechatVisionServiceTest {
         .andExpect(content().string(Matchers.containsString("likeMenuAction")))
         .andExpect(content().string(Matchers.containsString("timeText")))
         .andExpect(content().string(Matchers.containsString("suitableForComment")))
+        .andExpect(content().string(Matchers.containsString("普通资讯、文章分享、生活记录、产品动态在没有明显风险时 suitableForComment 返回 true")))
+        .andExpect(content().string(Matchers.containsString("讣告、疾病隐私、灾害事故、争议攻击、投诉维权、明显广告引流")))
         .andExpect(content().string(Matchers.containsString("本地像素判断")))
         .andRespond(withSuccess("""
             {

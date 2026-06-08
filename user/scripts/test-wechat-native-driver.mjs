@@ -315,6 +315,24 @@ function createMarketingMenuNativeImageMock() {
           }
         }
       }
+      if (marker.includes('comment-action-real-mixed')) {
+        for (let y = 253; y <= 297; y++) {
+          for (let x = 587; x <= 609; x++) {
+            const offset = (y * width + x) * 4
+            bitmap[offset] = 48
+            bitmap[offset + 1] = 48
+            bitmap[offset + 2] = 48
+            bitmap[offset + 3] = 255
+          }
+        }
+        for (let y = 253; y <= 281; y++) {
+          const offset = (y * width + 610) * 4
+          bitmap[offset] = 48
+          bitmap[offset + 1] = 48
+          bitmap[offset + 2] = 48
+          bitmap[offset + 3] = 255
+        }
+      }
       if (marker.includes('menu-open-near-article-button')) {
         for (let y = 444; y <= 486; y++) {
           for (let x = 660; x <= 802; x++) {
@@ -3388,6 +3406,25 @@ async function testMarketingCommentUsesLocalMenuPointWithoutModelCommentPoint() 
   }
 }
 
+async function testMarketingCommentRecognizesRealMixedMenuPixels() {
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: createMarketingMenuNativeImageMock()
+  })
+  const driver = new WeChatNativeDriver()
+
+  const action = driver.detectOpenedMarketingCommentMenuAction(
+    {
+      dataUrl: 'data:image/png;base64=comment-action-real-mixed',
+      png: Buffer.from('comment-action-real-mixed'),
+      width: 900,
+      height: 700
+    },
+    { x: 623, y: 275 }
+  )
+
+  assert.equal(action, 'comment')
+}
+
 async function testMarketingCommentReportsMissingGenerationBackendBeforeMenuClick() {
   const clickedPoints = []
   let captureCount = 0
@@ -3658,6 +3695,8 @@ clearMarketingActionStore()
 await testMarketingLikeRejectsLowConfidenceCandidateWithoutClicking()
 clearMarketingActionStore()
 await testMarketingCommentUsesLocalMenuPointWithoutModelCommentPoint()
+clearMarketingActionStore()
+await testMarketingCommentRecognizesRealMixedMenuPixels()
 clearMarketingActionStore()
 await testMarketingCommentReportsMissingGenerationBackendBeforeMenuClick()
 clearMarketingActionStore()

@@ -4,6 +4,7 @@ import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } 
 import type { WeChatInputBackend } from './inputBackendTypes'
 import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
 import { getMomentsEntryPoint } from './momentsEntryPoint'
+import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
 
 type Win32Api = {
   setForegroundWindow: (hwnd: number) => boolean
@@ -192,14 +193,18 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
     async pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
       const api = loadWin32Api()
       const originalClipboardText = clipboard.readText()
+      const sendPoint = getMarketingCommentSendPoint(bounds)
       try {
         clipboard.writeText(content)
         await focusWindow(api, bounds.hwnd)
         await pressCtrlV(api)
         await wait(80)
-        await pressKey(api, VK_ENTER)
-        console.info('原生输入后端已粘贴并发送朋友圈评论', {
+        await clickAt(api, sendPoint.x, sendPoint.y)
+        await wait(120)
+        console.info('原生输入后端已粘贴并点击朋友圈评论发送按钮', {
           contentLength: Array.from(content).length,
+          sendX: sendPoint.x,
+          sendY: sendPoint.y,
           processName: bounds.processName
         })
         return true

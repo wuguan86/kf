@@ -222,6 +222,42 @@ function testExitBackendsDoNotSendEscBecauseWechatMinimizesToTray() {
   assert.equal(powerShellSource.includes('SendWait("{ESC}")'), false)
 }
 
+function testMarketingCommentSendPointTargetsMomentsSendButton() {
+  const { getMarketingCommentSendPoint } = loadWechatNativeModule('marketingCommentSendPoint.ts')
+  const momentsWindow = {
+    hwnd: 4000472,
+    title: '朋友圈',
+    className: 'Qt51514QWindowIcon',
+    processName: 'Weixin',
+    x: 1135,
+    y: 384,
+    width: 456,
+    height: 558
+  }
+
+  const point = getMarketingCommentSendPoint(momentsWindow)
+
+  assert.deepEqual(point, { x: 1513, y: 904 })
+  assert.ok(point.x > momentsWindow.x + momentsWindow.width * 0.78)
+  assert.ok(point.x < momentsWindow.x + momentsWindow.width - 40)
+  assert.ok(point.y > momentsWindow.y + momentsWindow.height * 0.9)
+  assert.ok(point.y < momentsWindow.y + momentsWindow.height - 20)
+}
+
+function testMarketingCommentInputBackendsClickSendButton() {
+  const win32Source = readFileSync(resolve('src/main/services/wechat-native/win32InputBackend.ts'), 'utf8')
+  const powerShellSource = readFileSync(resolve('src/main/services/wechat-native/powerShellInputBackend.ts'), 'utf8')
+  const win32CommentSource = win32Source.slice(win32Source.indexOf('async pasteMarketingComment'))
+  const powerShellCommentSource = powerShellSource.slice(powerShellSource.indexOf('async pasteMarketingComment'))
+
+  assert.match(win32CommentSource, /getMarketingCommentSendPoint\(bounds\)/)
+  assert.match(win32CommentSource, /clickAt\(api,\s*sendPoint\.x,\s*sendPoint\.y\)/)
+  assert.equal(win32CommentSource.includes('pressKey(api, VK_ENTER)'), false)
+  assert.match(powerShellCommentSource, /getMarketingCommentSendPoint\(bounds\)/)
+  assert.match(powerShellCommentSource, /Click-HumanLike \$\{sendX\} \$\{sendY\}/)
+  assert.equal(powerShellCommentSource.includes('SendWait("{ENTER}")'), false)
+}
+
 await testUsesNativeBackendFirstOnWindows()
 await testFallsBackWhenNativeBackendThrows()
 await testUsesFallbackOutsideWindows()
@@ -231,3 +267,5 @@ testExitPointTargetsConversationListAndAvoidsWindowCloseButton()
 testMomentsEntryPointTargetsLeftSidebarIcon()
 testNestedReturnPointTargetsTopLeftBackButton()
 testExitBackendsDoNotSendEscBecauseWechatMinimizesToTray()
+testMarketingCommentSendPointTargetsMomentsSendButton()
+testMarketingCommentInputBackendsClickSendButton()
