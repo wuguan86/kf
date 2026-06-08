@@ -237,6 +237,7 @@ export class WeChatNativeDriver {
   private latestSnapshotScreenshot: WeChatScreenshot | null = null
   private latestSnapshotHasPixelGuard = false
   private startupBaselinePending = false
+  private startupUnreadCandidateIds = new Set<string>()
   private latestSnapshotFromUnreadSwitch = false
   private lockedUnreadConversationContact: LockedUnreadConversationContact | null = null
   private cachedImageMessages = new Map<string, CachedImageMessage>()
@@ -288,11 +289,13 @@ export class WeChatNativeDriver {
     this.latestSnapshotScreenshot = null
     this.latestSnapshotHasPixelGuard = false
     this.startupBaselinePending = true
+    this.startupUnreadCandidateIds.clear()
     this.latestSnapshotFromUnreadSwitch = false
     this.lockedUnreadConversationContact = null
     this.cachedImageMessages.clear()
     this.marketingCommandRunning = false
     this.lastWechatActivityAt = 0
+    await this.captureStartupUnreadCandidateBaseline(window)
     console.info('新方式微信视觉驱动已启动', {
       title: window.title,
       className: window.className,
@@ -318,6 +321,7 @@ export class WeChatNativeDriver {
     this.latestSnapshotScreenshot = null
     this.latestSnapshotHasPixelGuard = false
     this.startupBaselinePending = false
+    this.startupUnreadCandidateIds.clear()
     this.latestSnapshotFromUnreadSwitch = false
     this.lockedUnreadConversationContact = null
     this.cachedImageMessages.clear()
@@ -377,11 +381,12 @@ export class WeChatNativeDriver {
       return { ok: true, messages: [] }
     }
 
-    if (this.startupBaselinePending && !this.latestSnapshotFromUnreadSwitch && this.latestSnapshotHasPixelGuard) {
+    if (this.startupBaselinePending && this.shouldUseSnapshotAsStartupBaseline()) {
       this.markSnapshotAsBaseline(snapshot)
       this.startupBaselinePending = false
       console.info('微信视觉启动基线已建立，当前可见历史消息不进入实时消息列表', {
         contact: snapshot.contact,
+        channel: this.channel,
         messageCount: snapshot.messages.length
       })
       return { ok: true, messages: [] }
@@ -1981,6 +1986,52 @@ export class WeChatNativeDriver {
     return createHash('sha256').update(source).digest('hex').slice(0, 24)
   }
 
+  private async captureStartupUnreadCandidateBaseline(window: WindowBounds): Promise<void> {
+    if (this.channel !== 'enterprise') {
+      return
+    }
+    try {
+      const screenshot = await captureWeChatWindow(window)
+      const candidates = findUnreadConversationCandidates(screenshot, window, this.channel)
+      this.startupUnreadCandidateIds = new Set(candidates.map((candidate) => candidate.id))
+      if (this.startupUnreadCandidateIds.size > 0) {
+        console.info('企业微信启动未读会话基线已建立，启动前已有红点不会触发自动回复', {
+          count: this.startupUnreadCandidateIds.size,
+          candidateIds: Array.from(this.startupUnreadCandidateIds).slice(0, 10)
+        })
+      }
+    } catch (error) {
+      this.startupUnreadCandidateIds.clear()
+      console.warn('企业微信启动未读会话基线建立失败，后续将继续依赖可见消息基线和本地视觉守卫', error)
+    }
+  }
+
+  private shouldUseSnapshotAsStartupBaseline(): boolean {
+    if (!this.startupBaselinePending) {
+      return false
+    }
+    if (this.channel === 'enterprise') {
+      return true
+    }
+    return !this.latestSnapshotFromUnreadSwitch && this.latestSnapshotHasPixelGuard
+  }
+
+  private cleanupStartupUnreadCandidateBaseline(candidates: UnreadConversationCandidate[]): void {
+    if (this.channel !== 'enterprise' || this.startupUnreadCandidateIds.size === 0) {
+      return
+    }
+    const currentCandidateIds = new Set(candidates.map((candidate) => candidate.id))
+    for (const candidateId of Array.from(this.startupUnreadCandidateIds)) {
+      if (!currentCandidateIds.has(candidateId)) {
+        this.startupUnreadCandidateIds.delete(candidateId)
+      }
+    }
+  }
+
+  private isStartupUnreadCandidate(candidate: UnreadConversationCandidate): boolean {
+    return this.channel === 'enterprise' && this.startupUnreadCandidateIds.has(candidate.id)
+  }
+
   private async refreshBaseline(window: WindowBounds): Promise<void> {
     try {
       const snapshot = await this.readSnapshot(window)
@@ -2016,7 +2067,18 @@ export class WeChatNativeDriver {
     }
     if (!diff.changed && !shouldParseMinorCurrentChatChange && !shouldRetryFailedVision) {
       const unreadCandidates = findUnreadConversationCandidates(screenshot, window, this.channel)
-      const candidate = unreadCandidates.find((item) => !this.isSkippedCandidateCoolingDown(item))
+      this.cleanupStartupUnreadCandidateBaseline(unreadCandidates)
+      const candidate = unreadCandidates.find((item) => {
+        if (this.isStartupUnreadCandidate(item)) {
+          console.info('企业微信启动前已存在的未读会话本轮跳过，避免历史消息被当成启动后新消息', {
+            candidateId: item.id,
+            centerX: item.centerX,
+            centerY: item.centerY
+          })
+          return false
+        }
+        return !this.isSkippedCandidateCoolingDown(item)
+      })
       if (candidate) {
         if (this.activeReplySessionKey) {
           console.info('新方式当前会话仍在回复中，本轮仅扫描未读但不点击', {
@@ -2216,6 +2278,9 @@ export class WeChatNativeDriver {
   private hasReliableCustomerTriggerGeometry(message: ParsedWeChatMessage): boolean {
     if (message.bounds) {
       return true
+    }
+    if (this.channel === 'enterprise') {
+      return false
     }
     return !this.latestSnapshotHasPixelGuard
   }

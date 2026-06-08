@@ -156,6 +156,17 @@ const testWindow = {
   height: 700
 }
 
+const testEnterpriseWindow = {
+  hwnd: 300,
+  title: '企业微信',
+  className: 'TXGuiFoundation',
+  processName: 'WXWork',
+  x: 0,
+  y: 0,
+  width: 1200,
+  height: 700
+}
+
 const testMomentsWindow = {
   hwnd: 200,
   title: '朋友圈',
@@ -1509,6 +1520,162 @@ async function testStartupVisibleHistoryIsOnlyUsedAsBaselineWithPixelGuard() {
   const driver = new WeChatNativeDriver()
 
   await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+}
+
+async function testEnterpriseStartupVisibleHistoryIsOnlyUsedAsBaselineWithoutPixelGuard() {
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testEnterpriseWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=enterprise-startup-history-window',
+      png: Buffer.from('enterprise-startup-history-window'),
+      width: 1200,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-enterprise-startup-history', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'enterprise-startup-customer',
+      messages: [
+        {
+          content: 'old enterprise customer text',
+          isSelf: false,
+          uiId: 'enterprise-startup-old-customer',
+          type: 'text',
+          bounds: { x: 320, y: 180, w: 160, h: 48 }
+        }
+      ],
+      snapshotDigest: 'digest-enterprise-startup-history-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  driver.configure({ channel: 'enterprise' })
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+}
+
+async function testEnterpriseStartupUnreadCandidateIsIgnored() {
+  const clickedCandidates = []
+  let compareCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testEnterpriseWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=enterprise-unread-window',
+      png: Buffer.from('enterprise-unread-window'),
+      width: 1200,
+      height: 700
+    }),
+    comparePngSnapshots: () => {
+      compareCount += 1
+      return compareCount === 1
+        ? { changed: false, digest: 'digest-enterprise-unread-before-click', changedRatio: 0 }
+        : { changed: true, digest: 'digest-enterprise-unread-after-click', changedRatio: 1 }
+    },
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-enterprise-startup',
+      x: 68,
+      y: 365,
+      width: 12,
+      height: 12,
+      centerX: 74,
+      centerY: 371,
+      score: 18
+    }],
+    recognizeUnreadConversationCandidate: async () => ({
+      contact: 'enterprise-startup-unread-customer',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL',
+      skipAutoReply: false,
+      skipReason: '',
+      confidence: 0.99
+    }),
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: 'enterprise-startup-unread-customer',
+      messages: [
+        {
+          content: 'old unread enterprise text',
+          isSelf: false,
+          uiId: 'enterprise-old-unread',
+          type: 'text',
+          bounds: { x: 320, y: 220, w: 190, h: 48 }
+        }
+      ],
+      snapshotDigest: 'digest-enterprise-unread-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  driver.configure({ channel: 'enterprise' })
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(clickedCandidates, [])
+}
+
+async function testEnterpriseUnboundedCustomerTextDoesNotTriggerWithoutPixelGuard() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testEnterpriseWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=enterprise-unbounded-window',
+      png: Buffer.from(`enterprise-unbounded-window-${parseCount}`),
+      width: 1200,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-enterprise-unbounded-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'enterprise-unbounded-customer',
+        messages: parseCount === 1
+          ? [
+              {
+                content: 'enterprise baseline text',
+                isSelf: false,
+                uiId: 'enterprise-unbounded-baseline',
+                type: 'text',
+                bounds: { x: 320, y: 150, w: 160, h: 48 }
+              }
+            ]
+          : [
+              {
+                content: 'enterprise hallucinated customer text',
+                isSelf: false,
+                uiId: 'enterprise-unbounded-customer',
+                type: 'text'
+              }
+            ],
+        snapshotDigest: `digest-enterprise-unbounded-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  driver.configure({ channel: 'enterprise' })
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
   const result = await driver.poll()
 
   assert.equal(result.ok, true)
@@ -3810,6 +3977,9 @@ await testImageMessageCanBeCroppedFromLatestSnapshot()
 await testSmallAvatarMisreadAsImageMessageIsIgnored()
 await testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv()
 await testStartupVisibleHistoryIsOnlyUsedAsBaselineWithPixelGuard()
+await testEnterpriseStartupVisibleHistoryIsOnlyUsedAsBaselineWithoutPixelGuard()
+await testEnterpriseStartupUnreadCandidateIsIgnored()
+await testEnterpriseUnboundedCustomerTextDoesNotTriggerWithoutPixelGuard()
 await testUnboundedCustomerTextDoesNotTriggerWhenPixelGuardIsAvailable()
 await testBlankLargeImageHallucinationIsIgnored()
 await testOversizedImageBoundsAreTightenedBeforeCrop()
