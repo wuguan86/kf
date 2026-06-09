@@ -18,6 +18,7 @@ import java.util.Locale;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +33,7 @@ public class OutboundMaterialService {
   private final OutboundMaterialMapper outboundMaterialMapper;
   private final Path uploadRoot;
 
+  @Autowired
   public OutboundMaterialService(
       OutboundMaterialMapper outboundMaterialMapper,
       @Value("${transit.material.upload-root:uploads/materials}") String uploadRoot) {

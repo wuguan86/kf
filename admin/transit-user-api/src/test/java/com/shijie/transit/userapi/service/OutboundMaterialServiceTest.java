@@ -2,6 +2,7 @@ package com.shijie.transit.userapi.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.mock.web.MockMultipartFile;
 
 class OutboundMaterialServiceTest {
@@ -25,6 +27,14 @@ class OutboundMaterialServiceTest {
   @AfterEach
   void clearTenant() {
     TenantContext.clear();
+  }
+
+  @Test
+  void springContextCanCreateOutboundMaterialServiceWithMapperDependency() {
+    new ApplicationContextRunner()
+        .withBean(OutboundMaterialMapper.class, () -> mock(OutboundMaterialMapper.class))
+        .withBean(OutboundMaterialService.class)
+        .run(context -> assertThat(context).hasSingleBean(OutboundMaterialService.class));
   }
 
   @Test

@@ -20,5 +20,5 @@ CREATE TABLE IF NOT EXISTS outbound_material (
   updated_at TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_outbound_material_tenant_scope ON outbound_material (tenant_id, scope);
-CREATE INDEX IF NOT EXISTS idx_outbound_material_owner ON outbound_material (owner_user_id);
+CREATE INDEX idx_outbound_material_tenant_scope ON outbound_material (tenant_id, scope);
+CREATE INDEX idx_outbound_material_owner ON outbound_material (owner_user_id);
