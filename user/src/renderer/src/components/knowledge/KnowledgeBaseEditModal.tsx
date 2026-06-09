@@ -5,6 +5,7 @@ import type { KnowledgeBase, KnowledgeBaseFile } from '../../pages/KnowledgeBase
 import KnowledgeFileDropzone from './KnowledgeFileDropzone'
 import KnowledgeCleaningReviewTable from './KnowledgeCleaningReviewTable'
 import { CleaningQaItem, CleaningTask, useKnowledgeCleaningTask } from './useKnowledgeCleaningTask'
+import { resolveKnowledgeFileDisplay } from './knowledgeFileDisplay'
 
 type Props = {
   editingKnowledgeBase: KnowledgeBase | null
@@ -179,7 +180,7 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
                       className={`${styles.batchTaskItem} ${item.task?.taskId === activeTask?.taskId ? styles.batchTaskItemActive : ''}`}
                       onClick={() => item.task?.taskStatus === 'REVIEWING' && setActiveTaskId(item.task.taskId)}
                     >
-                      <div className={styles.batchTaskName}>{item.fileName}</div>
+                      <div className={styles.batchTaskName} title={item.fileName}>{item.fileName}</div>
                       <div className={styles.batchTaskMeta}>
                         {formatFileSize(item.fileSize)} · {resolveBatchStatusLabel(item)}
                       </div>
@@ -277,7 +278,7 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
                         </div>
                         <div className={styles.fileInfo}>
-                          <div className={styles.fileName}>{item.fileName}</div>
+                          <div className={styles.fileName} title={item.fileName}>{item.fileName}</div>
                           <div className={styles.fileMeta}>{formatFileSize(item.fileSize)} · {resolveBatchStatusLabel(item)}</div>
                           {(!item.success || item.task?.taskStatus === 'FAILED') && (
                             <div className={styles.fileErrorText}>{item.errorMessage || item.task?.failedReason || '清洗失败'}</div>
@@ -295,20 +296,33 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
 
                 {files.length > 0 && (
                   <div className={styles.filesWrapper}>
-                    {files.map(file => (
-                      <div key={file.id} className={styles.fileItem}>
-                        <div className={styles.fileIcon}>
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                    {files.map(file => {
+                      const fileDisplay = resolveKnowledgeFileDisplay(file.name)
+                      return (
+                        <div key={file.id} className={styles.fileItem}>
+                          <div className={styles.fileIcon}>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                          </div>
+                          <div className={styles.fileInfo}>
+                            <div className={styles.fileNameRow}>
+                              <div className={styles.fileName} title={fileDisplay.displayName}>{fileDisplay.displayName}</div>
+                              {fileDisplay.aiCleaned && (
+                                <span className={styles.aiCleanedBadge} title="该文件已由 AI 清洗后入库">✨ AI已清洗</span>
+                              )}
+                            </div>
+                            <div className={styles.fileMeta} title={resolveKnowledgeFileStatusTitle(file)}>
+                              {resolveKnowledgeFileMeta(file)}
+                            </div>
+                            {isKnowledgeFileIndexingFailed(file.indexingStatus) && file.errorMsg && (
+                              <div className={styles.fileErrorText}>{file.errorMsg}</div>
+                            )}
+                          </div>
+                          <button className={`${styles.iconBtn} ${styles.deleteBtn}`} onClick={() => onDeleteFile(file)} title="删除文件">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                          </button>
                         </div>
-                        <div className={styles.fileInfo}>
-                          <div className={styles.fileName}>{file.name}</div>
-                          <div className={styles.fileMeta}>已入库 · {(Number(file.fileSize || 0) / 1024 / 1024).toFixed(2)} MB · {file.indexingStatus || 'waiting'}</div>
-                        </div>
-                        <button className={`${styles.iconBtn} ${styles.deleteBtn}`} onClick={() => onDeleteFile(file)} title="删除文件">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                        </button>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
 
@@ -346,4 +360,43 @@ function formatFileSize(value: string) {
   const size = Number(value || 0)
   if (!Number.isFinite(size) || size <= 0) return '0.00 MB'
   return `${(size / 1024 / 1024).toFixed(2)} MB`
+}
+
+function resolveKnowledgeFileMeta(file: KnowledgeBaseFile) {
+  return `${resolveKnowledgeFileStageLabel(file.indexingStatus)} · ${formatFileSize(file.fileSize)} · ${resolveKnowledgeFileIndexingLabel(file.indexingStatus)}`
+}
+
+function resolveKnowledgeFileStatusTitle(file: KnowledgeBaseFile) {
+  const status = file.indexingStatus || 'waiting'
+  const error = file.errorMsg ? `，失败原因：${file.errorMsg}` : ''
+  return `${file.name}：${resolveKnowledgeFileIndexingLabel(status)}（Dify 状态：${status}）${error}`
+}
+
+function resolveKnowledgeFileStageLabel(status?: string) {
+  return isKnowledgeFileIndexingFinished(status) ? '已可检索' : isKnowledgeFileIndexingFailed(status) ? '处理失败' : '已提交'
+}
+
+function resolveKnowledgeFileIndexingLabel(status?: string) {
+  const normalized = (status || 'waiting').trim().toLowerCase()
+  const labels: Record<string, string> = {
+    waiting: '等待处理',
+    parsing: '解析中',
+    cleaning: '清洗中',
+    splitting: '切分中',
+    indexing: '建立索引中',
+    completed: '处理完成',
+    error: '处理失败',
+    failed: '处理失败',
+    paused: '已暂停'
+  }
+  return labels[normalized] || `处理中（${status}）`
+}
+
+function isKnowledgeFileIndexingFinished(status?: string) {
+  return (status || '').trim().toLowerCase() === 'completed'
+}
+
+function isKnowledgeFileIndexingFailed(status?: string) {
+  const normalized = (status || '').trim().toLowerCase()
+  return normalized === 'error' || normalized === 'failed'
 }

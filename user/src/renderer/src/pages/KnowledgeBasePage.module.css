@@ -663,6 +663,33 @@
   text-overflow: ellipsis;
 }
 
+.fileNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fileNameRow .fileName {
+  min-width: 0;
+}
+
+.aiCleanedBadge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid rgba(22, 119, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(22, 119, 255, 0.08);
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .fileMeta {
   font-size: 11px;
   color: var(--text-muted);
@@ -839,7 +866,7 @@
 
 .batchReviewLayout {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(160px, 20%) minmax(0, 1fr);
   gap: 16px;
   flex: 1;
   min-height: 0;
@@ -850,6 +877,7 @@
   border-radius: 8px;
   overflow-y: auto;
   background: #fff;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -858,6 +886,7 @@
   padding: 11px 12px;
   border-bottom: 1px solid var(--border-subtle);
   cursor: default;
+  min-width: 0;
 }
 
 .batchTaskItem:last-child {

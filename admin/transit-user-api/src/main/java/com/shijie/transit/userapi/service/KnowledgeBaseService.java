@@ -9,6 +9,8 @@ import com.shijie.transit.common.tenant.TenantContext;
 import com.shijie.transit.userapi.dify.DifyClient;
 import com.shijie.transit.userapi.mapper.KnowledgeBaseFileMapper;
 import com.shijie.transit.userapi.mapper.KnowledgeBaseMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -19,6 +21,7 @@ import java.util.List;
 
 @Service
 public class KnowledgeBaseService {
+  private static final Logger log = LoggerFactory.getLogger(KnowledgeBaseService.class);
   private static final String DEFAULT_SEARCH_METHOD = "hybrid_search";
   private static final int DEFAULT_TOP_K = 3;
   private static final double DEFAULT_SCORE_THRESHOLD = 0.35d;
@@ -177,11 +180,13 @@ public class KnowledgeBaseService {
   }
 
   public List<KnowledgeBaseFileEntity> listFiles(Long userId, Long knowledgeBaseId) {
-    getById(userId, knowledgeBaseId);
-    return knowledgeBaseFileMapper.selectList(
+    KnowledgeBaseEntity knowledgeBase = getById(userId, knowledgeBaseId);
+    List<KnowledgeBaseFileEntity> files = knowledgeBaseFileMapper.selectList(
         new LambdaQueryWrapper<KnowledgeBaseFileEntity>()
             .eq(KnowledgeBaseFileEntity::getKbId, knowledgeBaseId)
             .orderByDesc(KnowledgeBaseFileEntity::getCreatedAt));
+    refreshIndexingStatuses(knowledgeBase, files);
+    return files;
   }
 
   @Transactional
@@ -250,7 +255,130 @@ public class KnowledgeBaseService {
       return status;
     }
     status = extractText(root, "indexing_status");
-    return StringUtils.hasText(status) ? status : "waiting";
+    if (StringUtils.hasText(status)) {
+      return status;
+    }
+    status = extractText(root, "document", "display_status");
+    if (!StringUtils.hasText(status)) {
+      status = extractText(root, "display_status");
+    }
+    if (!StringUtils.hasText(status)) {
+      status = extractText(root, "document", "status");
+    }
+    if (!StringUtils.hasText(status)) {
+      status = extractText(root, "status");
+    }
+    return StringUtils.hasText(status) ? normalizeDifyDocumentStatus(status) : "waiting";
+  }
+
+  private String normalizeDifyDocumentStatus(String status) {
+    String normalized = status.trim().toLowerCase();
+    if ("available".equals(normalized) || "enabled".equals(normalized) || "normal".equals(normalized)) {
+      return "completed";
+    }
+    if ("unavailable".equals(normalized) || "disabled".equals(normalized)) {
+      return "error";
+    }
+    return normalized;
+  }
+
+  private void refreshIndexingStatuses(KnowledgeBaseEntity knowledgeBase, List<KnowledgeBaseFileEntity> files) {
+    for (KnowledgeBaseFileEntity file : files) {
+      if (!shouldRefreshIndexingStatus(file)) {
+        continue;
+      }
+      try {
+        String responseJson = difyClient.getDocument(knowledgeBase.getDifyDatasetId(), file.getDifyDocumentId());
+        JsonNode root = objectMapper.readTree(responseJson);
+        boolean changed = false;
+        String latestStatus = resolveIndexingStatus(root);
+        if (isPendingIndexingStatus(latestStatus)) {
+          JsonNode listDocument = findDocumentFromDifyList(knowledgeBase.getDifyDatasetId(), file.getDifyDocumentId());
+          if (listDocument != null) {
+            root = listDocument;
+            latestStatus = resolveIndexingStatus(root);
+          }
+        }
+        if (StringUtils.hasText(latestStatus) && !latestStatus.equals(file.getIndexingStatus())) {
+          file.setIndexingStatus(latestStatus);
+          changed = true;
+        }
+        String latestError = extractText(root, "document", "error");
+        if (!StringUtils.hasText(latestError)) {
+          latestError = extractText(root, "error");
+        }
+        if (latestError != null && !latestError.equals(file.getErrorMsg())) {
+          file.setErrorMsg(latestError);
+          changed = true;
+        }
+        Integer latestWordCount = resolveWordCount(root);
+        if (latestWordCount != null && !latestWordCount.equals(file.getWordCount())) {
+          file.setWordCount(latestWordCount);
+          changed = true;
+        }
+        if (changed) {
+          knowledgeBaseFileMapper.updateById(file);
+        }
+      } catch (Exception ex) {
+        log.warn(
+            "刷新知识库文件索引状态失败，知识库ID={}，文件ID={}，Dify文档ID={}，当前状态={}，原因={}",
+            knowledgeBase.getId(),
+            file.getId(),
+            file.getDifyDocumentId(),
+            file.getIndexingStatus(),
+            ex.getMessage());
+      }
+    }
+  }
+
+  private JsonNode findDocumentFromDifyList(String datasetId, String documentId) throws Exception {
+    int page = 1;
+    int limit = 100;
+    while (true) {
+      String responseJson = difyClient.listDocuments(datasetId, page, limit);
+      JsonNode root = objectMapper.readTree(responseJson);
+      JsonNode data = root.path("data");
+      if (!data.isArray()) {
+        data = root.path("documents");
+      }
+      if (!data.isArray() || data.isEmpty()) {
+        return null;
+      }
+      for (JsonNode item : data) {
+        if (documentId.equals(extractText(item, "id"))) {
+          return item;
+        }
+      }
+      if (!root.path("has_more").asBoolean(false)) {
+        return null;
+      }
+      page += 1;
+    }
+  }
+
+  private boolean shouldRefreshIndexingStatus(KnowledgeBaseFileEntity file) {
+    if (file == null || !StringUtils.hasText(file.getDifyDocumentId())) {
+      return false;
+    }
+    String status = file.getIndexingStatus();
+    if (!StringUtils.hasText(status)) {
+      return true;
+    }
+    String normalized = status.trim().toLowerCase();
+    return !"completed".equals(normalized)
+        && !"error".equals(normalized)
+        && !"failed".equals(normalized);
+  }
+
+  private boolean isPendingIndexingStatus(String status) {
+    if (!StringUtils.hasText(status)) {
+      return true;
+    }
+    String normalized = status.trim().toLowerCase();
+    return !"completed".equals(normalized)
+        && !"error".equals(normalized)
+        && !"failed".equals(normalized)
+        && !"available".equals(normalized);
   }
 
   private Integer resolveWordCount(JsonNode root) {
