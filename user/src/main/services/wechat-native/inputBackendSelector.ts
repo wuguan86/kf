@@ -1,4 +1,4 @@
-import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
+import type { MarketingMomentPoint, UnreadConversationCandidate, WeChatOutboundAttachment, WindowBounds } from './types'
 import type { InputBackendLogger, WeChatInputBackend } from './inputBackendTypes'
 
 type InputBackendOptions = {
@@ -10,6 +10,7 @@ type InputBackendOptions = {
 
 type BackendAction =
   | 'pasteAndSendText'
+  | 'pasteAndSendAttachments'
   | 'clickConversationCandidate'
   | 'exitConversationToList'
   | 'returnFromNestedConversation'
@@ -55,6 +56,14 @@ export const createInputBackend = (rawOptions: InputBackendOptions): WeChatInput
         options,
         () => options.nativeBackend.pasteAndSendText(bounds, content),
         () => options.fallbackBackend.pasteAndSendText(bounds, content)
+      )
+    },
+    pasteAndSendAttachments(bounds: WindowBounds, attachments: WeChatOutboundAttachment[]): Promise<boolean> {
+      return runWithFallback(
+        'pasteAndSendAttachments',
+        options,
+        () => options.nativeBackend.pasteAndSendAttachments(bounds, attachments),
+        () => options.fallbackBackend.pasteAndSendAttachments(bounds, attachments)
       )
     },
     clickConversationCandidate(bounds: WindowBounds, candidate: UnreadConversationCandidate): Promise<boolean> {

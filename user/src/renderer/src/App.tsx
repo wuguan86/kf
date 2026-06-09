@@ -6,6 +6,7 @@ import AssistantPage from "./pages/AssistantPage";
 import LoginPage from "./pages/LoginPage";
 import MePage from "./pages/MePage";
 import KnowledgeBasePage from "./pages/KnowledgeBasePage";
+import OutboundMaterialPage from "./pages/OutboundMaterialPage";
 import SettingsPage from "./pages/SettingsPage";
 import SystemSettingsPage from "./pages/SystemSettingsPage";
 import SessionManagementPage from "./pages/SessionManagementPage";
@@ -24,6 +25,7 @@ const parseHashRoute = (hash: string): HashRoute => {
   if (value === "#capture" || value === "#/capture") return "capture";
   if (value.startsWith("#/settings")) return "settings";
   if (value.startsWith("#/knowledge")) return "knowledge";
+  if (value.startsWith("#/outbound-materials")) return "outbound-materials";
   if (value.startsWith("#/session-management")) return "session-management";
   if (value.startsWith("#/marketing")) return "marketing";
   if (value.startsWith("#/data-statistics")) return "data-statistics";
@@ -267,6 +269,13 @@ function App(): JSX.Element {
         )}
         {activeRoute === "knowledge" && (
           <KnowledgeBasePage
+            backendBaseUrl={backendBaseUrl}
+            tenantId={tenantId}
+            userToken={userToken}
+          />
+        )}
+        {activeRoute === "outbound-materials" && (
+          <OutboundMaterialPage
             backendBaseUrl={backendBaseUrl}
             tenantId={tenantId}
             userToken={userToken}

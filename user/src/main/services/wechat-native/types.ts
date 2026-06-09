@@ -66,6 +66,17 @@ export type NativeDriverMessage = {
 
 export type NativeDriverResult = Record<string, any>
 
+export type WeChatOutboundAttachment = {
+  materialId?: string
+  name?: string
+  fileType?: 'IMAGE' | 'FILE' | string
+  mimeType?: string
+  fileSize?: string | number
+  extension?: string
+  downloadUrl?: string
+  localPath?: string
+}
+
 export type UnreadConversationCandidate = {
   id: string
   x: number

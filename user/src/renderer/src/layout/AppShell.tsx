@@ -4,7 +4,7 @@ import styles from './AppShell.module.css'
 import http from '../utils/http'
 import { eventBus } from '../utils/eventBus'
 
-export type AppRoute = 'assistant' | 'settings' | 'knowledge' | 'session-management' | 'marketing' | 'data-statistics' | 'me' | 'system-settings'
+export type AppRoute = 'assistant' | 'settings' | 'knowledge' | 'outbound-materials' | 'session-management' | 'marketing' | 'data-statistics' | 'me' | 'system-settings'
 
 type Props = {
   activeRoute: AppRoute
@@ -147,6 +147,15 @@ function AppShell(props: Props): JSX.Element {
               <svg className={styles.navIconSvg} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 4h18v16H3z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
             </span>
             <span className={styles.navLabel}>知识库管理</span>
+          </div>
+          <div
+            className={`${styles.navItem} ${activeRoute === 'outbound-materials' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}
+            onClick={() => handleNavClick('outbound-materials')}
+          >
+            <span className={styles.navIcon}>
+              <svg className={styles.navIconSvg} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15V6a2 2 0 0 0-2-2H8l-5 5v10a2 2 0 0 0 2 2h8"/><path d="M8 4v5H3"/><path d="m17 16 2 2 4-4"/></svg>
+            </span>
+            <span className={styles.navLabel}>外发资料</span>
           </div>
           <div
             className={`${styles.navItem} ${activeRoute === 'session-management' ? styles.active : ''} ${navigationDisabled ? styles.disabled : ''}`}

@@ -3,12 +3,23 @@ import styles from './ProcessVisualizer.module.css'
 
 export type ProcessStep = 'INTENT' | 'KNOWLEDGE' | 'LOGIC' | 'OUTPUT'
 
+export interface ProcessAttachment {
+  materialId: string
+  name: string
+  fileType: string
+  mimeType?: string
+  fileSize?: string
+  extension?: string
+  downloadUrl?: string
+}
+
 export interface ProcessItem {
   id: string
   step: ProcessStep
   content: string
   status: 'pending' | 'running' | 'completed' | 'error'
   timestamp: string
+  attachments?: ProcessAttachment[]
 }
 
 export interface ProcessVisualizerProps {
@@ -16,6 +27,7 @@ export interface ProcessVisualizerProps {
   managedMode?: 'full' | 'semi'
   onUpdateItem?: (id: string, newContent: string) => void
   onStoreItem?: (id: string, content: string) => void
+  onSendItem?: (id: string, content: string, attachments: ProcessAttachment[]) => void
 }
 
 const StepIcons: Record<ProcessStep, React.ReactNode> = {
@@ -43,6 +55,9 @@ const ActionIcons = {
   STORE: (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
   ),
+  SEND: (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+  ),
   CHECK: (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
   ),
@@ -59,7 +74,7 @@ const ErrorIcon = (
   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
 )
 
-export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, managedMode = 'full', onUpdateItem, onStoreItem }) => {
+export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, managedMode = 'full', onUpdateItem, onStoreItem, onSendItem }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editContent, setEditContent] = React.useState('')
@@ -100,6 +115,12 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
     }
   }
 
+  const handleSend = (item: ProcessItem) => {
+    if (onSendItem) {
+      onSendItem(item.id, item.content, item.attachments || [])
+    }
+  }
+
   if (items.length === 0) {
     return (
       <div className={styles.processVisualizerEmpty}>
@@ -119,6 +140,7 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
         {items.map((item) => {
           const isEditing = editingId === item.id
           const showActions = managedMode === 'semi' && item.step === 'OUTPUT' && item.status === 'completed' && !isEditing
+          const attachments = item.attachments || []
 
           return (
             <div key={item.id} className={`${styles.processStep} ${styles[item.step.toLowerCase()]} ${item.status === 'error' ? styles.errorState : ''}`}>
@@ -153,6 +175,25 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
                   )}
                 </div>
 
+                {attachments.length > 0 && (
+                  <div className={styles.attachmentList}>
+                    {attachments.map((attachment) => (
+                      <div className={styles.attachmentCard} key={attachment.materialId}>
+                        <div className={styles.attachmentIcon}>
+                          {String(attachment.fileType || '').toUpperCase() === 'IMAGE' ? '图' : '文'}
+                        </div>
+                        <div className={styles.attachmentMeta}>
+                          <div className={styles.attachmentName}>{attachment.name || `素材 ${attachment.materialId}`}</div>
+                          <div className={styles.attachmentDetail}>
+                            {String(attachment.fileType || '').toUpperCase() === 'IMAGE' ? '图片素材' : '文件素材'}
+                            {attachment.extension ? ` · ${attachment.extension}` : ''}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {showActions && (
                   <div className={styles.actionBar}>
                     <button
@@ -166,6 +207,9 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
                     </button>
                     <button className={styles.actionBtn} onClick={() => handleStore(item)}>
                       {ActionIcons.STORE} 入库
+                    </button>
+                    <button className={`${styles.actionBtn} ${styles.sendBtn}`} onClick={() => handleSend(item)}>
+                      {ActionIcons.SEND} 发送
                     </button>
                   </div>
                 )}

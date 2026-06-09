@@ -9,6 +9,7 @@ const inputBackend = createInputBackend({
 })
 
 export const pasteAndSendText = inputBackend.pasteAndSendText
+export const pasteAndSendAttachments = inputBackend.pasteAndSendAttachments
 export const clickConversationCandidate = inputBackend.clickConversationCandidate
 export const exitConversationToList = inputBackend.exitConversationToList
 export const returnFromNestedConversation = inputBackend.returnFromNestedConversation

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shijie.transit.common.db.entity.KnowledgeBaseEntity;
 import com.shijie.transit.common.db.entity.KnowledgeBaseFileEntity;
+import com.shijie.transit.common.db.entity.OutboundMaterialEntity;
 import com.shijie.transit.common.db.entity.RoleEntity;
 import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.web.Result;
@@ -15,12 +16,15 @@ import com.shijie.transit.userapi.service.DifyContactConversationMappingService;
 import com.shijie.transit.userapi.service.KnowledgeBaseService;
 import com.shijie.transit.userapi.service.MembershipEntitlementService;
 import com.shijie.transit.userapi.service.MembershipQueryService;
+import com.shijie.transit.userapi.service.OutboundMaterialService;
 import com.shijie.transit.userapi.service.RoleKnowledgeBaseService;
 import com.shijie.transit.userapi.service.RoleService;
 import com.shijie.transit.userapi.service.SessionConfigService;
 import com.shijie.transit.userapi.service.SessionHistoryService;
 import java.time.Clock;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -64,6 +68,7 @@ class UserDifyControllerTest {
         knowledgeBaseService,
         new FakeSessionConfigService(objectMapper),
         new FakeSessionHistoryService(),
+        null,
         null,
         null,
         new DifyProperties(),
@@ -118,6 +123,7 @@ class UserDifyControllerTest {
         new FakeSessionHistoryService(),
         null,
         null,
+        null,
         new DifyProperties(),
         objectMapper);
 
@@ -144,8 +150,73 @@ class UserDifyControllerTest {
     }
   }
 
+  @Test
+  void monitorChatReturnsOnlyValidatedOutboundAttachmentsFromDifyPlan() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    RoleEntity role = new RoleEntity();
+    role.setId(10L);
+    role.setName("assistant");
+    role.setContent("reply politely");
+    role.setKnowledgeBaseId("");
+
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+    difyClient.answer = """
+        {"reply_text":"可以的，我把产品图发你。","attachments":[{"material_id":"31","reason":"客户索要产品图"},{"material_id":"32","reason":"越权素材"}],"confidence":0.91}
+        """;
+    difyClient.rawJson = "{\"answer\":" + objectMapper.writeValueAsString(difyClient.answer) + "}";
+    OutboundMaterialEntity material = new OutboundMaterialEntity();
+    material.setId(31L);
+    material.setName("产品图");
+    material.setFileType("IMAGE");
+    material.setMimeType("image/png");
+    material.setFileSize(2048L);
+    material.setExtension("png");
+    material.setAllowedChannels("personal,enterprise");
+    FakeOutboundMaterialService outboundMaterialService = new FakeOutboundMaterialService();
+    outboundMaterialService.materials.put(31L, material);
+
+    UserDifyController controller = new UserDifyController(
+        difyClient,
+        new DifyContactConversationMappingService(null, Clock.systemDefaultZone()),
+        new FakeRoleService(role, new FakeRoleKnowledgeBaseService()),
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        new FakeSessionConfigService(objectMapper),
+        new FakeSessionHistoryService(),
+        null,
+        null,
+        outboundMaterialService,
+        new DifyProperties(),
+        objectMapper);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      Result<Object> result = controller.monitorChat(new UserDifyController.MonitorChatRequest(
+          10L,
+          "发产品图给我",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""));
+
+      JsonNode data = (JsonNode) result.getData();
+      assertEquals("可以的，我把产品图发你。", data.path("answer").asText());
+      assertEquals(1, data.path("attachments").size());
+      assertEquals("31", data.path("attachments").get(0).path("materialId").asText());
+      assertEquals("产品图", data.path("attachments").get(0).path("name").asText());
+      assertEquals("IMAGE", data.path("attachments").get(0).path("fileType").asText());
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
   private static class RecordingDifyClient extends DifyClient {
     int retrieveCount;
+    String answer = "ok";
+    String rawJson = "{\"answer\":\"ok\"}";
 
     RecordingDifyClient(ObjectMapper objectMapper) {
       super(new DifyProperties(), objectMapper);
@@ -159,7 +230,24 @@ class UserDifyControllerTest {
 
     @Override
     public DifyChatResult chatMessages(String requestBodyJson) {
-      return new DifyChatResult("{\"answer\":\"ok\"}", "conv-1", "ok");
+      return new DifyChatResult(rawJson, "conv-1", answer);
+    }
+  }
+
+  private static class FakeOutboundMaterialService extends OutboundMaterialService {
+    private final Map<Long, OutboundMaterialEntity> materials = new HashMap<>();
+
+    FakeOutboundMaterialService() {
+      super(null, "uploads/materials");
+    }
+
+    @Override
+    public OutboundMaterialEntity validateAutoSendMaterial(Long userId, Long id, String channel) {
+      OutboundMaterialEntity material = materials.get(id);
+      if (material == null) {
+        throw new IllegalArgumentException("越权素材");
+      }
+      return material;
     }
   }
 

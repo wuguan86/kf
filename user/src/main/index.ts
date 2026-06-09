@@ -255,7 +255,7 @@ ipcMain.handle('wechat-bridge-poll', async () => {
   return wechatNativeDriver.poll()
 })
 
-ipcMain.handle('wechat-bridge-send', async (_, payload: { target: string; content: string }) => {
+ipcMain.handle('wechat-bridge-send', async (_, payload: { target: string; content: string; attachments?: unknown[] }) => {
   return wechatNativeDriver.send(payload)
 })
 

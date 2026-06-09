@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.shijie.transit.common.db.entity.KnowledgeBaseEntity;
 import com.shijie.transit.common.db.entity.KnowledgeBaseFileEntity;
+import com.shijie.transit.common.db.entity.OutboundMaterialEntity;
 import com.shijie.transit.common.db.entity.RoleEntity;
 import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.tenant.TenantContext;
@@ -22,6 +23,7 @@ import com.shijie.transit.userapi.service.SessionConfigService;
 import com.shijie.transit.userapi.service.SessionHistoryService;
 import com.shijie.transit.userapi.service.MembershipEntitlementService;
 import com.shijie.transit.userapi.service.MembershipQueryService;
+import com.shijie.transit.userapi.service.OutboundMaterialService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -72,6 +74,7 @@ public class UserDifyController {
     private final SessionHistoryService sessionHistoryService;
     private final MembershipEntitlementService membershipEntitlementService;
     private final MembershipQueryService membershipQueryService;
+    private final OutboundMaterialService outboundMaterialService;
     private final DifyProperties difyProperties;
     private final ObjectMapper objectMapper;
 
@@ -85,6 +88,7 @@ public class UserDifyController {
             SessionHistoryService sessionHistoryService,
             MembershipEntitlementService membershipEntitlementService,
             MembershipQueryService membershipQueryService,
+            OutboundMaterialService outboundMaterialService,
             DifyProperties difyProperties,
             ObjectMapper objectMapper) {
         this.difyClient = difyClient;
@@ -96,6 +100,7 @@ public class UserDifyController {
         this.sessionHistoryService = sessionHistoryService;
         this.membershipEntitlementService = membershipEntitlementService;
         this.membershipQueryService = membershipQueryService;
+        this.outboundMaterialService = outboundMaterialService;
         this.difyProperties = difyProperties;
         this.objectMapper = objectMapper;
     }
@@ -150,7 +155,8 @@ public class UserDifyController {
             contactConversationMappingService.upsertConversationId(
                     principal.subjectId(), request.roleId(), request.wechatContact(), result.conversationId());
         }
-        String normalizedAnswer = normalizeStreamingAnswer(result.answer());
+        ReplyPlan replyPlan = resolveReplyPlan(result.answer(), principal.subjectId(), resolveWechatChannel(request));
+        String normalizedAnswer = normalizeStreamingAnswer(replyPlan.replyText());
         if (StringUtils.hasText(normalizedAnswer)) {
             sessionHistoryService.appendMessage(
                     principal.subjectId(), request.roleId(), sceneType, sessionKey, "AI", normalizedAnswer);
@@ -158,6 +164,9 @@ public class UserDifyController {
         JsonNode monitorResultNode = objectMapper.readTree(result.rawJson());
         if (monitorResultNode instanceof ObjectNode monitorObjectNode && StringUtils.hasText(normalizedAnswer)) {
             monitorObjectNode.put("answer", normalizedAnswer);
+            if (!replyPlan.attachments().isEmpty()) {
+                monitorObjectNode.set("attachments", buildAttachmentResponse(replyPlan.attachments()));
+            }
         }
         return Result.success(monitorResultNode);
     }
@@ -360,7 +369,8 @@ public class UserDifyController {
                         StringUtils.hasText(request.imageDataUrl()));
                 DifyClient.DifyChatResult result = waitForChatResultWithHeartbeat(
                         emitter, payload, principal.subjectId(), request.imageDataUrl(), true, streamTraceId);
-                String answer = normalizeStreamingAnswer(result.answer());
+                ReplyPlan replyPlan = resolveReplyPlan(result.answer(), principal.subjectId(), resolveWechatChannel(request));
+                String answer = normalizeStreamingAnswer(replyPlan.replyText());
                 log.info("monitorChatStream 调用Dify后 traceId={} conversationId={} answerLength={}",
                         streamTraceId,
                         result.conversationId(),
@@ -379,6 +389,9 @@ public class UserDifyController {
                         emitter.complete();
                         return;
                     }
+                }
+                if (!replyPlan.attachments().isEmpty()) {
+                    emitter.send(SseEmitter.event().data(new StepMsg("ATTACHMENTS", objectMapper.writeValueAsString(buildAttachmentResponse(replyPlan.attachments())))));
                 }
                 emitter.send(SseEmitter.event().data(new StepMsg("OUTPUT", answer)));
                 log.info("monitorChatStream 完成 traceId={}", streamTraceId);
@@ -705,6 +718,108 @@ public class UserDifyController {
         return text;
     }
 
+    private ReplyPlan resolveReplyPlan(String rawAnswer, Long userId, String channel) {
+        String normalizedAnswer = normalizeStreamingAnswer(rawAnswer);
+        if (!StringUtils.hasText(normalizedAnswer)) {
+            return new ReplyPlan(normalizedAnswer, List.of());
+        }
+        try {
+            JsonNode root = objectMapper.readTree(normalizedAnswer);
+            if (!root.isObject()) {
+                return new ReplyPlan(normalizedAnswer, List.of());
+            }
+            String replyText = root.path("reply_text").asText("");
+            if (!StringUtils.hasText(replyText)) {
+                replyText = root.path("replyText").asText("");
+            }
+            if (!StringUtils.hasText(replyText)) {
+                replyText = root.path("answer").asText(normalizedAnswer);
+            }
+            List<OutboundMaterialEntity> attachments = resolveValidatedAttachments(root.path("attachments"), userId, channel);
+            return new ReplyPlan(replyText, attachments);
+        } catch (Exception ignored) {
+            return new ReplyPlan(normalizedAnswer, List.of());
+        }
+    }
+
+    private List<OutboundMaterialEntity> resolveValidatedAttachments(JsonNode attachmentsNode, Long userId, String channel) {
+        if (outboundMaterialService == null || attachmentsNode == null || !attachmentsNode.isArray()) {
+            return List.of();
+        }
+        List<OutboundMaterialEntity> attachments = new ArrayList<>();
+        Set<Long> seenMaterialIds = new LinkedHashSet<>();
+        for (JsonNode node : attachmentsNode) {
+            Long materialId = parseMaterialId(node);
+            if (materialId == null || !seenMaterialIds.add(materialId)) {
+                continue;
+            }
+            if (!isAttachmentConfidenceEnough(node)) {
+                log.warn("Dify 推荐的外发素材置信度不足，已降级过滤 userId={} materialId={} channel={}",
+                        userId, materialId, channel);
+                continue;
+            }
+            try {
+                attachments.add(outboundMaterialService.validateAutoSendMaterial(userId, materialId, channel));
+            } catch (Exception ex) {
+                log.warn("Dify 推荐的外发素材未通过校验 userId={} materialId={} channel={} reason={}",
+                        userId, materialId, channel, ex.getMessage());
+            }
+        }
+        return attachments;
+    }
+
+    private boolean isAttachmentConfidenceEnough(JsonNode node) {
+        JsonNode confidenceNode = node.path("confidence");
+        if (confidenceNode == null || confidenceNode.isMissingNode() || confidenceNode.isNull()) {
+            return true;
+        }
+        if (!confidenceNode.isNumber()) {
+            return true;
+        }
+        return confidenceNode.asDouble() >= 0.7d;
+    }
+
+    private Long parseMaterialId(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        String value = node.path("material_id").asText("");
+        if (!StringUtils.hasText(value)) {
+            value = node.path("materialId").asText("");
+        }
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private ArrayNode buildAttachmentResponse(List<OutboundMaterialEntity> attachments) {
+        ArrayNode array = objectMapper.createArrayNode();
+        for (OutboundMaterialEntity material : attachments) {
+            ObjectNode item = array.addObject();
+            item.put("materialId", String.valueOf(material.getId()));
+            item.put("name", material.getName());
+            item.put("fileType", material.getFileType());
+            item.put("mimeType", material.getMimeType());
+            item.put("fileSize", material.getFileSize() == null ? "" : String.valueOf(material.getFileSize()));
+            item.put("extension", material.getExtension());
+            item.put("downloadUrl", "/api/user/outbound-materials/" + material.getId() + "/download");
+        }
+        return array;
+    }
+
+    private String resolveWechatChannel(MonitorChatRequest request) {
+        if (request != null && StringUtils.hasText(request.wechatContact())
+                && request.wechatContact().trim().toLowerCase(Locale.ROOT).startsWith("enterprise:")) {
+            return "enterprise";
+        }
+        return "personal";
+    }
+
     private DifyClient.DifyChatResult executeChatWithImageFallback(
             ObjectNode payload, Long userId, String imageDataUrl, boolean allowConversationFallback, String traceId) {
         ImagePayload imagePayload = parseImagePayload(imageDataUrl);
@@ -952,6 +1067,9 @@ public class UserDifyController {
     }
 
     public record StepMsg(String step, String content) {
+    }
+
+    private record ReplyPlan(String replyText, List<OutboundMaterialEntity> attachments) {
     }
 
     private record ImagePayload(String mimeType, String base64Data, byte[] bytes, String fileName) {

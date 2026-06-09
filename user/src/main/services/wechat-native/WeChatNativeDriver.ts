@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { createHash } from 'crypto'
 import { recognizeUnreadConversationCandidate } from './conversationListRecognizer'
-import { clickConversationCandidate, clickMarketingPoint, clickMomentsEntry, closeMomentsWindow, exitConversationToList, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
+import { clickConversationCandidate, clickMarketingPoint, clickMomentsEntry, closeMomentsWindow, exitConversationToList, pasteAndSendAttachments, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
 import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshots } from './snapshotDiff'
 import { findUnreadConversationCandidates } from './unreadDetector'
@@ -25,6 +25,7 @@ import type {
   MarketingLikeMenuAction,
   WeChatMessageBounds,
   WeChatMessageType,
+  WeChatOutboundAttachment,
   WeChatScreenshot,
   WeChatVisionRuntimeConfig,
   WindowBounds
@@ -544,9 +545,10 @@ export class WeChatNativeDriver {
     return { ok: true, messages }
   }
 
-  async send(payload: { target?: string; content?: string }): Promise<NativeDriverResult> {
+  async send(payload: { target?: string; content?: string; attachments?: WeChatOutboundAttachment[] }): Promise<NativeDriverResult> {
     const content = String(payload?.content || '').trim()
-    if (!content) {
+    const attachments = Array.isArray(payload?.attachments) ? payload.attachments : []
+    if (!content && attachments.length === 0) {
       return { ok: false, error: 'empty_content', message: '发送内容为空' }
     }
     const window = await findWeChatWindow(this.channel)
@@ -556,11 +558,25 @@ export class WeChatNativeDriver {
     this.lastWindow = window
     this.lastWechatActivityAt = Date.now()
     await focusWindow(window.hwnd)
-    const success = await pasteAndSendText(window, content)
+    const success = content ? await pasteAndSendText(window, content) : true
     const targetContact = String(payload.target || window.title || '微信').trim() || '微信'
-    if (success) {
+    if (!success) {
+      return { ok: false, success: false, error: 'send_failed', message: '文本消息发送失败' }
+    }
+    let preparedAttachments: WeChatOutboundAttachment[] = []
+    if (attachments.length > 0) {
+      preparedAttachments = await this.prepareOutboundAttachments(attachments)
+      const attachmentSuccess = await pasteAndSendAttachments(window, preparedAttachments)
+      if (!attachmentSuccess) {
+        console.warn('外发素材发送失败', { targetContact, attachmentCount: attachments.length })
+        return { ok: false, success: false, error: 'attachment_send_failed', message: '外发素材发送失败' }
+      }
+    }
+    if (success && content) {
       this.seenMessageFingerprints.add(this.buildFingerprint(targetContact, content, true))
       this.markRecentSentSelfReplyContent(targetContact, content)
+    }
+    if (success) {
       setTimeout(() => {
         this.refreshBaseline(window).catch((error) => {
           console.warn('新方式发送后刷新消息基线失败', error)
@@ -572,10 +588,63 @@ export class WeChatNativeDriver {
         ok: true,
         success: true,
         mode: 'native',
-        sentMessage: this.buildSentSelfMessage(targetContact, content)
+        sentMessage: this.buildSentSelfMessage(targetContact, content || this.describeAttachments(preparedAttachments))
       }
     }
     return { ok: false, success: false, error: 'send_failed', message: '新方式发送失败' }
+  }
+
+  private async prepareOutboundAttachments(attachments: WeChatOutboundAttachment[]): Promise<WeChatOutboundAttachment[]> {
+    const prepared: WeChatOutboundAttachment[] = []
+    for (const attachment of attachments) {
+      if (attachment.localPath || !attachment.downloadUrl) {
+        prepared.push(attachment)
+        continue
+      }
+      prepared.push({
+        ...attachment,
+        localPath: await this.downloadOutboundAttachment(attachment)
+      })
+    }
+    return prepared
+  }
+
+  private async downloadOutboundAttachment(attachment: WeChatOutboundAttachment): Promise<string> {
+    const backendUrl = String(this.runtimeConfig.backendBaseUrl || '').replace(/\/api\/?$/, '').replace(/\/$/, '')
+    const token = String(this.runtimeConfig.token || '').trim()
+    if (!backendUrl || !token || typeof fetch !== 'function') {
+      throw new Error('外发素材下载配置不完整')
+    }
+    const downloadUrl = String(attachment.downloadUrl || '')
+    const url = downloadUrl.startsWith('http') ? downloadUrl : `${backendUrl}${downloadUrl.startsWith('/') ? '' : '/'}${downloadUrl}`
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Tenant-Id': String(this.runtimeConfig.tenantId || '1')
+      }
+    })
+    if (!response.ok) {
+      throw new Error(`外发素材下载失败：${response.status}`)
+    }
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (bytes.length === 0) {
+      throw new Error('外发素材下载内容为空')
+    }
+    const extension = String(attachment.extension || 'png').replace(/[^a-zA-Z0-9]/g, '') || 'png'
+    const materialId = String(attachment.materialId || Date.now()).replace(/[^a-zA-Z0-9_-]/g, '')
+    const targetPath = join(app.getPath('userData'), 'outbound-materials', `${materialId}-${Date.now()}.${extension}`)
+    await mkdir(dirname(targetPath), { recursive: true })
+    await writeFile(targetPath, bytes)
+    console.info('外发素材已下载到本地缓存', { materialId: attachment.materialId, targetPath, byteSize: bytes.length })
+    return targetPath
+  }
+
+  private describeAttachments(attachments: WeChatOutboundAttachment[]): string {
+    const first = attachments[0]
+    if (!first) {
+      return '[附件]'
+    }
+    return String(first.fileType || '').toUpperCase() === 'IMAGE' ? '[图片]' : `[文件]${first.name ? ` ${first.name}` : ''}`
   }
 
   async command(payload: Record<string, any>): Promise<NativeDriverResult> {
@@ -598,8 +667,12 @@ export class WeChatNativeDriver {
     if (action === 'marketing_comment') {
       return this.runMarketingCommand('comment', payload?.config || payload)
     }
-    if (payload?.target && payload?.content) {
-      return this.send({ target: String(payload.target), content: String(payload.content) })
+    if (payload?.target && (payload?.content || Array.isArray(payload?.attachments))) {
+      return this.send({
+        target: String(payload.target),
+        content: String(payload.content || ''),
+        attachments: Array.isArray(payload.attachments) ? payload.attachments : []
+      })
     }
     return { ok: false, error: 'native_command_unsupported', message: `新方式暂不支持该微信指令：${action || '未知指令'}` }
   }

@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useRef, useState } from 'react'
 import http from '../utils/http'
 import { readAuthSnapshot } from '../auth/authStore'
-import { ProcessVisualizer, ProcessItem, ProcessStep } from '../components/ProcessVisualizer'
+import { ProcessVisualizer, ProcessItem, ProcessStep, ProcessAttachment } from '../components/ProcessVisualizer'
 import StoreToKnowledgeBaseDialog, { SelectableKnowledgeBase } from '../components/StoreToKnowledgeBaseDialog'
 import { RechargeDialog } from '../components/RechargeDialog'
 import { NoRoleDialog } from '../components/NoRoleDialog'
@@ -630,7 +630,7 @@ function AssistantPage(props: Props): JSX.Element {
   // 个人微信和企业微信都会操作真实客户端窗口，发送动作必须全局串行，避免并发抢焦点。
   const nativeSendQueueRef = useRef<Promise<void>>(Promise.resolve())
   const lastProcessedByContactRef = useRef<Map<string, { text: string; at: number }>>(new Map())
-  const outputStoreContextRef = useRef<Map<string, { contactKey: string; customerMessage: string }>>(new Map())
+  const outputStoreContextRef = useRef<Map<string, { contactKey: string; contact: string; customerMessage: string; source: 'personal' | 'enterprise'; attachments?: ProcessAttachment[] }>>(new Map())
   const streamAbortControllersRef = useRef<Map<string, AbortController>>(new Map())
   const pollFailureCountRef = useRef(0)
   const wechatChannelRef = useRef<WeChatChannel>('personal')
@@ -1054,6 +1054,7 @@ function AssistantPage(props: Props): JSX.Element {
         let lastChunkAt = Date.now()
         const streamStartAt = Date.now()
         let chunkCount = 0
+        let pendingAttachments: ProcessAttachment[] = []
 
         const handleSsePayload = async (jsonStr: string) => {
           if (!jsonStr) return
@@ -1123,6 +1124,33 @@ function AssistantPage(props: Props): JSX.Element {
                   timestamp: new Date().toLocaleTimeString()
                 })
               }
+            } else if (step === 'ATTACHMENTS') {
+              try {
+                const parsedAttachments = JSON.parse(String(content || '[]'))
+                pendingAttachments = Array.isArray(parsedAttachments)
+                  ? parsedAttachments.map((attachment: any) => ({
+                      materialId: String(attachment?.materialId || attachment?.material_id || '').trim(),
+                      name: String(attachment?.name || '').trim(),
+                      fileType: String(attachment?.fileType || attachment?.file_type || '').trim(),
+                      mimeType: String(attachment?.mimeType || attachment?.mime_type || '').trim(),
+                      fileSize: String(attachment?.fileSize || attachment?.file_size || '').trim(),
+                      extension: String(attachment?.extension || '').trim(),
+                      downloadUrl: String(attachment?.downloadUrl || attachment?.download_url || '').trim()
+                    })).filter((attachment: ProcessAttachment) => attachment.materialId && attachment.downloadUrl)
+                  : []
+                const outputItem = localItems.find(i => i.step === 'OUTPUT')
+                if (outputItem) {
+                  outputItem.attachments = pendingAttachments
+                }
+                console.info('收到外发素材推荐', {
+                  streamTraceId,
+                  attachmentCount: pendingAttachments.length,
+                  materialIds: pendingAttachments.map(item => item.materialId)
+                })
+              } catch (parseAttachmentError) {
+                pendingAttachments = []
+                console.warn('解析外发素材推荐失败，已降级为纯文本回复', { streamTraceId, parseAttachmentError })
+              }
             } else if (step === 'OUTPUT') {
               hasOutput = true
               const cleanOutput = dedupeRepeatedOutput(content)
@@ -1130,14 +1158,19 @@ function AssistantPage(props: Props): JSX.Element {
               if (item) {
                 item.status = 'completed'
                 item.content = cleanOutput
+                item.attachments = pendingAttachments
                 outputStoreContextRef.current.set(item.id, {
                   contactKey: sessionKey,
-                  customerMessage: normalizedText
+                  contact,
+                  customerMessage: normalizedText,
+                  source,
+                  attachments: pendingAttachments
                 })
               }
 
               const reply = cleanOutput
-              if (reply && managedModeRef.current === 'full') {
+              const replyAttachments = pendingAttachments
+              if ((reply || replyAttachments.length > 0) && managedModeRef.current === 'full') {
                 const showAutoSendFailure = (reason: string) => {
                   const failureText = `${reply}\n\n自动发送失败: ${reason}`
                   const outputItem = localItems.find(i => i.step === 'OUTPUT')
@@ -1161,7 +1194,7 @@ function AssistantPage(props: Props): JSX.Element {
                 let sendFailed = false
                 try {
                   sendRes = await enqueueNativeWeChatSend(() =>
-                    api.sendWeChatMessage({ target: contact, content: reply })
+                    api.sendWeChatMessage({ target: contact, content: reply, attachments: replyAttachments })
                   )
                 } catch (sendError) {
                   const responseData = (sendError as any)?.response?.data
@@ -1185,7 +1218,7 @@ function AssistantPage(props: Props): JSX.Element {
                         trigger_reply: false
                       })
                     }
-                    setLastReplied({ contact, text: reply, at: Date.now() })
+                    setLastReplied({ contact, text: reply || `[附件] ${replyAttachments.map(item => item.name || item.materialId).join(', ')}`, at: Date.now() })
                   }
                 }
               }
@@ -1548,6 +1581,60 @@ function AssistantPage(props: Props): JSX.Element {
     }
   }
 
+  const handleSendProcessItem = async (id: string, replyText: string, attachments: ProcessAttachment[]) => {
+    if (managedModeRef.current !== 'semi') {
+      return
+    }
+    const sourceContext = outputStoreContextRef.current.get(id)
+    const normalizedReply = replyText.trim()
+    const safeAttachments = attachments || []
+    if (!sourceContext || !sourceContext.contact || (!normalizedReply && safeAttachments.length === 0)) {
+      showToast('无法发送：缺少会话或回复内容', 'error')
+      return
+    }
+    const api = (window as any).api
+    if (!api?.sendWeChatMessage) {
+      showToast('发送失败：无法调用微信桥接', 'error')
+      return
+    }
+    try {
+      console.info('半托管确认发送开始', {
+        sessionKey: sourceContext.contactKey,
+        attachmentCount: safeAttachments.length
+      })
+      const sendRes = await enqueueNativeWeChatSend(() =>
+        api.sendWeChatMessage({
+          target: sourceContext.contact,
+          content: normalizedReply,
+          attachments: safeAttachments
+        })
+      )
+      if (!sendRes?.ok || sendRes?.success === false) {
+        const reason = sendRes?.msg || sendRes?.message || '接口返回失败'
+        showToast(`发送失败：${reason}`, 'error')
+        return
+      }
+      if (sendRes?.sentMessage) {
+        enqueueIncoming({
+          ...sendRes.sentMessage,
+          contact: sourceContext.contact,
+          source: sourceContext.source,
+          trigger_reply: false
+        })
+      }
+      setLastReplied({
+        contact: sourceContext.contact,
+        text: normalizedReply || `[附件] ${safeAttachments.map(item => item.name || item.materialId).join(', ')}`,
+        at: Date.now()
+      })
+      showToast('已发送', 'success')
+    } catch (error: any) {
+      const reason = error?.message || String(error || '未知原因')
+      console.error('半托管确认发送失败', { sessionKey: sourceContext.contactKey, reason, error })
+      showToast(`发送失败：${reason}`, 'error')
+    }
+  }
+
   const buildStartupFailureMessage = (error: any) => {
     const rawMessage = String(error?.message || error?.error || error || '').trim()
     const errorCode = String(error?.error || error?.code || '').trim()
@@ -1828,6 +1915,7 @@ function AssistantPage(props: Props): JSX.Element {
                       managedMode={managedMode}
                       onUpdateItem={handleUpdateProcessItem}
                       onStoreItem={handleStoreProcessItem}
+                      onSendItem={handleSendProcessItem}
                     />
                   ) : (
                     <div className={styles.aiResponseBox}>

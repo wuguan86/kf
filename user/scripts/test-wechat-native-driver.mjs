@@ -128,7 +128,8 @@ function loadNativeDriver(mocks = {}) {
         clickMomentsEntry: mocks.clickMomentsEntry || (async () => true),
         clickMarketingPoint: mocks.clickMarketingPoint || (async () => true),
         closeMomentsWindow: mocks.closeMomentsWindow || (async () => true),
-        pasteMarketingComment: mocks.pasteMarketingComment || (async () => true)
+        pasteMarketingComment: mocks.pasteMarketingComment || (async () => true),
+        pasteAndSendAttachments: mocks.pasteAndSendAttachments || (async () => true)
       }
     }
     if (id === './unreadDetector') {
@@ -1255,6 +1256,70 @@ async function testNativeSendReturnsSelfMessageForDisplay() {
   assert.equal(result.sentMessage.content, '稍等，我看一下')
   assert.equal(result.sentMessage.is_self, true)
   assert.equal(result.sentMessage.trigger_reply, false)
+}
+
+async function testNativeSendSendsTextThenAttachments() {
+  const textCalls = []
+  const attachmentCalls = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-1', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '瀹㈡埛A', messages: [], snapshotDigest: 'digest-1', conversationType: 'SINGLE', accountCategory: 'NORMAL' }),
+    pasteAndSendText: async (_window, content) => {
+      textCalls.push(content)
+      return true
+    },
+    pasteAndSendAttachments: async (_window, attachments) => {
+      attachmentCalls.push(attachments)
+      return true
+    }
+  })
+  const driver = new WeChatNativeDriver()
+
+  const result = await driver.send({
+    target: '瀹㈡埛A',
+    content: '可以的，我把产品图发你。',
+    attachments: [{ materialId: '31', name: '产品图', fileType: 'IMAGE', localPath: 'C:\\tmp\\product.png' }]
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(textCalls, ['可以的，我把产品图发你。'])
+  assert.equal(attachmentCalls.length, 1)
+  assert.equal(attachmentCalls[0][0].localPath, 'C:\\tmp\\product.png')
+  assert.equal(result.sentMessage.content, '可以的，我把产品图发你。')
+}
+
+async function testNativeSendAttachmentOnlyDoesNotRecordEmptyReply() {
+  const textCalls = []
+  const attachmentCalls = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-1', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '客户A', messages: [], snapshotDigest: 'digest-1', conversationType: 'SINGLE', accountCategory: 'NORMAL' }),
+    pasteAndSendText: async (_window, content) => {
+      textCalls.push(content)
+      return true
+    },
+    pasteAndSendAttachments: async (_window, attachments) => {
+      attachmentCalls.push(attachments)
+      return true
+    }
+  })
+  const driver = new WeChatNativeDriver()
+
+  const result = await driver.send({
+    target: '客户A',
+    content: '',
+    attachments: [{ materialId: '32', name: '产品图', fileType: 'IMAGE', localPath: 'C:\\tmp\\product.png' }]
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(textCalls, [])
+  assert.equal(attachmentCalls.length, 1)
+  assert.ok(result.sentMessage.content.length > 0)
+  assert.equal(driver.recentSentSelfReplyContents.size, 0)
 }
 
 async function testImageMessageCanBeCroppedFromLatestSnapshot() {
@@ -3973,6 +4038,8 @@ await testNewNonLatestCustomerMessageIsDisplayedWithoutTriggeringReply()
 await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
+await testNativeSendSendsTextThenAttachments()
+await testNativeSendAttachmentOnlyDoesNotRecordEmptyReply()
 await testImageMessageCanBeCroppedFromLatestSnapshot()
 await testSmallAvatarMisreadAsImageMessageIsIgnored()
 await testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv()

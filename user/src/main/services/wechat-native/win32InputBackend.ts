@@ -1,6 +1,6 @@
-import { clipboard } from 'electron'
+import { clipboard, nativeImage } from 'electron'
 import { createRequire } from 'module'
-import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
+import type { MarketingMomentPoint, UnreadConversationCandidate, WeChatOutboundAttachment, WindowBounds } from './types'
 import type { WeChatInputBackend } from './inputBackendTypes'
 import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
 import { getMomentsEntryPoint } from './momentsEntryPoint'
@@ -106,6 +106,36 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
           console.warn('原生输入后端恢复剪贴板失败', error)
         }
       }
+    },
+
+    async pasteAndSendAttachments(bounds: WindowBounds, attachments: WeChatOutboundAttachment[]): Promise<boolean> {
+      const imageAttachment = attachments.find((item) => String(item.fileType || '').toUpperCase() === 'IMAGE' && item.localPath)
+      if (!imageAttachment?.localPath) {
+        console.warn('原生输入后端暂不支持该外发素材类型', { attachmentCount: attachments.length })
+        return false
+      }
+      const image = nativeImage.createFromPath(imageAttachment.localPath)
+      if (image.isEmpty()) {
+        console.warn('原生输入后端读取外发图片为空', { localPath: imageAttachment.localPath })
+        return false
+      }
+      const api = loadWin32Api()
+      const inputX = Math.round(bounds.x + bounds.width * 0.66)
+      const inputY = Math.round(bounds.y + bounds.height - 72)
+      clipboard.writeImage(image)
+      await focusWindow(api, bounds.hwnd)
+      await clickAt(api, inputX, inputY)
+      await wait(80)
+      await pressCtrlV(api)
+      await wait(240)
+      await pressKey(api, VK_ENTER)
+      console.info('原生输入后端已完成外发图片粘贴发送', {
+        materialId: imageAttachment.materialId,
+        name: imageAttachment.name,
+        inputX,
+        inputY
+      })
+      return true
     },
 
     async clickConversationCandidate(bounds: WindowBounds, candidate: UnreadConversationCandidate): Promise<boolean> {

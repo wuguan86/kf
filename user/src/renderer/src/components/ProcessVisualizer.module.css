@@ -153,6 +153,58 @@
   white-space: pre-wrap;
 }
 
+.attachmentList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.attachmentCard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(100%, 360px);
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.attachmentIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #ecfdf5;
+  color: #059669;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.attachmentMeta {
+  min-width: 0;
+  flex: 1;
+}
+
+.attachmentName {
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachmentDetail {
+  color: #9ca3af;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
 /* Action Bar for Semi-Managed Mode */
 .actionBar {
   display: flex;
@@ -183,6 +235,17 @@
 .actionBtn.active {
   color: #059669;
   border-color: #059669;
+  background: #ecfdf5;
+}
+
+.sendBtn {
+  color: #059669;
+  border-color: rgba(5, 150, 105, 0.35);
+}
+
+.sendBtn:hover {
+  color: #047857;
+  border-color: rgba(4, 120, 87, 0.55);
   background: #ecfdf5;
 }
 

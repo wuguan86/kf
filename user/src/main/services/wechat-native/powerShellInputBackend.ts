@@ -1,6 +1,6 @@
-import { clipboard } from 'electron'
+import { clipboard, nativeImage } from 'electron'
 import { spawn } from 'child_process'
-import type { MarketingMomentPoint, UnreadConversationCandidate, WindowBounds } from './types'
+import type { MarketingMomentPoint, UnreadConversationCandidate, WeChatOutboundAttachment, WindowBounds } from './types'
 import type { WeChatInputBackend } from './inputBackendTypes'
 import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
 import { getMomentsEntryPoint } from './momentsEntryPoint'
@@ -110,6 +110,55 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
           console.warn('PowerShell 输入后端恢复剪贴板失败', error)
         }
       }
+    },
+
+    async pasteAndSendAttachments(bounds: WindowBounds, attachments: WeChatOutboundAttachment[]): Promise<boolean> {
+      const imageAttachment = attachments.find((item) => String(item.fileType || '').toUpperCase() === 'IMAGE' && item.localPath)
+      if (!imageAttachment?.localPath) {
+        console.warn('PowerShell 输入后端暂不支持该外发素材类型', { attachmentCount: attachments.length })
+        return false
+      }
+      const image = nativeImage.createFromPath(imageAttachment.localPath)
+      if (image.isEmpty()) {
+        console.warn('PowerShell 输入后端读取外发图片为空', { localPath: imageAttachment.localPath })
+        return false
+      }
+      clipboard.writeImage(image)
+      const inputX = Math.round(bounds.x + bounds.width * 0.66 + Math.random() * 12 - 6)
+      const inputY = Math.round(bounds.y + bounds.height - 72 + Math.random() * 8 - 4)
+      const script = `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class NativeAttachmentInput {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+$hwnd = [IntPtr]${Math.round(bounds.hwnd)}
+[void][NativeAttachmentInput]::SetForegroundWindow($hwnd)
+Start-Sleep -Milliseconds 260
+[void][NativeAttachmentInput]::SetCursorPos(${inputX}, ${inputY})
+[NativeAttachmentInput]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 60
+[NativeAttachmentInput]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 120
+[System.Windows.Forms.SendKeys]::SendWait("^v")
+Start-Sleep -Milliseconds 360
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+Start-Sleep -Milliseconds 160
+`
+      await runPowerShell(script, 15000)
+      console.info('PowerShell 输入后端已完成外发图片粘贴发送', {
+        materialId: imageAttachment.materialId,
+        name: imageAttachment.name,
+        inputX,
+        inputY
+      })
+      return true
     },
 
     async clickConversationCandidate(bounds: WindowBounds, candidate: UnreadConversationCandidate): Promise<boolean> {
