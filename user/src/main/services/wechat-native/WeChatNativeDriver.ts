@@ -239,6 +239,7 @@ export class WeChatNativeDriver {
   private latestSnapshotHasPixelGuard = false
   private startupBaselinePending = false
   private startupUnreadCandidateIds = new Set<string>()
+  private startupBaselineShortTextFingerprints = new Map<string, Set<string>>()
   private latestSnapshotFromUnreadSwitch = false
   private lockedUnreadConversationContact: LockedUnreadConversationContact | null = null
   private cachedImageMessages = new Map<string, CachedImageMessage>()
@@ -291,6 +292,7 @@ export class WeChatNativeDriver {
     this.latestSnapshotHasPixelGuard = false
     this.startupBaselinePending = true
     this.startupUnreadCandidateIds.clear()
+    this.startupBaselineShortTextFingerprints.clear()
     this.latestSnapshotFromUnreadSwitch = false
     this.lockedUnreadConversationContact = null
     this.cachedImageMessages.clear()
@@ -323,6 +325,7 @@ export class WeChatNativeDriver {
     this.latestSnapshotHasPixelGuard = false
     this.startupBaselinePending = false
     this.startupUnreadCandidateIds.clear()
+    this.startupBaselineShortTextFingerprints.clear()
     this.latestSnapshotFromUnreadSwitch = false
     this.lockedUnreadConversationContact = null
     this.cachedImageMessages.clear()
@@ -438,6 +441,16 @@ export class WeChatNativeDriver {
         continue
       }
       this.seenMessageFingerprints.add(fingerprint)
+      const isLatestVisibleCustomerMessage = fingerprint === latestVisibleCustomerKey
+      if (this.shouldSuppressStartupBaselineShortText(snapshot.contact, parsedMessage, isLatestVisibleCustomerMessage)) {
+        console.info('个人微信当前会话启动基线短文本已跳过，仅用于避免旧消息上移后误展示', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          uiId: parsedMessage.uiId,
+          bounds: parsedMessage.bounds
+        })
+        continue
+      }
       if (!parsedMessage.isSelf && this.isRecentSentSelfReplyContent(snapshot.contact, parsedMessage.content)) {
         console.info('新方式识别到视觉模型疑似把最近己方自动回复片段标成客户消息，已跳过触发', {
           contact: snapshot.contact,
@@ -452,6 +465,9 @@ export class WeChatNativeDriver {
           content: parsedMessage.content.slice(0, 40),
           uiId: parsedMessage.uiId
         })
+        if (!hadPreviousBaseline) {
+          this.markStartupBaselineShortText(snapshot.contact, parsedMessage)
+        }
         continue
       }
 
@@ -466,8 +482,18 @@ export class WeChatNativeDriver {
         })
       }
 
-      const isLatestVisibleCustomerMessage = fingerprint === latestVisibleCustomerKey
       const hasRepliedCustomerMessage = this.hasRepliedCustomerFingerprint(customerReplyFingerprint)
+      // 个人微信未读切换后只能确认最新客户气泡是本轮触发点，其余可见气泡可能是历史消息，只做基线避免误展示。
+      const shouldSuppressUnreadSwitchHistory = this.shouldSuppressUnreadSwitchVisibleHistory(isLatestVisibleCustomerMessage)
+      if (shouldSuppressUnreadSwitchHistory) {
+        console.info('个人微信未读切换后跳过可见历史客户消息，仅用于会话基线', {
+          contact: snapshot.contact,
+          content: parsedMessage.content.slice(0, 40),
+          uiId: parsedMessage.uiId,
+          type: parsedMessageType
+        })
+        continue
+      }
       const shouldDisplayCustomerMessage = hasReliableCustomerTriggerGeometry &&
         !hasRepliedCustomerMessage
       const shouldTriggerReply = shouldDisplayCustomerMessage &&
@@ -478,6 +504,7 @@ export class WeChatNativeDriver {
         hasNewReplyTrigger = true
         this.pendingReplySessionKey = snapshotSessionKey
         await this.markCustomerMessageReplied(customerReplyFingerprint)
+        this.clearStartupBaselineShortTextFingerprints(snapshot.contact)
       }
       if (!shouldTriggerReply && !hadPreviousBaseline) {
         console.info('新方式首次扫描跳过当前可见历史消息', {
@@ -485,6 +512,7 @@ export class WeChatNativeDriver {
           content: parsedMessage.content.slice(0, 40),
           isSelf: parsedMessage.isSelf
         })
+        this.markStartupBaselineShortText(snapshot.contact, parsedMessage)
         continue
       }
 
@@ -2089,6 +2117,12 @@ export class WeChatNativeDriver {
     return !this.latestSnapshotFromUnreadSwitch && this.latestSnapshotHasPixelGuard
   }
 
+  private shouldSuppressUnreadSwitchVisibleHistory(isLatestVisibleCustomerMessage: boolean): boolean {
+    return this.channel === 'personal' &&
+      this.latestSnapshotFromUnreadSwitch &&
+      !isLatestVisibleCustomerMessage
+  }
+
   private cleanupStartupUnreadCandidateBaseline(candidates: UnreadConversationCandidate[]): void {
     if (this.channel !== 'enterprise' || this.startupUnreadCandidateIds.size === 0) {
       return
@@ -2119,7 +2153,43 @@ export class WeChatNativeDriver {
     for (const message of snapshot.messages) {
       this.seenMessageFingerprints.add(this.buildFingerprint(snapshot.contact, message.content, message.isSelf, message.uiId))
       this.markRecentMessageContentFingerprint(this.buildParsedMessageContentFingerprint(snapshot.contact, message))
+      this.markStartupBaselineShortText(snapshot.contact, message)
     }
+  }
+
+  private markStartupBaselineShortText(contact: string, message: ParsedWeChatMessage): void {
+    if (this.channel !== 'personal' || this.normalizeMessageType(message) !== 'text') {
+      return
+    }
+    const normalizedContent = this.normalizeFingerprintContent(message.content)
+    if (!this.isShortReplyTextContent(normalizedContent)) {
+      return
+    }
+    // 启动前停留在当前会话时，短文本气泡会因新消息进入而上移；归属也可能被视觉纠正反复改变，所以只按内容建立历史基线。
+    const contactKey = this.buildSessionKey(contact)
+    const fingerprints = this.startupBaselineShortTextFingerprints.get(contactKey) || new Set<string>()
+    fingerprints.add(this.buildContentFingerprint(contact, normalizedContent, false))
+    this.startupBaselineShortTextFingerprints.set(contactKey, fingerprints)
+  }
+
+  private shouldSuppressStartupBaselineShortText(contact: string, message: ParsedWeChatMessage, isLatestVisibleCustomerMessage: boolean): boolean {
+    if (this.channel !== 'personal' || message.isSelf || this.normalizeMessageType(message) !== 'text') {
+      return false
+    }
+    if (isLatestVisibleCustomerMessage) {
+      return false
+    }
+    const normalizedContent = this.normalizeFingerprintContent(message.content)
+    if (!this.isShortReplyTextContent(normalizedContent)) {
+      return false
+    }
+    const contactKey = this.buildSessionKey(contact)
+    const fingerprints = this.startupBaselineShortTextFingerprints.get(contactKey)
+    return !!fingerprints?.has(this.buildContentFingerprint(contact, normalizedContent, false))
+  }
+
+  private clearStartupBaselineShortTextFingerprints(contact: string): void {
+    this.startupBaselineShortTextFingerprints.delete(this.buildSessionKey(contact))
   }
 
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {

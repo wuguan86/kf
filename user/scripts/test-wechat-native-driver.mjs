@@ -1164,6 +1164,156 @@ async function testNewNonLatestCustomerMessageIsDisplayedWithoutTriggeringReply(
   assert.equal(result.messages[1].trigger_reply, true)
 }
 
+async function testUnreadSwitchOnlyReportsLatestVisibleCustomerMessage() {
+  const clickedCandidates = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=personal-unread-switch-history',
+      png: Buffer.from(`personal-unread-switch-history-${clickedCandidates.length}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-personal-unread-switch-history', changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-visible-history',
+      x: 82,
+      y: 132,
+      width: 14,
+      height: 14,
+      centerX: 89,
+      centerY: 139,
+      score: 16
+    }],
+    recognizeUnreadConversationCandidate: async () => ({
+      contact: '夏天',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL',
+      skipAutoReply: false,
+      skipReason: '',
+      confidence: 0.98
+    }),
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '夏天',
+      messages: [
+        {
+          content: '早上好',
+          isSelf: false,
+          uiId: 'visible-history-morning',
+          bounds: { x: 120, y: 180, w: 72, h: 34 }
+        },
+        {
+          content: '中午好',
+          isSelf: false,
+          uiId: 'visible-history-noon',
+          bounds: { x: 120, y: 300, w: 72, h: 34 }
+        }
+      ],
+      snapshotDigest: 'digest-personal-unread-switch-history-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.deepEqual(clickedCandidates, ['unread-visible-history'])
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].contact, '夏天')
+  assert.equal(result.messages[0].content, '中午好')
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
+async function testStartupCurrentChatShortHistoryIsNotReportedWhenNewMessageArrives() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=startup-current-chat-short-history',
+      png: Buffer.from(`startup-current-chat-short-history-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-startup-current-chat-short-history-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: '夏天',
+        messages: parseCount === 1
+          ? [
+              {
+                content: '早上好',
+                isSelf: false,
+                uiId: 'startup-history-morning',
+                bounds: { x: 120, y: 180, w: 72, h: 34 }
+              },
+              {
+                content: '中午好',
+                isSelf: true,
+                uiId: 'startup-history-noon',
+                bounds: { x: 120, y: 300, w: 72, h: 34 }
+              },
+              {
+                content: '睡了没',
+                isSelf: true,
+                uiId: 'startup-history-sleep',
+                bounds: { x: 120, y: 420, w: 72, h: 34 }
+              }
+            ]
+          : [
+              {
+                content: '早上好',
+                isSelf: false,
+                uiId: 'startup-history-morning-shifted',
+                bounds: { x: 120, y: 110, w: 72, h: 34 }
+              },
+              {
+                content: '中午好',
+                isSelf: false,
+                uiId: 'startup-history-noon-shifted',
+                bounds: { x: 120, y: 230, w: 72, h: 34 }
+              },
+              {
+                content: '睡了没',
+                isSelf: false,
+                uiId: 'startup-history-sleep-shifted',
+                bounds: { x: 120, y: 290, w: 72, h: 34 }
+              },
+              {
+                content: '开始上班了',
+                isSelf: false,
+                uiId: 'startup-new-after-running',
+                bounds: { x: 120, y: 350, w: 96, h: 34 }
+              }
+            ],
+        snapshotDigest: `digest-startup-current-chat-short-history-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const baselineResult = await driver.poll()
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.deepEqual(baselineResult.messages, [])
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].contact, '夏天')
+  assert.equal(result.messages[0].content, '开始上班了')
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
 async function testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage() {
   let parseCount = 0
   writeRepliedMessageStore({
@@ -4035,6 +4185,8 @@ await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
 await testRepliedTextCustomerMessageDoesNotTriggerAfterShortTtlExpired()
 await testShortCustomerTextCanTriggerAgainAfterShortTtlWithDifferentBounds()
 await testNewNonLatestCustomerMessageIsDisplayedWithoutTriggeringReply()
+await testUnreadSwitchOnlyReportsLatestVisibleCustomerMessage()
+await testStartupCurrentChatShortHistoryIsNotReportedWhenNewMessageArrives()
 await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testMinorCurrentChatChangeStillTriggersVisionParsing()
 await testNativeSendReturnsSelfMessageForDisplay()
