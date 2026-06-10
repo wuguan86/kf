@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import http from '../utils/http'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { TagInput } from '../components/TagInput'
+import { buildMaterialDownloadPath, isImageMaterial, parseMaterialTags, serializeMaterialTags } from './outboundMaterialUtils'
 import styles from './OutboundMaterialPage.module.css'
 
 type Props = {
@@ -60,6 +62,12 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
   const [editingMaterial, setEditingMaterial] = useState<OutboundMaterial | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<OutboundMaterial | null>(null)
   const [form, setForm] = useState<MaterialForm>(emptyForm)
+  const [materialPreviewUrls, setMaterialPreviewUrls] = useState<Record<string, string>>({})
+  const [selectedFilePreviewUrl, setSelectedFilePreviewUrl] = useState('')
+
+  const editingPreviewUrl = editingMaterial ? materialPreviewUrls[String(editingMaterial.id)] || '' : ''
+  const formPreviewUrl = selectedFilePreviewUrl || editingPreviewUrl
+  const formPreviewName = form.file?.name || editingMaterial?.name || ''
 
   const fetchMaterials = async () => {
     setLoading(true)
@@ -78,6 +86,51 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
       fetchMaterials()
     }
   }, [backendBaseUrl, userToken])
+
+  useEffect(() => {
+    if (!form.file || !isImageMaterial({ mimeType: form.file.type, extension: resolveFilenameExtension(form.file.name) })) {
+      setSelectedFilePreviewUrl('')
+      return
+    }
+    const previewUrl = URL.createObjectURL(form.file)
+    setSelectedFilePreviewUrl(previewUrl)
+    return () => URL.revokeObjectURL(previewUrl)
+  }, [form.file])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadPreviewUrls = async () => {
+      const imageMaterials = materials.filter((material) => material.id && isImageMaterial(material))
+      const entries = await Promise.all(imageMaterials.map(async (material) => {
+        const materialId = String(material.id)
+        try {
+          const response = await http.get<Blob, Blob | { data: Blob }>(buildMaterialDownloadPath(materialId), { responseType: 'blob' })
+          const blob = response instanceof Blob ? response : response?.data
+          if (!(blob instanceof Blob)) return null
+          return [materialId, URL.createObjectURL(blob)] as const
+        } catch (error) {
+          console.error('加载外发素材图片预览失败', { materialId, error })
+          return null
+        }
+      }))
+      const nextPreviewUrls = Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => !!entry))
+      if (cancelled) {
+        Object.values(nextPreviewUrls).forEach((previewUrl) => URL.revokeObjectURL(previewUrl))
+        return
+      }
+      setMaterialPreviewUrls(nextPreviewUrls)
+    }
+    loadPreviewUrls()
+    return () => {
+      cancelled = true
+    }
+  }, [materials])
+
+  useEffect(() => {
+    return () => {
+      Object.values(materialPreviewUrls).forEach((previewUrl) => URL.revokeObjectURL(previewUrl))
+    }
+  }, [materialPreviewUrls])
 
   const openCreateModal = () => {
     setEditingMaterial(null)
@@ -234,7 +287,19 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
                 {materials.map((material) => (
                   <tr key={material.id}>
                     <td className={styles.colName} title={buildMaterialTooltip(material)}>
-                      <div className={styles.materialName}>{material.name || '-'}</div>
+                      <div className={styles.materialCell}>
+                        {isImageMaterial(material) && (
+                          materialPreviewUrls[String(material.id)] ? (
+                            <img className={styles.materialThumb} src={materialPreviewUrls[String(material.id)]} alt={material.name || '素材图片'} />
+                          ) : (
+                            <div className={styles.materialThumbPlaceholder}>图</div>
+                          )
+                        )}
+                        <div className={styles.materialText}>
+                          <div className={styles.materialName}>{material.name || '-'}</div>
+                          <div className={styles.materialMeta}>{formatFileType(material)}</div>
+                        </div>
+                      </div>
                     </td>
                     <td className={styles.colScope}>
                       <span className={styles.badge}>{material.scope === 'COMPANY' ? '公司共享' : '私人'}</span>
@@ -296,7 +361,24 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
               <textarea className={styles.textarea} value={form.description} onChange={(event) => updateForm({ description: event.target.value })} />
 
               <label className={styles.label}>标签</label>
-              <input className={styles.input} value={form.tags} onChange={(event) => updateForm({ tags: event.target.value })} placeholder="例如：报价,售后,案例" />
+              <TagInput
+                value={parseMaterialTags(form.tags)}
+                onChange={(tags) => updateForm({ tags: serializeMaterialTags(tags) })}
+                placeholder="输入标签，按回车生成标签"
+              />
+
+              {formPreviewUrl && (
+                <>
+                  <label className={styles.label}>图片预览</label>
+                  <div className={styles.previewPanel}>
+                    <img className={styles.previewImage} src={formPreviewUrl} alt={formPreviewName || '素材图片'} />
+                    <div className={styles.previewInfo}>
+                      <div className={styles.previewName}>{formPreviewName || '素材图片'}</div>
+                      <div className={styles.previewMeta}>{selectedFilePreviewUrl ? '待上传图片' : '已上传图片'}</div>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <label className={styles.label}>允许渠道</label>
               <div className={styles.checkboxRow}>
@@ -313,7 +395,6 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
                 <>
                   <label className={styles.label}>素材文件</label>
                   <input className={styles.fileInput} type="file" onChange={(event) => updateForm({ file: event.target.files?.[0] || null })} />
-                  <div className={styles.fileHint}>v1 已验证图片自动发送；普通文件可先入库，自动发送需单独验证后开放。</div>
                 </>
               )}
             </div>
@@ -361,6 +442,11 @@ const formatFileSize = (value: string) => {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
   if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${size} B`
+}
+
+const resolveFilenameExtension = (fileName: string) => {
+  const index = fileName.lastIndexOf('.')
+  return index >= 0 ? fileName.slice(index + 1) : ''
 }
 
 const buildMaterialTooltip = (material: OutboundMaterial) => {

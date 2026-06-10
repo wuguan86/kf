@@ -72,6 +72,8 @@ public class OutboundMaterialDecisionService {
       log.info("外发素材规则筛选未命中，跳过模型选择 userId={} channel={}", userId, channel);
       return List.of();
     }
+    log.info("外发素材规则筛选命中 userId={} channel={} candidateCount={} candidates={}",
+        userId, channel, candidates.size(), summarizeCandidates(candidates));
     if (!modelConfigured || restClient == null) {
       log.warn("外发素材选择模型未配置，已降级为空附件 userId={} channel={} candidateCount={}",
           userId, channel, candidates.size());
@@ -79,25 +81,42 @@ public class OutboundMaterialDecisionService {
     }
     try {
       MaterialDecision decision = requestModelDecision(customerMessage, replyText, channel, candidates);
+      log.info("外发素材选择模型返回 userId={} channel={} shouldSend={} materialId={} confidence={} reason={} candidates={}",
+          userId,
+          channel,
+          decision.shouldSend(),
+          decision.materialId(),
+          decision.confidence(),
+          abbreviate(decision.reason(), 200),
+          summarizeCandidates(candidates));
       if (!decision.shouldSend()) {
+        log.info("外发素材选择模型判断不发送 userId={} channel={} reason={}",
+            userId, channel, abbreviate(decision.reason(), 200));
         return List.of();
       }
       if (decision.confidence() < MIN_MODEL_CONFIDENCE) {
-        log.info("外发素材选择置信度不足，跳过发送 userId={} materialId={} confidence={}",
-            userId, decision.materialId(), decision.confidence());
+        log.info("外发素材选择置信度不足，跳过发送 userId={} channel={} materialId={} confidence={} reason={}",
+            userId, channel, decision.materialId(), decision.confidence(), abbreviate(decision.reason(), 200));
         return List.of();
       }
       if (candidates.stream().noneMatch(candidate -> candidate.summary().materialId().equals(decision.materialId()))) {
-        log.warn("外发素材选择模型返回非候选素材，已拒绝 userId={} materialId={}", userId, decision.materialId());
+        log.warn("外发素材选择模型返回非候选素材，已拒绝 userId={} channel={} materialId={} candidates={}",
+            userId, channel, decision.materialId(), summarizeCandidates(candidates));
         return List.of();
       }
       Long materialId = parseLong(decision.materialId());
       if (materialId == null) {
+        log.warn("外发素材选择模型返回素材ID格式非法，已拒绝 userId={} channel={} materialId={} reason={}",
+            userId, channel, decision.materialId(), abbreviate(decision.reason(), 200));
         return List.of();
       }
-      return List.of(validateAutoSendMaterial(userId, materialId, channel));
+      OutboundMaterialEntity material = validateAutoSendMaterial(userId, materialId, channel);
+      log.info("外发素材选择成功 userId={} channel={} materialId={} materialName={} confidence={}",
+          userId, channel, materialId, abbreviate(material.getName(), 120), decision.confidence());
+      return List.of(material);
     } catch (Exception ex) {
-      log.warn("外发素材选择失败，已降级为空附件 userId={} channel={} reason={}", userId, channel, ex.getMessage());
+      log.warn("外发素材选择失败，已降级为空附件 userId={} channel={} candidateCount={} reason={}",
+          userId, channel, candidates.size(), ex.getMessage());
       return List.of();
     }
   }
@@ -332,6 +351,27 @@ public class OutboundMaterialDecisionService {
     }
     String value = text.trim();
     return value.length() <= maxLength ? value : value.substring(0, maxLength);
+  }
+
+  private String summarizeCandidates(List<RankedMaterialCandidate> candidates) {
+    if (candidates == null || candidates.isEmpty()) {
+      return "[]";
+    }
+    try {
+      ArrayNode array = objectMapper.createArrayNode();
+      for (RankedMaterialCandidate candidate : candidates) {
+        OutboundMaterialService.OutboundMaterialSummary summary = candidate.summary();
+        ObjectNode node = array.addObject();
+        node.put("materialId", summary.materialId());
+        node.put("name", abbreviate(summary.name(), 80));
+        node.put("fileType", summary.fileType());
+        node.put("score", candidate.score());
+        node.putPOJO("matchedTerms", candidate.matchedTerms());
+      }
+      return objectMapper.writeValueAsString(array);
+    } catch (Exception ex) {
+      return "[候选摘要生成失败:" + ex.getMessage() + "]";
+    }
   }
 
   record RankedMaterialCandidate(

@@ -769,6 +769,79 @@ async function testUnreadConversationLockedContactOverridesGenericVisionContact(
   assert.equal(result.messages[0].contact, '夏天')
 }
 
+async function testReliableConversationContactSurvivesLockedContactTtl() {
+  const originalNow = Date.now
+  let fakeNow = 1_700_000_000_000
+  Date.now = () => fakeNow
+  const clickedCandidates = []
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: `data:image/png;base64,current-${parseCount}`,
+      png: Buffer.from(`same-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({
+      changed: parseCount > 0,
+      digest: `digest-reliable-contact-${parseCount}`,
+      changedRatio: parseCount > 0 ? 0.12 : 0
+    }),
+    findUnreadConversationCandidates: () => parseCount === 0
+      ? [{
+          id: 'unread-summer',
+          x: 82,
+          y: 132,
+          width: 14,
+          height: 14,
+          centerX: 89,
+          centerY: 139,
+          score: 16
+        }]
+      : [],
+    recognizeUnreadConversationCandidate: async () => ({
+      contact: '夏天',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL',
+      skipAutoReply: false,
+      skipReason: '',
+      confidence: 0.96
+    }),
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: '微信',
+        messages: [{ content: `第 ${parseCount} 条消息`, isSelf: false, uiId: `customer-reliable-contact-${parseCount}` }],
+        snapshotDigest: `digest-after-reliable-contact-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  try {
+    await driver.start()
+    const firstResult = await driver.poll()
+    fakeNow += 31_000
+    const secondResult = await driver.poll()
+
+    assert.deepEqual(clickedCandidates, ['unread-summer'])
+    assert.equal(firstResult.messages.length, 1)
+    assert.equal(firstResult.messages[0].contact, '夏天')
+    assert.equal(secondResult.messages.length, 1)
+    assert.equal(secondResult.messages[0].contact, '夏天')
+  } finally {
+    Date.now = originalNow
+  }
+}
+
 async function testSpecialConversationGetsExitedAfterOpen() {
   const exits = []
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -4206,6 +4279,7 @@ await testCustomerServiceConversationNameFallbackSkipsBeforeClick()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
 await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testUnreadConversationLockedContactOverridesGenericVisionContact()
+await testReliableConversationContactSurvivesLockedContactTtl()
 await testSpecialConversationGetsExitedAfterOpen()
 await testSpecialConversationNameFallbackExitsAfterOpen()
 await testCustomerServiceConversationNameFallbackExitsAfterOpen()

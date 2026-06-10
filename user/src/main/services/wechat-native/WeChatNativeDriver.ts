@@ -166,6 +166,15 @@ type LockedUnreadConversationContact = {
   accountCategory?: 'NORMAL' | 'FILE_HELPER' | 'TENCENT_NEWS' | 'OFFICIAL_ACCOUNT' | 'SERVICE_ACCOUNT' | 'CUSTOMER_SERVICE' | 'UNKNOWN'
 }
 
+type ReliableConversationContact = {
+  contact: string
+  source: 'unread-list' | 'vision-snapshot'
+  updatedAt: number
+  candidateId?: string
+  conversationType?: 'SINGLE' | 'GROUP' | 'SYSTEM'
+  accountCategory?: 'NORMAL' | 'FILE_HELPER' | 'TENCENT_NEWS' | 'OFFICIAL_ACCOUNT' | 'SERVICE_ACCOUNT' | 'CUSTOMER_SERVICE' | 'UNKNOWN'
+}
+
 type UnreadCandidateCheckResult = {
   shouldSkip: boolean
   recognized: ConversationListItemRecognition | null
@@ -243,6 +252,7 @@ export class WeChatNativeDriver {
   private startupBaselineCustomerTextFingerprints = new Map<string, Set<string>>()
   private latestSnapshotFromUnreadSwitch = false
   private lockedUnreadConversationContact: LockedUnreadConversationContact | null = null
+  private reliableConversationContact: ReliableConversationContact | null = null
   private cachedImageMessages = new Map<string, CachedImageMessage>()
   private marketingCommandRunning = false
   private marketingActionStoreLoaded = false
@@ -259,6 +269,7 @@ export class WeChatNativeDriver {
       channel: nextChannel
     }
     this.lockedUnreadConversationContact = null
+    this.reliableConversationContact = null
     console.info('新方式视觉解析配置已更新', {
       hasBackendBaseUrl: !!this.runtimeConfig.backendBaseUrl,
       hasToken: !!this.runtimeConfig.token,
@@ -297,6 +308,7 @@ export class WeChatNativeDriver {
     this.startupBaselineCustomerTextFingerprints.clear()
     this.latestSnapshotFromUnreadSwitch = false
     this.lockedUnreadConversationContact = null
+    this.reliableConversationContact = null
     this.cachedImageMessages.clear()
     this.marketingCommandRunning = false
     this.lastWechatActivityAt = 0
@@ -331,6 +343,7 @@ export class WeChatNativeDriver {
     this.startupBaselineCustomerTextFingerprints.clear()
     this.latestSnapshotFromUnreadSwitch = false
     this.lockedUnreadConversationContact = null
+    this.reliableConversationContact = null
     this.cachedImageMessages.clear()
     this.marketingCommandRunning = false
     console.info('新方式微信视觉驱动已停止')
@@ -2364,25 +2377,43 @@ export class WeChatNativeDriver {
   }
 
   private applySnapshotContactGuard(snapshot: ParsedWeChatSnapshot): ParsedWeChatSnapshot {
+    if (this.channel !== 'personal') {
+      return snapshot
+    }
     const lockedContact = this.getActiveLockedUnreadConversationContact()
-    if (!lockedContact || !this.isGenericWechatContact(snapshot.contact)) {
+    if (!this.isGenericWechatContact(snapshot.contact)) {
+      if (this.hasReliableContactName(snapshot.contact)) {
+        this.rememberReliableConversationContact({
+          contact: snapshot.contact.trim(),
+          source: 'vision-snapshot',
+          conversationType: snapshot.conversationType,
+          accountCategory: snapshot.accountCategory
+        })
+      }
       if (lockedContact && this.hasReliableContactName(snapshot.contact) && snapshot.contact.trim() !== lockedContact.contact) {
         this.lockedUnreadConversationContact = null
       }
       return snapshot
     }
 
-    console.info('个人微信联系人本地守卫已使用未读会话列表识别结果修正泛化联系人名称', {
+    const fallbackContact = lockedContact || this.reliableConversationContact
+    if (!fallbackContact) {
+      return snapshot
+    }
+    const fallbackSource = lockedContact ? 'unread-list' : this.reliableConversationContact?.source
+
+    console.info('个人微信联系人本地守卫已使用本地可靠识别结果修正泛化联系人名称', {
       fromContact: snapshot.contact,
-      toContact: lockedContact.contact,
-      candidateId: lockedContact.candidateId,
+      toContact: fallbackContact.contact,
+      source: fallbackSource,
+      candidateId: fallbackContact.candidateId,
       messageCount: snapshot.messages.length
     })
     return {
       ...snapshot,
-      contact: lockedContact.contact,
-      conversationType: snapshot.conversationType || lockedContact.conversationType,
-      accountCategory: snapshot.accountCategory || lockedContact.accountCategory
+      contact: fallbackContact.contact,
+      conversationType: snapshot.conversationType || fallbackContact.conversationType,
+      accountCategory: snapshot.accountCategory || fallbackContact.accountCategory
     }
   }
 
@@ -2403,6 +2434,13 @@ export class WeChatNativeDriver {
       conversationType: recognized.conversationType,
       accountCategory: recognized.accountCategory
     }
+    this.rememberReliableConversationContact({
+      contact,
+      source: 'unread-list',
+      candidateId: candidate.id,
+      conversationType: recognized.conversationType,
+      accountCategory: recognized.accountCategory
+    })
     console.info('个人微信已锁定自动切换未读会话的联系人名称', {
       contact,
       candidateId: candidate.id,
@@ -2419,6 +2457,17 @@ export class WeChatNativeDriver {
       return null
     }
     return this.lockedUnreadConversationContact
+  }
+
+  private rememberReliableConversationContact(contact: Omit<ReliableConversationContact, 'updatedAt'>): void {
+    if (!this.hasReliableContactName(contact.contact)) {
+      return
+    }
+    this.reliableConversationContact = {
+      ...contact,
+      contact: contact.contact.trim(),
+      updatedAt: Date.now()
+    }
   }
 
   private hasReliableContactName(contact: string): boolean {
