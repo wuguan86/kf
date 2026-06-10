@@ -4,6 +4,7 @@ import styles from './MePage.module.css'
 import { Toast, useToast } from '../components/Toast'
 import { PaymentModal } from '../components/PaymentModal'
 import { eventBus } from '../utils/eventBus'
+import { buildAvatarSrc } from './mePageUtils'
 
 type Props = {
   backendBaseUrl: string
@@ -210,11 +211,7 @@ function MePage(props: Props): JSX.Element {
   }, [backendBaseUrl, tenantId, userToken])
 
   const getAvatarSrc = (url: string) => {
-    if (!url) return ''
-    if (url.startsWith('http') || url.startsWith('blob:')) return url
-    const baseUrl = backendBaseUrl.endsWith('/') ? backendBaseUrl.slice(0, -1) : backendBaseUrl
-    const path = url.startsWith('/') ? url : `/${url}`
-    return `${baseUrl}${path}`
+    return buildAvatarSrc(backendBaseUrl, url)
   }
 
   const formatDateTime = (value?: string) => {
