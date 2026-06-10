@@ -57,6 +57,7 @@ export type NativeDriverMessage = {
   trigger_reply: boolean
   ui_id?: string
   bounds?: WeChatMessageBounds
+  image_data_url?: string
   source?: WeChatChannel
   conversation_type?: WeChatConversationType
   account_category?: WeChatAccountCategory

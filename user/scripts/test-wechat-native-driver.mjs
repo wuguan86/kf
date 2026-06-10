@@ -83,6 +83,10 @@ function loadNativeDriver(mocks = {}) {
       return {
         app: { getPath: () => testUserDataPath },
         nativeImage: mocks.nativeImage || {
+          createFromPath: () => ({
+            isEmpty: () => true,
+            toDataURL: () => ''
+          }),
           createFromBuffer: () => ({
             isEmpty: () => true
           })
@@ -1267,7 +1271,8 @@ async function testStartupCurrentChatShortHistoryIsNotReportedWhenNewMessageArri
                 bounds: { x: 120, y: 420, w: 72, h: 34 }
               }
             ]
-          : [
+          : parseCount === 2
+            ? [
               {
                 content: '早上好',
                 isSelf: false,
@@ -1292,6 +1297,20 @@ async function testStartupCurrentChatShortHistoryIsNotReportedWhenNewMessageArri
                 uiId: 'startup-new-after-running',
                 bounds: { x: 120, y: 350, w: 96, h: 34 }
               }
+            ]
+            : [
+              {
+                content: '开始上班了',
+                isSelf: false,
+                uiId: `startup-new-after-running-visible-${parseCount}`,
+                bounds: { x: 120, y: 250, w: 96, h: 34 }
+              },
+              {
+                content: '收到，先喝口水缓缓。',
+                isSelf: true,
+                uiId: `startup-self-after-running-${parseCount}`,
+                bounds: { x: 520, y: 330, w: 180, h: 34 }
+              }
             ],
         snapshotDigest: `digest-startup-current-chat-short-history-after-${parseCount}`,
         conversationType: 'SINGLE',
@@ -1306,12 +1325,15 @@ async function testStartupCurrentChatShortHistoryIsNotReportedWhenNewMessageArri
   const baselineResult = await driver.poll()
   driver.lastPollAt = 0
   const result = await driver.poll()
+  driver.lastPollAt = 0
+  const repeatedHistoryResult = await driver.poll()
 
   assert.deepEqual(baselineResult.messages, [])
   assert.equal(result.messages.length, 1)
   assert.equal(result.messages[0].contact, '夏天')
   assert.equal(result.messages[0].content, '开始上班了')
   assert.equal(result.messages[0].trigger_reply, true)
+  assert.deepEqual(repeatedHistoryResult.messages, [])
 }
 
 async function testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage() {
@@ -1412,6 +1434,13 @@ async function testNativeSendSendsTextThenAttachments() {
   const textCalls = []
   const attachmentCalls = []
   const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: {
+      createFromPath: (localPath) => ({
+        isEmpty: () => false,
+        toDataURL: () => `data:image/png;base64,${Buffer.from(localPath).toString('base64')}`
+      }),
+      createFromBuffer: () => ({ isEmpty: () => true })
+    },
     findWeChatWindow: async () => testWindow,
     captureWeChatWindow: async () => ({ dataUrl: 'data:image/png;base64,current', png: Buffer.from('current'), width: 1, height: 1 }),
     comparePngSnapshots: () => ({ changed: false, digest: 'digest-1', changedRatio: 0 }),
@@ -1438,6 +1467,8 @@ async function testNativeSendSendsTextThenAttachments() {
   assert.equal(attachmentCalls.length, 1)
   assert.equal(attachmentCalls[0][0].localPath, 'C:\\tmp\\product.png')
   assert.equal(result.sentMessage.content, '可以的，我把产品图发你。')
+  assert.equal(result.sentMessage.type, 'image')
+  assert.equal(result.sentMessage.image_data_url.startsWith('data:image/png;base64,'), true)
 }
 
 async function testNativeSendAttachmentOnlyDoesNotRecordEmptyReply() {

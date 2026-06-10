@@ -46,7 +46,7 @@ export const shouldExtractImageForIncomingMessage = (message: IncomingMessageInp
 export const buildMessageDisplayPayload = (message: MessageDisplayInput): { displayText: string; imageDataUrl?: string } => {
   const messageType = normalizeIncomingMessageType(message.type)
   const displayText = normalizeMessage(message.content)
-  if ((messageType === 'image' || messageType === 'sticker') && isImagePlaceholderMessage(displayText) && message.imageDataUrl) {
+  if ((messageType === 'image' || messageType === 'sticker') && message.imageDataUrl) {
     return { displayText, imageDataUrl: message.imageDataUrl }
   }
   return { displayText }

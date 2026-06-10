@@ -504,7 +504,7 @@ export class WeChatNativeDriver {
         hasNewReplyTrigger = true
         this.pendingReplySessionKey = snapshotSessionKey
         await this.markCustomerMessageReplied(customerReplyFingerprint)
-        this.clearStartupBaselineShortTextFingerprints(snapshot.contact)
+        this.markStartupBaselineShortText(snapshot.contact, parsedMessage)
       }
       if (!shouldTriggerReply && !hadPreviousBaseline) {
         console.info('新方式首次扫描跳过当前可见历史消息', {
@@ -616,7 +616,7 @@ export class WeChatNativeDriver {
         ok: true,
         success: true,
         mode: 'native',
-        sentMessage: this.buildSentSelfMessage(targetContact, content || this.describeAttachments(preparedAttachments))
+        sentMessage: this.buildSentSelfMessage(targetContact, content || this.describeAttachments(preparedAttachments), preparedAttachments)
       }
     }
     return { ok: false, success: false, error: 'send_failed', message: '新方式发送失败' }
@@ -2188,10 +2188,6 @@ export class WeChatNativeDriver {
     return !!fingerprints?.has(this.buildContentFingerprint(contact, normalizedContent, false))
   }
 
-  private clearStartupBaselineShortTextFingerprints(contact: string): void {
-    this.startupBaselineShortTextFingerprints.delete(this.buildSessionKey(contact))
-  }
-
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {
     let screenshot = await captureWeChatWindow(window)
     let diff = comparePngSnapshots(this.lastScreenshotPng, screenshot.png)
@@ -3167,19 +3163,22 @@ export class WeChatNativeDriver {
     return normalized.slice(-MAX_PERSISTED_REPLIED_MESSAGES)
   }
 
-  private buildSentSelfMessage(target: unknown, content: string): NativeDriverMessage {
+  private buildSentSelfMessage(target: unknown, content: string, attachments: WeChatOutboundAttachment[] = []): NativeDriverMessage {
     const now = Date.now()
     const contact = String(target || this.lastWindow?.title || '微信').trim() || '微信'
     const uiId = `native-self-${now}`
+    const imageAttachment = attachments.find((item) => String(item.fileType || '').toUpperCase() === 'IMAGE' && item.localPath)
+    const imageDataUrl = imageAttachment?.localPath ? nativeImage.createFromPath(imageAttachment.localPath).toDataURL() : ''
     return {
       id: uiId,
       contact,
       content,
       timestamp: now,
-      type: 'text',
+      type: imageDataUrl ? 'image' : 'text',
       is_self: true,
       trigger_reply: false,
       ui_id: uiId,
+      ...(imageDataUrl ? { image_data_url: imageDataUrl } : {}),
       source: this.channel
     }
   }

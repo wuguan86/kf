@@ -768,6 +768,7 @@ function AssistantPage(props: Props): JSX.Element {
     const skipReason = String(msg?.skip_reason || msg?.skipReason || '').trim()
     const messageTimestamp = resolveMessageTimestamp(msg?.timestamp)
     const messageUiId = msg?.ui_id || msg?.uiId
+    const inlineImageDataUrl = String(msg?.image_data_url || msg?.imageDataUrl || '').trim()
     const source: 'personal' | 'enterprise' = msg?.source === 'enterprise' ? 'enterprise' : 'personal'
     const messageId = String(msg?.messageId || msg?.id || '').trim()
     const customerId = String(msg?.customerId || '').trim()
@@ -801,7 +802,9 @@ function AssistantPage(props: Props): JSX.Element {
       shouldWaitForImage,
       source
     })
-    const imageTask: Promise<{ imageDataUrl: string; imageNotice: string }> = shouldWaitForImage
+    const imageTask: Promise<{ imageDataUrl: string; imageNotice: string }> = inlineImageDataUrl
+      ? Promise.resolve({ imageDataUrl: inlineImageDataUrl, imageNotice: '' })
+      : shouldWaitForImage
       ? (async () => {
           console.log('图片链路：识别到图片占位消息，开始等待图片文件', { contact, messageTimestamp })
           showToast('识别到图片，正在提取中...', 'info')

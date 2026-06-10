@@ -83,6 +83,16 @@ assert.equal(
 
 assert.equal(
   buildMessageDisplayPayload({
+    content: '可以的，我把「橘猫」发您。',
+    type: 'image',
+    imageDataUrl: 'data:image/png;base64,abc'
+  }).imageDataUrl,
+  'data:image/png;base64,abc',
+  '外发图片回显时，文案不是图片占位也要显示图片数据'
+)
+
+assert.equal(
+  buildMessageDisplayPayload({
     content: '这草地就是昨天的公园呀',
     type: 'text',
     imageDataUrl: 'data:image/png;base64,abc'
