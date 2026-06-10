@@ -14,8 +14,7 @@ import com.shijie.transit.userapi.dify.DifyClient;
 import com.shijie.transit.userapi.dify.DifyProperties;
 import com.shijie.transit.userapi.service.DifyContactConversationMappingService;
 import com.shijie.transit.userapi.service.KnowledgeBaseService;
-import com.shijie.transit.userapi.service.MembershipEntitlementService;
-import com.shijie.transit.userapi.service.MembershipQueryService;
+import com.shijie.transit.userapi.service.OutboundMaterialDecisionService;
 import com.shijie.transit.userapi.service.OutboundMaterialService;
 import com.shijie.transit.userapi.service.RoleKnowledgeBaseService;
 import com.shijie.transit.userapi.service.RoleService;
@@ -49,43 +48,24 @@ class UserDifyControllerTest {
   @Test
   void monitorChatSkipsKnowledgeRetrievalWhenRoleHasNoKnowledgeBase() throws Exception {
     ObjectMapper objectMapper = new ObjectMapper();
-
-    RoleEntity role = new RoleEntity();
-    role.setId(10L);
-    role.setName("assistant");
-    role.setContent("reply politely");
-    role.setKnowledgeBaseId("");
-
+    RoleEntity role = role("");
     RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
     FakeRoleKnowledgeBaseService roleKnowledgeBaseService = new FakeRoleKnowledgeBaseService();
     FakeKnowledgeBaseService knowledgeBaseService = new FakeKnowledgeBaseService(objectMapper);
 
-    UserDifyController controller = new UserDifyController(
+    UserDifyController controller = controller(
+        objectMapper,
         difyClient,
-        new DifyContactConversationMappingService(null, Clock.systemDefaultZone()),
-        new FakeRoleService(role, roleKnowledgeBaseService),
+        role,
         roleKnowledgeBaseService,
         knowledgeBaseService,
-        new FakeSessionConfigService(objectMapper),
-        new FakeSessionHistoryService(),
-        null,
-        null,
-        null,
-        new DifyProperties(),
-        objectMapper);
+        null);
 
     SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
         new TransitPrincipal(1L, 1L, "USER"), null));
     try {
       Result<Object> result = controller.monitorChat(new UserDifyController.MonitorChatRequest(
-          10L,
-          "hello",
-          "",
-          "",
-          "",
-          "",
-          "",
-          ""));
+          10L, "hello", "", "", "", "", "", ""));
 
       JsonNode data = (JsonNode) result.getData();
       assertEquals("ok", data.path("answer").asText());
@@ -99,12 +79,7 @@ class UserDifyControllerTest {
   @Test
   void monitorChatSkipsRetrievalWhenBoundKnowledgeBaseHasNoFiles() throws Exception {
     ObjectMapper objectMapper = new ObjectMapper();
-    RoleEntity role = new RoleEntity();
-    role.setId(10L);
-    role.setName("assistant");
-    role.setContent("reply politely");
-    role.setKnowledgeBaseId("");
-
+    RoleEntity role = role("");
     KnowledgeBaseEntity emptyKnowledgeBase = new KnowledgeBaseEntity();
     emptyKnowledgeBase.setId(20L);
     emptyKnowledgeBase.setDifyDatasetId("empty-dataset");
@@ -113,32 +88,19 @@ class UserDifyControllerTest {
     FakeRoleKnowledgeBaseService roleKnowledgeBaseService = new FakeRoleKnowledgeBaseService(List.of(emptyKnowledgeBase));
     FakeKnowledgeBaseService knowledgeBaseService = new FakeKnowledgeBaseService(objectMapper);
 
-    UserDifyController controller = new UserDifyController(
+    UserDifyController controller = controller(
+        objectMapper,
         difyClient,
-        new DifyContactConversationMappingService(null, Clock.systemDefaultZone()),
-        new FakeRoleService(role, roleKnowledgeBaseService),
+        role,
         roleKnowledgeBaseService,
         knowledgeBaseService,
-        new FakeSessionConfigService(objectMapper),
-        new FakeSessionHistoryService(),
-        null,
-        null,
-        null,
-        new DifyProperties(),
-        objectMapper);
+        null);
 
     SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
         new TransitPrincipal(1L, 1L, "USER"), null));
     try {
       Result<Object> result = controller.monitorChat(new UserDifyController.MonitorChatRequest(
-          10L,
-          "hello",
-          "",
-          "",
-          "",
-          "",
-          "",
-          ""));
+          10L, "hello", "", "", "", "", "", ""));
 
       JsonNode data = (JsonNode) result.getData();
       assertEquals("ok", data.path("answer").asText());
@@ -153,64 +115,114 @@ class UserDifyControllerTest {
   @Test
   void monitorChatReturnsOnlyValidatedOutboundAttachmentsFromDifyPlan() throws Exception {
     ObjectMapper objectMapper = new ObjectMapper();
-    RoleEntity role = new RoleEntity();
-    role.setId(10L);
-    role.setName("assistant");
-    role.setContent("reply politely");
-    role.setKnowledgeBaseId("");
-
     RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
     difyClient.answer = """
-        {"reply_text":"可以的，我把产品图发你。","attachments":[{"material_id":"31","reason":"客户索要产品图"},{"material_id":"32","reason":"越权素材"}],"confidence":0.91}
+        {"reply_text":"Sure, I will send the product image.","attachments":[{"material_id":"31"},{"material_id":"32"}],"confidence":0.91}
         """;
     difyClient.rawJson = "{\"answer\":" + objectMapper.writeValueAsString(difyClient.answer) + "}";
-    OutboundMaterialEntity material = new OutboundMaterialEntity();
-    material.setId(31L);
-    material.setName("产品图");
-    material.setFileType("IMAGE");
-    material.setMimeType("image/png");
-    material.setFileSize(2048L);
-    material.setExtension("png");
-    material.setAllowedChannels("personal,enterprise");
-    FakeOutboundMaterialService outboundMaterialService = new FakeOutboundMaterialService();
-    outboundMaterialService.materials.put(31L, material);
+    OutboundMaterialEntity material = material(31L, "Product image");
+    FakeOutboundMaterialDecisionService decisionService = new FakeOutboundMaterialDecisionService();
+    decisionService.materials.put(31L, material);
 
-    UserDifyController controller = new UserDifyController(
+    UserDifyController controller = controller(
+        objectMapper,
         difyClient,
-        new DifyContactConversationMappingService(null, Clock.systemDefaultZone()),
-        new FakeRoleService(role, new FakeRoleKnowledgeBaseService()),
+        role(""),
         new FakeRoleKnowledgeBaseService(),
         new FakeKnowledgeBaseService(objectMapper),
-        new FakeSessionConfigService(objectMapper),
-        new FakeSessionHistoryService(),
-        null,
-        null,
-        outboundMaterialService,
-        new DifyProperties(),
-        objectMapper);
+        decisionService);
 
     SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
         new TransitPrincipal(1L, 1L, "USER"), null));
     try {
       Result<Object> result = controller.monitorChat(new UserDifyController.MonitorChatRequest(
-          10L,
-          "发产品图给我",
-          "",
-          "",
-          "",
-          "",
-          "",
-          ""));
+          10L, "send product image", "", "", "", "", "", ""));
 
       JsonNode data = (JsonNode) result.getData();
-      assertEquals("可以的，我把产品图发你。", data.path("answer").asText());
+      assertEquals("Sure, I will send the product image.", data.path("answer").asText());
       assertEquals(1, data.path("attachments").size());
       assertEquals("31", data.path("attachments").get(0).path("materialId").asText());
-      assertEquals("产品图", data.path("attachments").get(0).path("name").asText());
+      assertEquals("Product image", data.path("attachments").get(0).path("name").asText());
       assertEquals("IMAGE", data.path("attachments").get(0).path("fileType").asText());
     } finally {
       SecurityContextHolder.clearContext();
     }
+  }
+
+  @Test
+  void monitorChatAddsDecisionAttachmentsWhenDifyReturnsPlainText() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+    difyClient.answer = "I do not have an image, please search it online.";
+    difyClient.rawJson = "{\"answer\":\"I do not have an image, please search it online.\"}";
+    FakeOutboundMaterialDecisionService decisionService = new FakeOutboundMaterialDecisionService();
+    decisionService.selectedMaterials = List.of(material(31L, "Product introduction image"));
+
+    UserDifyController controller = controller(
+        objectMapper,
+        difyClient,
+        role(""),
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        decisionService);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      Result<Object> result = controller.monitorChat(new UserDifyController.MonitorChatRequest(
+          10L, "send product image", "", "", "", "", "", ""));
+
+      JsonNode data = (JsonNode) result.getData();
+      assertEquals("可以的，我把「Product introduction image」发您。", data.path("answer").asText());
+      assertEquals(1, data.path("attachments").size());
+      assertEquals("31", data.path("attachments").get(0).path("materialId").asText());
+      assertEquals("Product introduction image", data.path("attachments").get(0).path("name").asText());
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  private static UserDifyController controller(
+      ObjectMapper objectMapper,
+      RecordingDifyClient difyClient,
+      RoleEntity role,
+      FakeRoleKnowledgeBaseService roleKnowledgeBaseService,
+      FakeKnowledgeBaseService knowledgeBaseService,
+      OutboundMaterialDecisionService decisionService) {
+    return new UserDifyController(
+        difyClient,
+        new DifyContactConversationMappingService(null, Clock.systemDefaultZone()),
+        new FakeRoleService(role, roleKnowledgeBaseService),
+        roleKnowledgeBaseService,
+        knowledgeBaseService,
+        new FakeSessionConfigService(objectMapper),
+        new FakeSessionHistoryService(),
+        null,
+        null,
+        decisionService,
+        new DifyProperties(),
+        objectMapper);
+  }
+
+  private static RoleEntity role(String knowledgeBaseId) {
+    RoleEntity role = new RoleEntity();
+    role.setId(10L);
+    role.setName("assistant");
+    role.setContent("reply politely");
+    role.setKnowledgeBaseId(knowledgeBaseId);
+    return role;
+  }
+
+  private static OutboundMaterialEntity material(Long id, String name) {
+    OutboundMaterialEntity material = new OutboundMaterialEntity();
+    material.setId(id);
+    material.setName(name);
+    material.setFileType("IMAGE");
+    material.setMimeType("image/png");
+    material.setFileSize(2048L);
+    material.setExtension("png");
+    material.setAllowedChannels("personal,enterprise");
+    return material;
   }
 
   private static class RecordingDifyClient extends DifyClient {
@@ -234,20 +246,32 @@ class UserDifyControllerTest {
     }
   }
 
-  private static class FakeOutboundMaterialService extends OutboundMaterialService {
+  private static class FakeOutboundMaterialDecisionService extends OutboundMaterialDecisionService {
     private final Map<Long, OutboundMaterialEntity> materials = new HashMap<>();
+    private List<OutboundMaterialEntity> selectedMaterials = List.of();
 
-    FakeOutboundMaterialService() {
-      super(null, "uploads/materials");
+    FakeOutboundMaterialDecisionService() {
+      super(new FakeOutboundMaterialService(), new ObjectMapper());
     }
 
     @Override
     public OutboundMaterialEntity validateAutoSendMaterial(Long userId, Long id, String channel) {
       OutboundMaterialEntity material = materials.get(id);
       if (material == null) {
-        throw new IllegalArgumentException("越权素材");
+        throw new IllegalArgumentException("forbidden material");
       }
       return material;
+    }
+
+    @Override
+    public List<OutboundMaterialEntity> selectAutoSendMaterials(Long userId, String customerMessage, String replyText, String channel) {
+      return selectedMaterials;
+    }
+  }
+
+  private static class FakeOutboundMaterialService extends OutboundMaterialService {
+    FakeOutboundMaterialService() {
+      super(null, "uploads/materials");
     }
   }
 

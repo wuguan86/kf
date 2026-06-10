@@ -23,7 +23,7 @@ import com.shijie.transit.userapi.service.SessionConfigService;
 import com.shijie.transit.userapi.service.SessionHistoryService;
 import com.shijie.transit.userapi.service.MembershipEntitlementService;
 import com.shijie.transit.userapi.service.MembershipQueryService;
-import com.shijie.transit.userapi.service.OutboundMaterialService;
+import com.shijie.transit.userapi.service.OutboundMaterialDecisionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -74,7 +74,7 @@ public class UserDifyController {
     private final SessionHistoryService sessionHistoryService;
     private final MembershipEntitlementService membershipEntitlementService;
     private final MembershipQueryService membershipQueryService;
-    private final OutboundMaterialService outboundMaterialService;
+    private final OutboundMaterialDecisionService outboundMaterialDecisionService;
     private final DifyProperties difyProperties;
     private final ObjectMapper objectMapper;
 
@@ -88,7 +88,7 @@ public class UserDifyController {
             SessionHistoryService sessionHistoryService,
             MembershipEntitlementService membershipEntitlementService,
             MembershipQueryService membershipQueryService,
-            OutboundMaterialService outboundMaterialService,
+            OutboundMaterialDecisionService outboundMaterialDecisionService,
             DifyProperties difyProperties,
             ObjectMapper objectMapper) {
         this.difyClient = difyClient;
@@ -100,7 +100,7 @@ public class UserDifyController {
         this.sessionHistoryService = sessionHistoryService;
         this.membershipEntitlementService = membershipEntitlementService;
         this.membershipQueryService = membershipQueryService;
-        this.outboundMaterialService = outboundMaterialService;
+        this.outboundMaterialDecisionService = outboundMaterialDecisionService;
         this.difyProperties = difyProperties;
         this.objectMapper = objectMapper;
     }
@@ -155,7 +155,15 @@ public class UserDifyController {
             contactConversationMappingService.upsertConversationId(
                     principal.subjectId(), request.roleId(), request.wechatContact(), result.conversationId());
         }
-        ReplyPlan replyPlan = resolveReplyPlan(result.answer(), principal.subjectId(), resolveWechatChannel(request));
+        String channel = resolveWechatChannel(request);
+        ReplyPlan replyPlan = resolveReplyPlan(result.answer(), principal.subjectId(), channel);
+        if (replyPlan.attachments().isEmpty() && outboundMaterialDecisionService != null) {
+            List<OutboundMaterialEntity> decisionAttachments = outboundMaterialDecisionService.selectAutoSendMaterials(
+                    principal.subjectId(), request.message(), replyPlan.replyText(), channel);
+            if (!decisionAttachments.isEmpty()) {
+                replyPlan = new ReplyPlan(buildAttachmentReplyText(decisionAttachments), decisionAttachments);
+            }
+        }
         String normalizedAnswer = normalizeStreamingAnswer(replyPlan.replyText());
         if (StringUtils.hasText(normalizedAnswer)) {
             sessionHistoryService.appendMessage(
@@ -369,7 +377,15 @@ public class UserDifyController {
                         StringUtils.hasText(request.imageDataUrl()));
                 DifyClient.DifyChatResult result = waitForChatResultWithHeartbeat(
                         emitter, payload, principal.subjectId(), request.imageDataUrl(), true, streamTraceId);
-                ReplyPlan replyPlan = resolveReplyPlan(result.answer(), principal.subjectId(), resolveWechatChannel(request));
+                String channel = resolveWechatChannel(request);
+                ReplyPlan replyPlan = resolveReplyPlan(result.answer(), principal.subjectId(), channel);
+                if (replyPlan.attachments().isEmpty() && outboundMaterialDecisionService != null) {
+                    List<OutboundMaterialEntity> decisionAttachments = outboundMaterialDecisionService.selectAutoSendMaterials(
+                            principal.subjectId(), request.message(), replyPlan.replyText(), channel);
+                    if (!decisionAttachments.isEmpty()) {
+                        replyPlan = new ReplyPlan(buildAttachmentReplyText(decisionAttachments), decisionAttachments);
+                    }
+                }
                 String answer = normalizeStreamingAnswer(replyPlan.replyText());
                 log.info("monitorChatStream 调用Dify后 traceId={} conversationId={} answerLength={}",
                         streamTraceId,
@@ -743,7 +759,7 @@ public class UserDifyController {
     }
 
     private List<OutboundMaterialEntity> resolveValidatedAttachments(JsonNode attachmentsNode, Long userId, String channel) {
-        if (outboundMaterialService == null || attachmentsNode == null || !attachmentsNode.isArray()) {
+        if (outboundMaterialDecisionService == null || attachmentsNode == null || !attachmentsNode.isArray()) {
             return List.of();
         }
         List<OutboundMaterialEntity> attachments = new ArrayList<>();
@@ -759,7 +775,7 @@ public class UserDifyController {
                 continue;
             }
             try {
-                attachments.add(outboundMaterialService.validateAutoSendMaterial(userId, materialId, channel));
+                attachments.add(outboundMaterialDecisionService.validateAutoSendMaterial(userId, materialId, channel));
             } catch (Exception ex) {
                 log.warn("Dify 推荐的外发素材未通过校验 userId={} materialId={} channel={} reason={}",
                         userId, materialId, channel, ex.getMessage());
@@ -810,6 +826,27 @@ public class UserDifyController {
             item.put("downloadUrl", "/api/user/outbound-materials/" + material.getId() + "/download");
         }
         return array;
+    }
+
+    private String buildAttachmentReplyText(List<OutboundMaterialEntity> attachments) {
+        if (attachments == null || attachments.isEmpty()) {
+            return "";
+        }
+        if (attachments.size() == 1) {
+            OutboundMaterialEntity material = attachments.get(0);
+            String name = material == null ? "" : material.getName();
+            String fileType = material == null ? "" : material.getFileType();
+            if (StringUtils.hasText(name)) {
+                return "可以的，我把「" + name.trim() + "」发您。";
+            }
+            if ("IMAGE".equalsIgnoreCase(fileType)) {
+                return "可以的，我把相关图片发您。";
+            }
+            return "可以的，我把相关资料发您。";
+        }
+        boolean allImages = attachments.stream()
+                .allMatch(material -> material != null && "IMAGE".equalsIgnoreCase(material.getFileType()));
+        return allImages ? "可以的，我把相关图片发您。" : "可以的，我把相关资料发您。";
     }
 
     private String resolveWechatChannel(MonitorChatRequest request) {

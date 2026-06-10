@@ -29,6 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class OutboundMaterialService {
   private static final Logger log = LoggerFactory.getLogger(OutboundMaterialService.class);
   private static final long MAX_AUTO_SEND_FILE_SIZE = 25L * 1024L * 1024L;
+  private static final int MAX_DIFY_MATERIAL_CANDIDATES = 50;
 
   private final OutboundMaterialMapper outboundMaterialMapper;
   private final Path uploadRoot;
@@ -53,6 +54,26 @@ public class OutboundMaterialService {
     return materials.stream()
         .filter(material -> isSameTenant(material, tenantId))
         .filter(material -> isVisibleToUser(material, userId))
+        .toList();
+  }
+
+  public List<OutboundMaterialSummary> listAutoSendMaterialSummaries(Long userId, String channel) {
+    return listVisibleMaterials(userId).stream()
+        .filter(material -> "ENABLED".equalsIgnoreCase(nullSafe(material.getStatus())))
+        .filter(material -> Boolean.TRUE.equals(material.getAutoSendEnabled()))
+        .filter(material -> isChannelAllowed(material.getAllowedChannels(), channel))
+        .filter(material -> material.getFileSize() == null || material.getFileSize() <= MAX_AUTO_SEND_FILE_SIZE)
+        .limit(MAX_DIFY_MATERIAL_CANDIDATES)
+        .map(material -> new OutboundMaterialSummary(
+            String.valueOf(material.getId()),
+            nullSafe(material.getName()),
+            nullSafe(material.getDescription()),
+            nullSafe(material.getTags()),
+            nullSafe(material.getFileType()),
+            nullSafe(material.getMimeType()),
+            nullSafe(material.getExtension()),
+            nullSafe(material.getAllowedChannels()),
+            nullSafe(material.getScope())))
         .toList();
   }
 
@@ -265,5 +286,17 @@ public class OutboundMaterialService {
 
   private String nullSafe(String value) {
     return value == null ? "" : value.trim();
+  }
+
+  public record OutboundMaterialSummary(
+      String materialId,
+      String name,
+      String description,
+      String tags,
+      String fileType,
+      String mimeType,
+      String extension,
+      String allowedChannels,
+      String scope) {
   }
 }

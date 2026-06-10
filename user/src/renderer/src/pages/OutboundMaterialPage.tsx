@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import http from '../utils/http'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import styles from './OutboundMaterialPage.module.css'
@@ -60,11 +60,6 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
   const [editingMaterial, setEditingMaterial] = useState<OutboundMaterial | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<OutboundMaterial | null>(null)
   const [form, setForm] = useState<MaterialForm>(emptyForm)
-
-  const imageCount = useMemo(
-    () => materials.filter((item) => String(item.fileType || '').toUpperCase() === 'IMAGE').length,
-    [materials]
-  )
 
   const fetchMaterials = async () => {
     setLoading(true)
@@ -205,10 +200,6 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
           <p className={styles.subtitle}>管理可由个人微信或企业微信发送给客户的图片和文件素材</p>
         </div>
         <div className={styles.headerActions}>
-          <button className={styles.secondaryBtn} onClick={fetchMaterials} disabled={loading}>
-            <RefreshIcon />
-            刷新
-          </button>
           <button className={styles.primaryBtn} onClick={openCreateModal}>
             <PlusIcon />
             上传素材
@@ -216,23 +207,17 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
         </div>
       </header>
 
-      <div className={styles.summaryGrid}>
-        <div className={styles.summaryItem}>
-          <span className={styles.summaryLabel}>全部素材</span>
-          <strong>{materials.length}</strong>
-        </div>
-        <div className={styles.summaryItem}>
-          <span className={styles.summaryLabel}>图片素材</span>
-          <strong>{imageCount}</strong>
-        </div>
-        <div className={styles.summaryItem}>
-          <span className={styles.summaryLabel}>允许自动发送</span>
-          <strong>{materials.filter((item) => item.autoSendEnabled && item.status === 'ENABLED').length}</strong>
-        </div>
-      </div>
-
       <div className={styles.body}>
         <div className={styles.card}>
+          <div className={styles.cardHeader}>
+            <div>
+              <h5 className={styles.cardTitle}>素材列表</h5>
+              <p className={styles.cardSubtitle}>共 {materials.length} 份素材</p>
+            </div>
+            <button onClick={fetchMaterials} className={styles.iconBtn} title="刷新" disabled={loading}>
+              <RefreshIcon />
+            </button>
+          </div>
           <div className={styles.tableWrapper}>
             <table className={styles.table}>
               <thead>
@@ -248,13 +233,8 @@ export default function OutboundMaterialPage(props: Props): JSX.Element {
               <tbody>
                 {materials.map((material) => (
                   <tr key={material.id}>
-                    <td className={styles.colName}>
+                    <td className={styles.colName} title={buildMaterialTooltip(material)}>
                       <div className={styles.materialName}>{material.name || '-'}</div>
-                      <div className={styles.materialMeta}>
-                        {formatFileType(material)} · {formatFileSize(material.fileSize)}
-                      </div>
-                      {material.description && <div className={styles.materialDescription}>{material.description}</div>}
-                      {material.tags && <div className={styles.tagLine}>{material.tags}</div>}
                     </td>
                     <td className={styles.colScope}>
                       <span className={styles.badge}>{material.scope === 'COMPANY' ? '公司共享' : '私人'}</span>
@@ -381,6 +361,21 @@ const formatFileSize = (value: string) => {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
   if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${size} B`
+}
+
+const buildMaterialTooltip = (material: OutboundMaterial) => {
+  const lines = [
+    `名称：${material.name || '-'}`,
+    `类型：${formatFileType(material)}`,
+    `大小：${formatFileSize(material.fileSize)}`,
+    `范围：${material.scope === 'COMPANY' ? '公司共享' : '私人'}`,
+    `渠道：${formatChannels(material.allowedChannels)}`,
+    `自动发送：${material.autoSendEnabled ? '允许' : '不允许'}`,
+    `状态：${material.status === 'ENABLED' ? '启用' : '停用'}`
+  ]
+  if (material.description) lines.push(`说明：${material.description}`)
+  if (material.tags) lines.push(`标签：${material.tags}`)
+  return lines.join('\n')
 }
 
 const ToggleSwitch = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (
