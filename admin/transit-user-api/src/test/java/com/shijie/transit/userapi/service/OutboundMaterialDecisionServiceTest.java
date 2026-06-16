@@ -3,7 +3,10 @@ package com.shijie.transit.userapi.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shijie.transit.common.db.entity.OutboundMaterialEntity;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.web.client.RestClient;
@@ -72,6 +75,24 @@ class OutboundMaterialDecisionServiceTest {
   }
 
   @Test
+  void selectAutoSendMaterialsReturnsMatchedMaterialWithoutModelGate() {
+    FakeOutboundMaterialService materialService = new FakeOutboundMaterialService();
+    materialService.summaries = List.of(
+        summary("31", "产品介绍图", "客户索要产品图片时发送", "产品,图片", "IMAGE"));
+    materialService.materials.put(31L, material(31L, "产品介绍图"));
+    OutboundMaterialDecisionService service = new OutboundMaterialDecisionService(materialService, new ObjectMapper());
+
+    List<OutboundMaterialEntity> selectedMaterials = service.selectAutoSendMaterials(
+        7L,
+        "发我产品图片看看",
+        "抱歉，我无法满足这个请求。",
+        "personal");
+
+    assertEquals(1, selectedMaterials.size());
+    assertEquals(31L, selectedMaterials.get(0).getId());
+  }
+
+  @Test
   void parseDecisionSupportsJsonFence() throws Exception {
     OutboundMaterialDecisionService service =
         new OutboundMaterialDecisionService(new FakeOutboundMaterialService(), new ObjectMapper());
@@ -105,6 +126,20 @@ class OutboundMaterialDecisionServiceTest {
         "COMPANY");
   }
 
+  private static OutboundMaterialEntity material(Long id, String name) {
+    OutboundMaterialEntity material = new OutboundMaterialEntity();
+    material.setId(id);
+    material.setName(name);
+    material.setFileType("IMAGE");
+    material.setMimeType("image/png");
+    material.setFileSize(2048L);
+    material.setExtension("png");
+    material.setAllowedChannels("personal,enterprise");
+    material.setAutoSendEnabled(true);
+    material.setStatus("ENABLED");
+    return material;
+  }
+
   private static boolean readBooleanField(Object target, String fieldName) throws Exception {
     return (boolean) readField(target, fieldName);
   }
@@ -121,6 +156,7 @@ class OutboundMaterialDecisionServiceTest {
 
   private static class FakeOutboundMaterialService extends OutboundMaterialService {
     private List<OutboundMaterialSummary> summaries = List.of();
+    private final Map<Long, OutboundMaterialEntity> materials = new HashMap<>();
 
     FakeOutboundMaterialService() {
       super(null, "uploads/materials");
@@ -129,6 +165,15 @@ class OutboundMaterialDecisionServiceTest {
     @Override
     public List<OutboundMaterialSummary> listAutoSendMaterialSummaries(Long userId, String channel) {
       return summaries;
+    }
+
+    @Override
+    public OutboundMaterialEntity validateAutoSendMaterial(Long userId, Long id, String channel) {
+      OutboundMaterialEntity material = materials.get(id);
+      if (material == null) {
+        throw new IllegalArgumentException("forbidden material");
+      }
+      return material;
     }
   }
 }

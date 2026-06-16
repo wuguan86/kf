@@ -69,60 +69,47 @@ public class OutboundMaterialDecisionService {
     }
     List<RankedMaterialCandidate> candidates = rankCandidates(userId, customerMessage, channel);
     if (candidates.isEmpty()) {
-      log.info("外发素材规则筛选未命中，跳过模型选择 userId={} channel={}", userId, channel);
+      log.info("外发素材规则筛选未命中，跳过自动发送 userId={} channel={}", userId, channel);
       return List.of();
     }
     log.info("外发素材规则筛选命中 userId={} channel={} candidateCount={} candidates={}",
         userId, channel, candidates.size(), summarizeCandidates(candidates));
-    if (!modelConfigured || restClient == null) {
-      log.warn("外发素材选择模型未配置，已降级为空附件 userId={} channel={} candidateCount={}",
-          userId, channel, candidates.size());
-      return List.of();
-    }
-    try {
-      MaterialDecision decision = requestModelDecision(customerMessage, replyText, channel, candidates);
-      log.info("外发素材选择模型返回 userId={} channel={} shouldSend={} materialId={} confidence={} reason={} candidates={}",
-          userId,
-          channel,
-          decision.shouldSend(),
-          decision.materialId(),
-          decision.confidence(),
-          abbreviate(decision.reason(), 200),
-          summarizeCandidates(candidates));
-      if (!decision.shouldSend()) {
-        log.info("外发素材选择模型判断不发送 userId={} channel={} reason={}",
-            userId, channel, abbreviate(decision.reason(), 200));
-        return List.of();
-      }
-      if (decision.confidence() < MIN_MODEL_CONFIDENCE) {
-        log.info("外发素材选择置信度不足，跳过发送 userId={} channel={} materialId={} confidence={} reason={}",
-            userId, channel, decision.materialId(), decision.confidence(), abbreviate(decision.reason(), 200));
-        return List.of();
-      }
-      if (candidates.stream().noneMatch(candidate -> candidate.summary().materialId().equals(decision.materialId()))) {
-        log.warn("外发素材选择模型返回非候选素材，已拒绝 userId={} channel={} materialId={} candidates={}",
-            userId, channel, decision.materialId(), summarizeCandidates(candidates));
-        return List.of();
-      }
-      Long materialId = parseLong(decision.materialId());
-      if (materialId == null) {
-        log.warn("外发素材选择模型返回素材ID格式非法，已拒绝 userId={} channel={} materialId={} reason={}",
-            userId, channel, decision.materialId(), abbreviate(decision.reason(), 200));
-        return List.of();
-      }
-      OutboundMaterialEntity material = validateAutoSendMaterial(userId, materialId, channel);
-      log.info("外发素材选择成功 userId={} channel={} materialId={} materialName={} confidence={}",
-          userId, channel, materialId, abbreviate(material.getName(), 120), decision.confidence());
-      return List.of(material);
-    } catch (Exception ex) {
-      log.warn("外发素材选择失败，已降级为空附件 userId={} channel={} candidateCount={} reason={}",
-          userId, channel, candidates.size(), ex.getMessage());
-      return List.of();
-    }
+    return selectFirstValidatedCandidate(userId, channel, candidates);
   }
 
   public OutboundMaterialEntity validateAutoSendMaterial(Long userId, Long id, String channel) {
     return outboundMaterialService.validateAutoSendMaterial(userId, id, channel);
+  }
+
+  private List<OutboundMaterialEntity> selectFirstValidatedCandidate(
+      Long userId,
+      String channel,
+      List<RankedMaterialCandidate> candidates) {
+    for (RankedMaterialCandidate candidate : candidates) {
+      Long materialId = parseLong(candidate.summary().materialId());
+      if (materialId == null) {
+        log.warn("外发素材候选ID格式非法，已跳过 userId={} channel={} materialId={}",
+            userId, channel, candidate.summary().materialId());
+        continue;
+      }
+      try {
+        OutboundMaterialEntity material = validateAutoSendMaterial(userId, materialId, channel);
+        log.info("外发素材规则命中并通过校验，准备发送 userId={} channel={} materialId={} materialName={} score={} matchedTerms={}",
+            userId,
+            channel,
+            materialId,
+            abbreviate(material.getName(), 120),
+            candidate.score(),
+            candidate.matchedTerms());
+        return List.of(material);
+      } catch (Exception ex) {
+        log.warn("外发素材候选校验失败，继续尝试下一个候选 userId={} channel={} materialId={} reason={}",
+            userId, channel, materialId, ex.getMessage());
+      }
+    }
+    log.warn("外发素材规则筛选命中，但没有候选通过自动发送校验 userId={} channel={} candidateCount={}",
+        userId, channel, candidates.size());
+    return List.of();
   }
 
   List<RankedMaterialCandidate> rankCandidates(Long userId, String customerMessage, String channel) {
