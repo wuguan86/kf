@@ -4,6 +4,7 @@ import styles from '../../pages/KnowledgeBasePage.module.css'
 import type { KnowledgeBase, KnowledgeBaseFile } from '../../pages/KnowledgeBasePage'
 import KnowledgeFileDropzone from './KnowledgeFileDropzone'
 import KnowledgeCleaningReviewTable from './KnowledgeCleaningReviewTable'
+import CleaningContentPreviewModal from './CleaningContentPreviewModal'
 import { CleaningQaItem, CleaningTask, useKnowledgeCleaningTask } from './useKnowledgeCleaningTask'
 import { resolveKnowledgeFileDisplay } from './knowledgeFileDisplay'
 
@@ -49,6 +50,8 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
   const [aiCleaningEnabled, setAiCleaningEnabled] = useState(true)
   const [reviewItems, setReviewItems] = useState<CleaningQaItem[]>([])
   const [activeTaskId, setActiveTaskId] = useState('')
+  const [previewFileName, setPreviewFileName] = useState('')
+  const [previewItems, setPreviewItems] = useState<CleaningQaItem[]>([])
   const cleaning = useKnowledgeCleaningTask(knowledgeBaseId)
 
   const isRunning = useMemo(() => {
@@ -121,6 +124,24 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
     setSelectedFiles(failedFiles)
     if (failedFiles.length === 0) {
       onSaved()
+    }
+  }
+
+  const handleViewCleanedContent = async (file: KnowledgeBaseFile) => {
+    if (!knowledgeBaseId) return
+    try {
+      const tasks = await http.get<CleaningTask[]>(`/api/user/knowledge-bases/${knowledgeBaseId}/cleaning-tasks`)
+      const matchedTask = tasks.find(task =>
+        task.taskStatus === 'COMPLETED' && `清洗-${task.originalFileName}` === file.name
+      )
+      if (matchedTask && matchedTask.items.length > 0) {
+        setPreviewItems(matchedTask.items)
+        setPreviewFileName(file.name)
+      } else {
+        alert('未找到该文件的清洗记录，可能是在清洗功能上线前上传的。')
+      }
+    } catch (err: any) {
+      alert(err?.message || '获取清洗内容失败')
     }
   }
 
@@ -317,9 +338,20 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
                               <div className={styles.fileErrorText}>{file.errorMsg}</div>
                             )}
                           </div>
-                          <button className={`${styles.iconBtn} ${styles.deleteBtn}`} onClick={() => onDeleteFile(file)} title="删除文件">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {fileDisplay.aiCleaned && (
+                              <button
+                                className={styles.viewBtn}
+                                onClick={() => handleViewCleanedContent(file)}
+                                title="查看 AI 清洗后的问答内容"
+                              >
+                                查看
+                              </button>
+                            )}
+                            <button className={`${styles.iconBtn} ${styles.deleteBtn}`} onClick={() => onDeleteFile(file)} title="删除文件">
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+                          </div>
                         </div>
                       )
                     })}
@@ -346,6 +378,16 @@ export default function KnowledgeBaseEditModal(props: Props): JSX.Element {
           </div>
         </div>
       </div>
+      {previewFileName && (
+        <CleaningContentPreviewModal
+          fileName={previewFileName}
+          items={previewItems}
+          onClose={() => {
+            setPreviewFileName('')
+            setPreviewItems([])
+          }}
+        />
+      )}
     </div>
   )
 }

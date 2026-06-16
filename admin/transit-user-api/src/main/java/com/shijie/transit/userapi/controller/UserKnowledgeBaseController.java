@@ -94,6 +94,15 @@ public class UserKnowledgeBaseController {
     return Result.success(cleaningService.createBatchTasks(currentUserId(), id, files));
   }
 
+  @GetMapping("/{id}/cleaning-tasks")
+  public Result<List<KnowledgeBaseCleaningService.CleaningTaskResult>> listCleaningTasks(@PathVariable("id") Long id) {
+    List<KnowledgeBaseCleaningService.CleaningTaskResult> results = cleaningService.listRecentTasks(currentUserId(), id)
+        .stream()
+        .map(cleaningService::toResult)
+        .toList();
+    return Result.success(results);
+  }
+
   @GetMapping("/{id}/cleaning-tasks/{taskId}")
   public Result<KnowledgeBaseCleaningService.CleaningTaskResult> getCleaningTask(
       @PathVariable("id") Long id,
