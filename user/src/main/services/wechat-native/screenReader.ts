@@ -25,6 +25,7 @@ export const captureWeChatWindow = async (bounds: WindowBounds): Promise<WeChatS
     dataUrl: image.toDataURL(),
     png: image.toPNG(),
     width: image.getSize().width,
-    height: image.getSize().height
+    height: image.getSize().height,
+    scaleFactor
   }
 }

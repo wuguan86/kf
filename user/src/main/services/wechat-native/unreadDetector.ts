@@ -42,12 +42,12 @@ const toBitmap = (screenshot: WeChatScreenshot): { bitmap: Buffer; size: BitmapS
   return { bitmap, size }
 }
 
-const pushOrMergeCluster = (clusters: RedPixelCluster[], x: number, y: number): void => {
+const pushOrMergeCluster = (clusters: RedPixelCluster[], x: number, y: number, mergeGap = 3): void => {
   const nearbyCluster = clusters.find((cluster) => {
-    return x >= cluster.minX - 3 &&
-      x <= cluster.maxX + 3 &&
-      y >= cluster.minY - 3 &&
-      y <= cluster.maxY + 3
+    return x >= cluster.minX - mergeGap &&
+      x <= cluster.maxX + mergeGap &&
+      y >= cluster.minY - mergeGap &&
+      y <= cluster.maxY + mergeGap
   })
   if (!nearbyCluster) {
     clusters.push({ minX: x, minY: y, maxX: x, maxY: y, count: 1 })
@@ -71,11 +71,18 @@ export const findUnreadConversationCandidates = (
   }
 
   const { bitmap, size } = parsed
+  // 截图实际像素与逻辑窗口坐标的缩放比，用于动态调整硬编码像素阈值
+  const sf = screenshot.scaleFactor || 1
   const listLeftRatio = channel === 'enterprise' ? ENTERPRISE_LIST_LEFT_RATIO : PERSONAL_LIST_LEFT_RATIO
   const minX = Math.max(0, Math.floor(size.width * listLeftRatio))
   const maxX = Math.min(size.width - 1, Math.floor(size.width * LIST_RIGHT_RATIO))
   const minY = Math.max(0, Math.floor(size.height * LIST_TOP_RATIO))
   const maxY = Math.min(size.height - 1, Math.floor(size.height * LIST_BOTTOM_RATIO))
+  const redPixelMinCount = Math.round(RED_PIXEL_MIN_COUNT * sf)
+  const redClusterMaxSize = Math.round(RED_CLUSTER_MAX_SIZE * sf)
+  const redClusterMinSize = Math.round(RED_CLUSTER_MIN_SIZE * sf)
+  const redBadgeMaxHeight = Math.round(RED_BADGE_MAX_HEIGHT * sf)
+  const redBadgeMaxArea = Math.round(RED_BADGE_MAX_AREA * sf * sf)
   const clusters: RedPixelCluster[] = []
 
   for (let y = minY; y <= maxY; y += 1) {
@@ -85,7 +92,7 @@ export const findUnreadConversationCandidates = (
       const green = bitmap[index + 1]
       const red = bitmap[index + 2]
       if (isUnreadRedPixel(red, green, blue)) {
-        pushOrMergeCluster(clusters, x, y)
+        pushOrMergeCluster(clusters, x, y, Math.round(3 * sf))
       }
     }
   }
@@ -98,13 +105,13 @@ export const findUnreadConversationCandidates = (
       const height = cluster.maxY - cluster.minY + 1
       const area = width * height
       if (
-        cluster.count < RED_PIXEL_MIN_COUNT ||
-        width < RED_CLUSTER_MIN_SIZE ||
-        height < RED_CLUSTER_MIN_SIZE ||
-        width > RED_CLUSTER_MAX_SIZE ||
-        height > RED_CLUSTER_MAX_SIZE ||
-        height > RED_BADGE_MAX_HEIGHT ||
-        area > RED_BADGE_MAX_AREA
+        cluster.count < redPixelMinCount ||
+        width < redClusterMinSize ||
+        height < redClusterMinSize ||
+        width > redClusterMaxSize ||
+        height > redClusterMaxSize ||
+        height > redBadgeMaxHeight ||
+        area > redBadgeMaxArea
       ) {
         return null
       }

@@ -617,6 +617,7 @@ export class WeChatNativeDriver {
     if (!window || !isPlausibleWeChatWindow(window, this.channel)) {
       return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到可信微信窗口，无法发送消息' }
     }
+    window.scaleFactor = this.lastWindow?.scaleFactor || 1
     this.lastWindow = window
     this.lastWechatActivityAt = Date.now()
     await focusWindow(window.hwnd)
@@ -762,9 +763,10 @@ export class WeChatNativeDriver {
       return { ok: false, error: 'native_image_snapshot_invalid', message: '微信截图为空，无法裁剪图片' }
     }
     const sourceSize = sourceImage.getSize()
-    const initialCropRect = this.buildImageCropRect(cached.bounds, sourceSize.width, sourceSize.height)
-    const searchCropRect = this.buildExpandedImageSearchRect(cached.bounds, sourceSize.width, sourceSize.height)
-    const cropRect = this.refineImageCropRect(sourceImage, initialCropRect, true, searchCropRect)
+    const sf = cached.screenshot.scaleFactor || 1
+    const initialCropRect = this.buildImageCropRect(cached.bounds, sourceSize.width, sourceSize.height, sf)
+    const searchCropRect = this.buildExpandedImageSearchRect(cached.bounds, sourceSize.width, sourceSize.height, sf)
+    const cropRect = this.refineImageCropRect(sourceImage, initialCropRect, true, searchCropRect, sf)
     const croppedImage = sourceImage.crop(cropRect)
     if (croppedImage.isEmpty()) {
       return { ok: false, error: 'native_image_crop_empty', message: '微信图片裁剪结果为空' }
@@ -840,6 +842,7 @@ export class WeChatNativeDriver {
         return this.skipMarketingAction('moments_window_not_found', '未找到朋友圈独立窗口，已跳过本轮互动')
       }
       const screenshot = await captureWeChatWindow(momentsWindow)
+      momentsWindow.scaleFactor = screenshot.scaleFactor
       const localVisualDigests = this.buildMarketingLocalVisualDigests(screenshot)
       const localDigestDuplicateError = this.getMarketingLocalVisualDigestDuplicateError(action, localVisualDigests)
       if (localDigestDuplicateError) {
@@ -867,7 +870,7 @@ export class WeChatNativeDriver {
             candidate.author
           )
         }
-        candidate.localVisualDigest = this.resolveMarketingLocalVisualDigest(localVisualDigests, menuPoint)
+        candidate.localVisualDigest = this.resolveMarketingLocalVisualDigest(localVisualDigests, menuPoint, screenshot.scaleFactor)
       }
 
       const postFingerprint = this.buildMarketingPostFingerprint(candidate)
@@ -1094,9 +1097,10 @@ export class WeChatNativeDriver {
     }
     const range = this.getMarketingMomentVerticalRange(candidate, screenshot)
     if (range) {
+      const sf = screenshot.scaleFactor || 1
       const matched = menuCandidates
-        .filter((item) => item.point.y >= range.y - MARKETING_ACTION_POINT_PADDING_PX &&
-          item.point.y <= range.y + range.h + MARKETING_ACTION_POINT_PADDING_PX)
+        .filter((item) => item.point.y >= range.y - Math.round(MARKETING_ACTION_POINT_PADDING_PX * sf) &&
+          item.point.y <= range.y + range.h + Math.round(MARKETING_ACTION_POINT_PADDING_PX * sf))
         .sort((a, b) => this.getMarketingMenuCandidatePriority(a) - this.getMarketingMenuCandidatePriority(b) ||
           Math.abs(a.point.y - (range.y + range.h / 2)) - Math.abs(b.point.y - (range.y + range.h / 2)) ||
           b.point.x - a.point.x)[0]
@@ -1159,10 +1163,11 @@ export class WeChatNativeDriver {
         return []
       }
       const bitmap = image.toBitmap()
+      const sf = screenshot.scaleFactor || 1
       return menuCandidates
         .map((candidate) => ({
           point: candidate.point,
-          digest: this.buildMarketingLocalVisualDigest(bitmap, size.width, size.height, candidate.point)
+          digest: this.buildMarketingLocalVisualDigest(bitmap, size.width, size.height, candidate.point, sf)
         }))
         .filter((item) => !!item.digest)
     } catch (error) {
@@ -1175,12 +1180,14 @@ export class WeChatNativeDriver {
     bitmap: Buffer,
     imageWidth: number,
     imageHeight: number,
-    point: MarketingMomentPoint
+    point: MarketingMomentPoint,
+    scaleFactor = 1
   ): string {
-    const left = clampNumber(Math.round(point.x - MARKETING_LOCAL_DIGEST_CROP_WIDTH_PX), 0, Math.max(0, imageWidth - 1))
-    const top = clampNumber(Math.round(point.y - MARKETING_LOCAL_DIGEST_CROP_HEIGHT_PX / 2), 0, Math.max(0, imageHeight - 1))
-    const right = clampNumber(Math.round(point.x + MARKETING_ACTION_POINT_PADDING_PX), left + 1, imageWidth)
-    const bottom = clampNumber(Math.round(point.y + MARKETING_LOCAL_DIGEST_CROP_HEIGHT_PX / 2), top + 1, imageHeight)
+    const sf = scaleFactor || 1
+    const left = clampNumber(Math.round(point.x - Math.round(MARKETING_LOCAL_DIGEST_CROP_WIDTH_PX * sf)), 0, Math.max(0, imageWidth - 1))
+    const top = clampNumber(Math.round(point.y - Math.round(MARKETING_LOCAL_DIGEST_CROP_HEIGHT_PX * sf) / 2), 0, Math.max(0, imageHeight - 1))
+    const right = clampNumber(Math.round(point.x + Math.round(MARKETING_ACTION_POINT_PADDING_PX * sf)), left + 1, imageWidth)
+    const bottom = clampNumber(Math.round(point.y + Math.round(MARKETING_LOCAL_DIGEST_CROP_HEIGHT_PX * sf) / 2), top + 1, imageHeight)
     const cells: string[] = []
     for (let row = 0; row < MARKETING_LOCAL_DIGEST_GRID_SIZE; row += 1) {
       for (let col = 0; col < MARKETING_LOCAL_DIGEST_GRID_SIZE; col += 1) {
@@ -1230,15 +1237,17 @@ export class WeChatNativeDriver {
 
   private resolveMarketingLocalVisualDigest(
     digests: MarketingLocalVisualDigest[],
-    menuPoint: MarketingMomentPoint
+    menuPoint: MarketingMomentPoint,
+    scaleFactor = 1
   ): string | null {
+    const sf = scaleFactor || 1
     const matched = digests
       .map((item) => ({
         item,
         distance: Math.abs(item.point.x - menuPoint.x) + Math.abs(item.point.y - menuPoint.y)
       }))
       .sort((a, b) => a.distance - b.distance)[0]
-    return matched && matched.distance <= MARKETING_MENU_DOT_MERGE_X_PX + MARKETING_MENU_DOT_MERGE_Y_PX
+    return matched && matched.distance <= Math.round((MARKETING_MENU_DOT_MERGE_X_PX + MARKETING_MENU_DOT_MERGE_Y_PX) * sf)
       ? matched.item.digest
       : null
   }
@@ -1272,24 +1281,32 @@ export class WeChatNativeDriver {
         return []
       }
       const bitmap = image.toBitmap()
-      const blueButtonCandidates = this.findMarketingBlueActionButtonCandidates(bitmap, size.width, size.height)
+      const sf = screenshot.scaleFactor || 1
+      const dotRadius = Math.round(MARKETING_MENU_DOT_RADIUS_PX * sf)
+      const dotPairSpacing = Math.round(MARKETING_MENU_DOT_PAIR_SPACING_PX * sf)
+      const dotMinPixels = Math.round(MARKETING_MENU_DOT_MIN_PIXELS * sf)
+      const dotScanTop = Math.round(MARKETING_MENU_DOT_SCAN_TOP_PX * sf)
+      const dotScanBottomPadding = Math.round(MARKETING_MENU_DOT_SCAN_BOTTOM_PADDING_PX * sf)
+      const dotMergeX = Math.round(MARKETING_MENU_DOT_MERGE_X_PX * sf)
+      const dotMergeY = Math.round(MARKETING_MENU_DOT_MERGE_Y_PX * sf)
+      const blueButtonCandidates = this.findMarketingBlueActionButtonCandidates(bitmap, size.width, size.height, sf)
       const rawCandidates: MarketingMenuPointCandidate[] = []
       const startX = Math.max(0, Math.floor(size.width * MARKETING_MENU_DOT_SCAN_START_RATIO))
-      const endX = Math.max(startX, size.width - MARKETING_MENU_DOT_PAIR_SPACING_PX * 2 - MARKETING_MENU_DOT_RADIUS_PX)
-      const startY = Math.min(size.height - 1, MARKETING_MENU_DOT_SCAN_TOP_PX)
-      const endY = Math.max(startY, size.height - MARKETING_MENU_DOT_SCAN_BOTTOM_PADDING_PX)
+      const endX = Math.max(startX, size.width - dotPairSpacing * 2 - dotRadius)
+      const startY = Math.min(size.height - 1, dotScanTop)
+      const endY = Math.max(startY, size.height - dotScanBottomPadding)
       for (let y = startY; y <= endY; y += 1) {
         for (let x = startX; x <= endX; x += 1) {
-          const first = this.countDarkPixelsAround(bitmap, size.width, size.height, x, y, MARKETING_MENU_DOT_RADIUS_PX)
-          const second = this.countDarkPixelsAround(bitmap, size.width, size.height, x + MARKETING_MENU_DOT_PAIR_SPACING_PX, y, MARKETING_MENU_DOT_RADIUS_PX)
-          if (first < MARKETING_MENU_DOT_MIN_PIXELS || second < MARKETING_MENU_DOT_MIN_PIXELS) {
+          const first = this.countDarkPixelsAround(bitmap, size.width, size.height, x, y, dotRadius)
+          const second = this.countDarkPixelsAround(bitmap, size.width, size.height, x + dotPairSpacing, y, dotRadius)
+          if (first < dotMinPixels || second < dotMinPixels) {
             continue
           }
-          const third = this.countDarkPixelsAround(bitmap, size.width, size.height, x + MARKETING_MENU_DOT_PAIR_SPACING_PX * 2, y, MARKETING_MENU_DOT_RADIUS_PX)
-          const hasThirdDot = third >= MARKETING_MENU_DOT_MIN_PIXELS
+          const third = this.countDarkPixelsAround(bitmap, size.width, size.height, x + dotPairSpacing * 2, y, dotRadius)
+          const hasThirdDot = third >= dotMinPixels
           rawCandidates.push({
             point: {
-              x: x + (hasThirdDot ? MARKETING_MENU_DOT_PAIR_SPACING_PX : Math.round(MARKETING_MENU_DOT_PAIR_SPACING_PX / 2)),
+              x: x + (hasThirdDot ? dotPairSpacing : Math.round(dotPairSpacing / 2)),
               y
             },
             score: first + second + (hasThirdDot ? third : 0),
@@ -1300,8 +1317,8 @@ export class WeChatNativeDriver {
       const merged: MarketingMenuPointCandidate[] = []
       for (const candidate of rawCandidates.sort((a, b) => b.score - a.score)) {
         const nearExisting = merged.some((item) =>
-          Math.abs(item.point.x - candidate.point.x) <= MARKETING_MENU_DOT_MERGE_X_PX &&
-          Math.abs(item.point.y - candidate.point.y) <= MARKETING_MENU_DOT_MERGE_Y_PX)
+          Math.abs(item.point.x - candidate.point.x) <= dotMergeX &&
+          Math.abs(item.point.y - candidate.point.y) <= dotMergeY)
         if (!nearExisting) {
           merged.push(candidate)
         }
@@ -1329,11 +1346,20 @@ export class WeChatNativeDriver {
   private findMarketingBlueActionButtonCandidates(
     bitmap: Buffer,
     width: number,
-    height: number
+    height: number,
+    scaleFactor = 1
   ): MarketingMenuPointCandidate[] {
+    const sf = scaleFactor || 1
+    const dotScanTop = Math.round(MARKETING_MENU_DOT_SCAN_TOP_PX * sf)
+    const dotScanBottomPadding = Math.round(MARKETING_MENU_DOT_SCAN_BOTTOM_PADDING_PX * sf)
+    const componentMinPixels = Math.round(MARKETING_BLUE_MENU_COMPONENT_MIN_PIXELS * sf)
+    const componentMinWidth = Math.round(MARKETING_BLUE_MENU_COMPONENT_MIN_WIDTH_PX * sf)
+    const componentMinHeight = Math.round(MARKETING_BLUE_MENU_COMPONENT_MIN_HEIGHT_PX * sf)
+    const componentMaxWidth = Math.round(MARKETING_BLUE_MENU_COMPONENT_MAX_WIDTH_PX * sf)
+    const componentMaxHeight = Math.round(MARKETING_BLUE_MENU_COMPONENT_MAX_HEIGHT_PX * sf)
     const startX = Math.max(0, Math.floor(width * MARKETING_BLUE_MENU_SCAN_START_RATIO))
-    const startY = Math.min(height - 1, MARKETING_MENU_DOT_SCAN_TOP_PX)
-    const endY = Math.max(startY, height - MARKETING_MENU_DOT_SCAN_BOTTOM_PADDING_PX)
+    const startY = Math.min(height - 1, dotScanTop)
+    const endY = Math.max(startY, height - dotScanBottomPadding)
     const visited = new Uint8Array(width * height)
     const candidates: MarketingMenuPointCandidate[] = []
     for (let y = startY; y <= endY; y += 1) {
@@ -1345,11 +1371,11 @@ export class WeChatNativeDriver {
         const component = this.collectMarketingBlueComponent(bitmap, visited, width, height, x, y, startX, startY, endY)
         const componentWidth = component.maxX - component.minX + 1
         const componentHeight = component.maxY - component.minY + 1
-        if (component.count < MARKETING_BLUE_MENU_COMPONENT_MIN_PIXELS ||
-          componentWidth < MARKETING_BLUE_MENU_COMPONENT_MIN_WIDTH_PX ||
-          componentHeight < MARKETING_BLUE_MENU_COMPONENT_MIN_HEIGHT_PX ||
-          componentWidth > MARKETING_BLUE_MENU_COMPONENT_MAX_WIDTH_PX ||
-          componentHeight > MARKETING_BLUE_MENU_COMPONENT_MAX_HEIGHT_PX) {
+        if (component.count < componentMinPixels ||
+          componentWidth < componentMinWidth ||
+          componentHeight < componentMinHeight ||
+          componentWidth > componentMaxWidth ||
+          componentHeight > componentMaxHeight) {
           continue
         }
         candidates.push({
@@ -1364,7 +1390,7 @@ export class WeChatNativeDriver {
     }
     return [
       ...candidates,
-      ...this.findMarketingBlueDotCandidates(bitmap, width, height, startX, startY, endY)
+      ...this.findMarketingBlueDotCandidates(bitmap, width, height, startX, startY, endY, sf)
     ].sort((a, b) => a.point.y - b.point.y || b.score - a.score)
   }
 
@@ -1374,23 +1400,30 @@ export class WeChatNativeDriver {
     height: number,
     startX: number,
     startY: number,
-    endY: number
+    endY: number,
+    scaleFactor = 1
   ): MarketingMenuPointCandidate[] {
+    const sf = scaleFactor || 1
+    const dotPairSpacing = Math.round(MARKETING_MENU_DOT_PAIR_SPACING_PX * sf)
+    const dotRadius = Math.round(MARKETING_MENU_DOT_RADIUS_PX * sf)
+    const blueDotMinPixels = Math.round(MARKETING_BLUE_MENU_DOT_MIN_PIXELS * sf)
+    const dotMergeX = Math.round(MARKETING_MENU_DOT_MERGE_X_PX * sf)
+    const dotMergeY = Math.round(MARKETING_MENU_DOT_MERGE_Y_PX * sf)
     const candidates: MarketingMenuPointCandidate[] = []
-    const endX = Math.max(startX, width - MARKETING_MENU_DOT_PAIR_SPACING_PX * 2 - MARKETING_MENU_DOT_RADIUS_PX)
+    const endX = Math.max(startX, width - dotPairSpacing * 2 - dotRadius)
     for (let y = startY; y <= endY; y += 1) {
       for (let x = startX; x <= endX; x += 1) {
-        const first = this.countBluePixelsAround(bitmap, width, height, x, y, MARKETING_MENU_DOT_RADIUS_PX)
-        const second = this.countBluePixelsAround(bitmap, width, height, x + MARKETING_MENU_DOT_PAIR_SPACING_PX, y, MARKETING_MENU_DOT_RADIUS_PX)
-        const third = this.countBluePixelsAround(bitmap, width, height, x + MARKETING_MENU_DOT_PAIR_SPACING_PX * 2, y, MARKETING_MENU_DOT_RADIUS_PX)
-        if (first < MARKETING_BLUE_MENU_DOT_MIN_PIXELS ||
-          second < MARKETING_BLUE_MENU_DOT_MIN_PIXELS) {
+        const first = this.countBluePixelsAround(bitmap, width, height, x, y, dotRadius)
+        const second = this.countBluePixelsAround(bitmap, width, height, x + dotPairSpacing, y, dotRadius)
+        const third = this.countBluePixelsAround(bitmap, width, height, x + dotPairSpacing * 2, y, dotRadius)
+        if (first < blueDotMinPixels ||
+          second < blueDotMinPixels) {
           continue
         }
-        const hasThirdDot = third >= MARKETING_BLUE_MENU_DOT_MIN_PIXELS
+        const hasThirdDot = third >= blueDotMinPixels
         candidates.push({
           point: {
-            x: x + (hasThirdDot ? MARKETING_MENU_DOT_PAIR_SPACING_PX : Math.round(MARKETING_MENU_DOT_PAIR_SPACING_PX / 2)),
+            x: x + (hasThirdDot ? dotPairSpacing : Math.round(dotPairSpacing / 2)),
             y
           },
           score: first + second + (hasThirdDot ? third : 0),
@@ -1401,8 +1434,8 @@ export class WeChatNativeDriver {
     const merged: MarketingMenuPointCandidate[] = []
     for (const candidate of candidates.sort((a, b) => b.score - a.score)) {
       const nearExisting = merged.some((item) =>
-        Math.abs(item.point.x - candidate.point.x) <= MARKETING_MENU_DOT_MERGE_X_PX &&
-        Math.abs(item.point.y - candidate.point.y) <= MARKETING_MENU_DOT_MERGE_Y_PX)
+        Math.abs(item.point.x - candidate.point.x) <= dotMergeX &&
+        Math.abs(item.point.y - candidate.point.y) <= dotMergeY)
       if (!nearExisting) {
         merged.push(candidate)
       }
@@ -1548,6 +1581,7 @@ export class WeChatNativeDriver {
     }
     await wait(280 + Math.floor(Math.random() * 220))
     const menuScreenshot = await captureWeChatWindow(window)
+    window.scaleFactor = menuScreenshot.scaleFactor
     const confirmPoint = this.findMarketingLikeConfirmPoint(menuScreenshot, menuPoint)
     if (!confirmPoint) {
       console.warn('个人微信朋友圈点赞菜单未通过本地确认，已跳过点赞', {
@@ -1590,6 +1624,7 @@ export class WeChatNativeDriver {
     }
     await wait(280 + Math.floor(Math.random() * 220))
     const menuScreenshot = await captureWeChatWindow(window)
+    window.scaleFactor = menuScreenshot.scaleFactor
     const commentPoint = this.findMarketingCommentConfirmPoint(menuScreenshot, menuPoint)
     if (!commentPoint) {
       console.warn('个人微信朋友圈评论菜单未通过本地确认，已跳过评论', {
@@ -1619,10 +1654,16 @@ export class WeChatNativeDriver {
         return 'unknown'
       }
       const bitmap = image.toBitmap()
-      const left = clampNumber(Math.round(confirmPoint.x - MARKETING_LIKE_STATUS_SCAN_LEFT_PX), 0, size.width - 1)
-      const right = clampNumber(Math.round(confirmPoint.x + MARKETING_LIKE_STATUS_SCAN_RIGHT_PX), left, size.width - 1)
-      const top = clampNumber(Math.round(confirmPoint.y - MARKETING_LIKE_STATUS_SCAN_VERTICAL_PX), 0, size.height - 1)
-      const bottom = clampNumber(Math.round(confirmPoint.y + MARKETING_LIKE_STATUS_SCAN_VERTICAL_PX), top, size.height - 1)
+      const sf = screenshot.scaleFactor || 1
+      const scanLeft = Math.round(MARKETING_LIKE_STATUS_SCAN_LEFT_PX * sf)
+      const scanRight = Math.round(MARKETING_LIKE_STATUS_SCAN_RIGHT_PX * sf)
+      const scanVertical = Math.round(MARKETING_LIKE_STATUS_SCAN_VERTICAL_PX * sf)
+      const minRedPixels = Math.round(MARKETING_LIKE_STATUS_MIN_RED_PIXELS * sf)
+      const minLightPixels = Math.round(MARKETING_LIKE_STATUS_MIN_LIGHT_PIXELS * sf)
+      const left = clampNumber(Math.round(confirmPoint.x - scanLeft), 0, size.width - 1)
+      const right = clampNumber(Math.round(confirmPoint.x + scanRight), left, size.width - 1)
+      const top = clampNumber(Math.round(confirmPoint.y - scanVertical), 0, size.height - 1)
+      const bottom = clampNumber(Math.round(confirmPoint.y + scanVertical), top, size.height - 1)
       let redPixels = 0
       let lightPixels = 0
       for (let y = top; y <= bottom; y += 1) {
@@ -1644,11 +1685,11 @@ export class WeChatNativeDriver {
           }
         }
       }
-      if (redPixels >= MARKETING_LIKE_STATUS_MIN_RED_PIXELS) {
+      if (redPixels >= minRedPixels) {
         console.info('个人微信朋友圈点赞菜单本地识别为取消，已跳过避免误触', { confirmPoint, redPixels, lightPixels })
         return 'unlike'
       }
-      if (lightPixels >= MARKETING_LIKE_STATUS_MIN_LIGHT_PIXELS) {
+      if (lightPixels >= minLightPixels) {
         console.info('个人微信朋友圈点赞菜单本地识别为赞', { confirmPoint, redPixels, lightPixels })
         return 'like'
       }
@@ -1665,8 +1706,10 @@ export class WeChatNativeDriver {
     if (!likePoint) {
       return null
     }
+    const sf = screenshot.scaleFactor || 1
+    const commentOffset = Math.round(MARKETING_COMMENT_CONFIRM_OFFSET_X_PX * sf)
     const commentPoint = {
-      x: clampNumber(Math.round(likePoint.x + MARKETING_COMMENT_CONFIRM_OFFSET_X_PX), 0, screenshot.width),
+      x: clampNumber(Math.round(likePoint.x + commentOffset), 0, screenshot.width),
       y: likePoint.y
     }
     return this.detectOpenedMarketingCommentMenuAction(screenshot, commentPoint) === 'comment'
@@ -1688,10 +1731,18 @@ export class WeChatNativeDriver {
         return 'unknown'
       }
       const bitmap = image.toBitmap()
-      const left = clampNumber(Math.round(commentPoint.x - MARKETING_COMMENT_STATUS_SCAN_LEFT_PX), 0, size.width - 1)
-      const right = clampNumber(Math.round(commentPoint.x + MARKETING_COMMENT_STATUS_SCAN_RIGHT_PX), left, size.width - 1)
-      const top = clampNumber(Math.round(commentPoint.y - MARKETING_COMMENT_STATUS_SCAN_VERTICAL_PX), 0, size.height - 1)
-      const bottom = clampNumber(Math.round(commentPoint.y + MARKETING_COMMENT_STATUS_SCAN_VERTICAL_PX), top, size.height - 1)
+      const sf = screenshot.scaleFactor || 1
+      const scanLeft = Math.round(MARKETING_COMMENT_STATUS_SCAN_LEFT_PX * sf)
+      const scanRight = Math.round(MARKETING_COMMENT_STATUS_SCAN_RIGHT_PX * sf)
+      const scanVertical = Math.round(MARKETING_COMMENT_STATUS_SCAN_VERTICAL_PX * sf)
+      const minLightPixels = Math.round(MARKETING_COMMENT_STATUS_MIN_LIGHT_PIXELS * sf)
+      const minDarkPixels = Math.round(MARKETING_COMMENT_STATUS_MIN_DARK_PIXELS * sf)
+      const mixedMinLightPixels = Math.round(MARKETING_COMMENT_STATUS_MIXED_MIN_LIGHT_PIXELS * sf)
+      const mixedMinDarkPixels = Math.round(MARKETING_COMMENT_STATUS_MIXED_MIN_DARK_PIXELS * sf)
+      const left = clampNumber(Math.round(commentPoint.x - scanLeft), 0, size.width - 1)
+      const right = clampNumber(Math.round(commentPoint.x + scanRight), left, size.width - 1)
+      const top = clampNumber(Math.round(commentPoint.y - scanVertical), 0, size.height - 1)
+      const bottom = clampNumber(Math.round(commentPoint.y + scanVertical), top, size.height - 1)
       let lightPixels = 0
       let darkPixels = 0
       for (let y = top; y <= bottom; y += 1) {
@@ -1710,10 +1761,10 @@ export class WeChatNativeDriver {
           }
         }
       }
-      const hasStandardCommentSignal = lightPixels >= MARKETING_COMMENT_STATUS_MIN_LIGHT_PIXELS &&
-        darkPixels >= MARKETING_COMMENT_STATUS_MIN_DARK_PIXELS
-      const hasMixedNarrowWindowCommentSignal = lightPixels >= MARKETING_COMMENT_STATUS_MIXED_MIN_LIGHT_PIXELS &&
-        darkPixels >= MARKETING_COMMENT_STATUS_MIXED_MIN_DARK_PIXELS
+      const hasStandardCommentSignal = lightPixels >= minLightPixels &&
+        darkPixels >= minDarkPixels
+      const hasMixedNarrowWindowCommentSignal = lightPixels >= mixedMinLightPixels &&
+        darkPixels >= mixedMinDarkPixels
       if (hasStandardCommentSignal || hasMixedNarrowWindowCommentSignal) {
         console.info('个人微信朋友圈评论菜单本地识别为评论', { commentPoint, lightPixels, darkPixels })
         return 'comment'
@@ -1737,10 +1788,18 @@ export class WeChatNativeDriver {
         return null
       }
       const bitmap = image.toBitmap()
-      const left = clampNumber(Math.round(menuPoint.x - MARKETING_LIKE_MENU_SCAN_LEFT_PX), 0, size.width - 1)
-      const right = clampNumber(Math.round(menuPoint.x + MARKETING_LIKE_MENU_SCAN_RIGHT_PX), left, size.width - 1)
-      const top = clampNumber(Math.round(menuPoint.y - MARKETING_LIKE_MENU_SCAN_VERTICAL_PX), 0, size.height - 1)
-      const bottom = clampNumber(Math.round(menuPoint.y + MARKETING_LIKE_MENU_SCAN_VERTICAL_PX), top, size.height - 1)
+      const sf = screenshot.scaleFactor || 1
+      const scanLeft = Math.round(MARKETING_LIKE_MENU_SCAN_LEFT_PX * sf)
+      const scanRight = Math.round(MARKETING_LIKE_MENU_SCAN_RIGHT_PX * sf)
+      const scanVertical = Math.round(MARKETING_LIKE_MENU_SCAN_VERTICAL_PX * sf)
+      const minDarkPixels = Math.round(MARKETING_LIKE_MENU_MIN_DARK_PIXELS * sf)
+      const minWidth = Math.round(MARKETING_LIKE_MENU_MIN_WIDTH_PX * sf)
+      const minHeight = Math.round(MARKETING_LIKE_MENU_MIN_HEIGHT_PX * sf)
+      const rightEdgeTolerance = Math.round(MARKETING_LIKE_MENU_RIGHT_EDGE_TOLERANCE_PX * sf)
+      const left = clampNumber(Math.round(menuPoint.x - scanLeft), 0, size.width - 1)
+      const right = clampNumber(Math.round(menuPoint.x + scanRight), left, size.width - 1)
+      const top = clampNumber(Math.round(menuPoint.y - scanVertical), 0, size.height - 1)
+      const bottom = clampNumber(Math.round(menuPoint.y + scanVertical), top, size.height - 1)
       let minX = Number.POSITIVE_INFINITY
       let minY = Number.POSITIVE_INFINITY
       let maxX = 0
@@ -1767,11 +1826,11 @@ export class WeChatNativeDriver {
       const menuWidth = maxX - minX
       const menuHeight = maxY - minY
       const darkRatio = scannedPixels > 0 ? darkPixels / scannedPixels : 0
-      if (darkPixels < MARKETING_LIKE_MENU_MIN_DARK_PIXELS ||
-        menuWidth < MARKETING_LIKE_MENU_MIN_WIDTH_PX ||
-        menuHeight < MARKETING_LIKE_MENU_MIN_HEIGHT_PX ||
+      if (darkPixels < minDarkPixels ||
+        menuWidth < minWidth ||
+        menuHeight < minHeight ||
         darkRatio < MARKETING_LIKE_MENU_MIN_DARK_RATIO ||
-        maxX < menuPoint.x - MARKETING_LIKE_MENU_RIGHT_EDGE_TOLERANCE_PX) {
+        maxX < menuPoint.x - rightEdgeTolerance) {
         return null
       }
       return {
@@ -1841,20 +1900,23 @@ export class WeChatNativeDriver {
   private isMarketingActionPointInsideCandidate(
     action: MarketingActionType,
     point: MarketingMomentPoint,
-    bounds: WeChatMessageBounds
+    bounds: WeChatMessageBounds,
+    scaleFactor = 1
   ): boolean {
     if (action !== 'like') {
-      return this.isPointInsideBounds(point, bounds)
+      return this.isPointInsideBounds(point, bounds, scaleFactor)
     }
-    // 朋友圈点赞入口是动态右侧的“..”菜单，可能在正文区域右侧；先放宽菜单候选区，最终仍要截图确认点赞菜单。
-    return point.x >= bounds.x - MARKETING_ACTION_POINT_PADDING_PX &&
-      point.y >= bounds.y - MARKETING_ACTION_POINT_PADDING_PX &&
-      point.x <= bounds.x + bounds.w + MARKETING_LIKE_POINT_RIGHT_EXTENSION_PX &&
-      point.y <= bounds.y + bounds.h + MARKETING_ACTION_POINT_PADDING_PX
+    // 朋友圈点赞入口是动态右侧的".."菜单，可能在正文区域右侧；先放宽菜单候选区，最终仍要截图确认点赞菜单。
+    const sf = scaleFactor || 1
+    return point.x >= bounds.x - Math.round(MARKETING_ACTION_POINT_PADDING_PX * sf) &&
+      point.y >= bounds.y - Math.round(MARKETING_ACTION_POINT_PADDING_PX * sf) &&
+      point.x <= bounds.x + bounds.w + Math.round(MARKETING_LIKE_POINT_RIGHT_EXTENSION_PX * sf) &&
+      point.y <= bounds.y + bounds.h + Math.round(MARKETING_ACTION_POINT_PADDING_PX * sf)
   }
-
-  private isPointInsideBounds(point: MarketingMomentPoint, bounds: WeChatMessageBounds): boolean {
-    const padding = MARKETING_ACTION_POINT_PADDING_PX
+  
+  private isPointInsideBounds(point: MarketingMomentPoint, bounds: WeChatMessageBounds, scaleFactor = 1): boolean {
+    const sf = scaleFactor || 1
+    const padding = Math.round(MARKETING_ACTION_POINT_PADDING_PX * sf)
     return point.x >= bounds.x - padding &&
       point.y >= bounds.y - padding &&
       point.x <= bounds.x + bounds.w + padding &&
@@ -2131,6 +2193,7 @@ export class WeChatNativeDriver {
     }
     try {
       const screenshot = await captureWeChatWindow(window)
+      window.scaleFactor = screenshot.scaleFactor
       const candidates = findUnreadConversationCandidates(screenshot, window, this.channel)
       this.startupUnreadCandidateIds = new Set(candidates.map((candidate) => candidate.id))
       if (this.startupUnreadCandidateIds.size > 0) {
@@ -2260,6 +2323,7 @@ export class WeChatNativeDriver {
 
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {
     let screenshot = await captureWeChatWindow(window)
+    window.scaleFactor = screenshot.scaleFactor
     let diff = comparePngSnapshots(this.lastScreenshotPng, screenshot.png)
     this.lastScreenshotPng = screenshot.png
     this.latestSnapshotFromUnreadSwitch = false
@@ -2312,6 +2376,7 @@ export class WeChatNativeDriver {
               await wait(settleMs)
               const previousPng = screenshot.png
               screenshot = await captureWeChatWindow(window)
+              window.scaleFactor = screenshot.scaleFactor
               diff = comparePngSnapshots(previousPng, screenshot.png)
               this.lastScreenshotPng = screenshot.png
               console.info('新方式已切换未读会话并重新截图', {
@@ -2562,7 +2627,7 @@ export class WeChatNativeDriver {
   }
 
   private async checkUnreadCandidateBeforeClick(
-    screenshot: { dataUrl: string; png: Buffer; width: number; height: number },
+    screenshot: WeChatScreenshot,
     window: WindowBounds,
     candidate: UnreadConversationCandidate
   ): Promise<UnreadCandidateCheckResult> {
@@ -2908,9 +2973,10 @@ export class WeChatNativeDriver {
         return ''
       }
       const sourceSize = sourceImage.getSize()
-      const initialCropRect = this.buildImageCropRect(message.bounds, sourceSize.width, sourceSize.height)
-      const searchCropRect = this.buildExpandedImageSearchRect(message.bounds, sourceSize.width, sourceSize.height)
-      const cropRect = this.refineImageCropRect(sourceImage, initialCropRect, false, searchCropRect)
+      const sf = this.latestSnapshotScreenshot?.scaleFactor || 1
+      const initialCropRect = this.buildImageCropRect(message.bounds, sourceSize.width, sourceSize.height, sf)
+      const searchCropRect = this.buildExpandedImageSearchRect(message.bounds, sourceSize.width, sourceSize.height, sf)
+      const cropRect = this.refineImageCropRect(sourceImage, initialCropRect, false, searchCropRect, sf)
       const bitmap = sourceImage.toBitmap()
       if (!bitmap || bitmap.length < sourceSize.width * sourceSize.height * 4) {
         return ''
@@ -3041,12 +3107,15 @@ export class WeChatNativeDriver {
   private buildImageCropRect(
     bounds: WeChatMessageBounds,
     imageWidth: number,
-    imageHeight: number
+    imageHeight: number,
+    scaleFactor = 1
   ): ImageCropRect {
-    const left = Math.max(0, Math.floor(bounds.x - IMAGE_CROP_PADDING_PX))
-    const top = Math.max(0, Math.floor(bounds.y - IMAGE_CROP_PADDING_PX))
-    const right = Math.min(imageWidth, Math.ceil(bounds.x + bounds.w + IMAGE_CROP_PADDING_PX))
-    const bottom = Math.min(imageHeight, Math.ceil(bounds.y + bounds.h + IMAGE_CROP_PADDING_PX))
+    const sf = scaleFactor || 1
+    const padding = Math.round(IMAGE_CROP_PADDING_PX * sf)
+    const left = Math.max(0, Math.floor(bounds.x - padding))
+    const top = Math.max(0, Math.floor(bounds.y - padding))
+    const right = Math.min(imageWidth, Math.ceil(bounds.x + bounds.w + padding))
+    const bottom = Math.min(imageHeight, Math.ceil(bounds.y + bounds.h + padding))
     return {
       x: left,
       y: top,
@@ -3058,15 +3127,19 @@ export class WeChatNativeDriver {
   private buildExpandedImageSearchRect(
     bounds: WeChatMessageBounds,
     imageWidth: number,
-    imageHeight: number
+    imageHeight: number,
+    scaleFactor = 1
   ): ImageCropRect {
-    const left = Math.max(0, Math.floor(bounds.x - IMAGE_CROP_SEARCH_HORIZONTAL_PADDING_PX))
-    const top = Math.max(0, Math.floor(bounds.y - IMAGE_CROP_SEARCH_TOP_PADDING_PX))
+    const sf = scaleFactor || 1
+    const hPad = Math.round(IMAGE_CROP_SEARCH_HORIZONTAL_PADDING_PX * sf)
+    const topPad = Math.round(IMAGE_CROP_SEARCH_TOP_PADDING_PX * sf)
     const bottomExtension = Math.max(
-      IMAGE_CROP_SEARCH_BOTTOM_MIN_EXTENSION_PX,
+      Math.round(IMAGE_CROP_SEARCH_BOTTOM_MIN_EXTENSION_PX * sf),
       Math.floor(bounds.h * IMAGE_CROP_SEARCH_BOTTOM_RATIO)
     )
-    const right = Math.min(imageWidth, Math.ceil(bounds.x + bounds.w + IMAGE_CROP_SEARCH_HORIZONTAL_PADDING_PX))
+    const left = Math.max(0, Math.floor(bounds.x - hPad))
+    const top = Math.max(0, Math.floor(bounds.y - topPad))
+    const right = Math.min(imageWidth, Math.ceil(bounds.x + bounds.w + hPad))
     const bottom = Math.min(imageHeight, Math.ceil(bounds.y + bounds.h + bottomExtension))
     return {
       x: left,
@@ -3080,14 +3153,16 @@ export class WeChatNativeDriver {
     sourceImage: NativeImage,
     cropRect: ImageCropRect,
     shouldLog = true,
-    searchCropRect: ImageCropRect = cropRect
+    searchCropRect: ImageCropRect = cropRect,
+    scaleFactor = 1
   ): ImageCropRect {
+    const sf = scaleFactor || 1
     const size = sourceImage.getSize()
     const shouldSearchExpandedRegion = searchCropRect.x !== cropRect.x ||
       searchCropRect.y !== cropRect.y ||
       searchCropRect.width !== cropRect.width ||
       searchCropRect.height !== cropRect.height
-    if (!shouldSearchExpandedRegion && !this.shouldRefineImageCropRect(cropRect, size.width, size.height)) {
+    if (!shouldSearchExpandedRegion && !this.shouldRefineImageCropRect(cropRect, size.width, size.height, sf)) {
       return cropRect
     }
     if (typeof sourceImage.toBitmap !== 'function') {
@@ -3118,15 +3193,18 @@ export class WeChatNativeDriver {
         h: contentBounds.maxY - contentBounds.minY + 1
       },
       size.width,
-      size.height
+      size.height,
+      sf
     )
     const originalArea = cropRect.width * cropRect.height
     const refinedArea = refinedRect.width * refinedRect.height
-    const isUsefulExpansion = refinedRect.width > cropRect.width + IMAGE_CROP_PADDING_PX ||
-      refinedRect.height > cropRect.height + IMAGE_CROP_PADDING_PX
+    const padding = Math.round(IMAGE_CROP_PADDING_PX * sf)
+    const minSize = Math.round(IMAGE_CROP_REFINEMENT_MIN_SIZE_PX * sf)
+    const isUsefulExpansion = refinedRect.width > cropRect.width + padding ||
+      refinedRect.height > cropRect.height + padding
     if (
-      refinedRect.width < IMAGE_CROP_REFINEMENT_MIN_SIZE_PX ||
-      refinedRect.height < IMAGE_CROP_REFINEMENT_MIN_SIZE_PX ||
+      refinedRect.width < minSize ||
+      refinedRect.height < minSize ||
       (!isUsefulExpansion && refinedArea >= originalArea * IMAGE_CROP_REFINEMENT_KEEP_ORIGINAL_RATIO)
     ) {
       return cropRect
@@ -3140,14 +3218,17 @@ export class WeChatNativeDriver {
     return refinedRect
   }
 
-  private shouldRefineImageCropRect(cropRect: ImageCropRect, imageWidth: number, imageHeight: number): boolean {
+  private shouldRefineImageCropRect(cropRect: ImageCropRect, imageWidth: number, imageHeight: number, scaleFactor = 1): boolean {
     if (imageWidth <= 0 || imageHeight <= 0) {
       return false
     }
+    const sf = scaleFactor || 1
+    const minWidth = Math.round(IMAGE_CROP_REFINEMENT_MIN_WIDTH_PX * sf)
+    const minHeight = Math.round(IMAGE_CROP_REFINEMENT_MIN_HEIGHT_PX * sf)
     const widthRatio = cropRect.width / imageWidth
     const heightRatio = cropRect.height / imageHeight
-    return cropRect.width >= IMAGE_CROP_REFINEMENT_MIN_WIDTH_PX ||
-      cropRect.height >= IMAGE_CROP_REFINEMENT_MIN_HEIGHT_PX ||
+    return cropRect.width >= minWidth ||
+      cropRect.height >= minHeight ||
       widthRatio >= IMAGE_CROP_REFINEMENT_MIN_WIDTH_RATIO ||
       heightRatio >= IMAGE_CROP_REFINEMENT_MIN_HEIGHT_RATIO
   }

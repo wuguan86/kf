@@ -42,11 +42,12 @@ export const createPowerShellInputBackend = (): WeChatInputBackend => {
     async pasteAndSendText(bounds: WindowBounds, content: string): Promise<boolean> {
       const originalClipboardText = clipboard.readText()
       clipboard.writeText(content)
+      const sf = bounds.scaleFactor || 1
 
       const inputX = Math.round(bounds.x + bounds.width * 0.66 + Math.random() * 12 - 6)
-      const inputY = Math.round(bounds.y + bounds.height - 72 + Math.random() * 8 - 4)
-      const sendX = Math.round(bounds.x + bounds.width - 54 + Math.random() * 10 - 5)
-      const sendY = Math.round(bounds.y + bounds.height - 32 + Math.random() * 8 - 4)
+      const inputY = Math.round(bounds.y + bounds.height - Math.round(72 * sf) + Math.random() * 8 - 4)
+      const sendX = Math.round(bounds.x + bounds.width - Math.round(54 * sf) + Math.random() * 10 - 5)
+      const sendY = Math.round(bounds.y + bounds.height - Math.round(32 * sf) + Math.random() * 8 - 4)
 
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -124,8 +125,9 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
         return false
       }
       clipboard.writeImage(image)
+      const sf = bounds.scaleFactor || 1
       const inputX = Math.round(bounds.x + bounds.width * 0.66 + Math.random() * 12 - 6)
-      const inputY = Math.round(bounds.y + bounds.height - 72 + Math.random() * 8 - 4)
+      const inputY = Math.round(bounds.y + bounds.height - Math.round(72 * sf) + Math.random() * 8 - 4)
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
@@ -209,7 +211,7 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
     },
 
     async exitConversationToList(bounds: WindowBounds): Promise<boolean> {
-      const exitPoint = getConversationListExitPoint(bounds)
+      const exitPoint = getConversationListExitPoint(bounds, bounds.scaleFactor)
       const listX = Math.round(exitPoint.x + Math.random() * 8 - 4)
       const listY = Math.round(exitPoint.y + Math.random() * 10 - 5)
       const script = `
@@ -260,7 +262,7 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
     },
 
     async returnFromNestedConversation(bounds: WindowBounds): Promise<boolean> {
-      const backPoint = getNestedConversationBackPoint(bounds)
+      const backPoint = getNestedConversationBackPoint(bounds, bounds.scaleFactor)
       const backX = Math.round(backPoint.x + Math.random() * 6 - 3)
       const backY = Math.round(backPoint.y + Math.random() * 6 - 3)
       const script = `
@@ -311,7 +313,7 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
     },
 
     async clickMomentsEntry(bounds: WindowBounds): Promise<boolean> {
-      const point = getMomentsEntryPoint(bounds)
+      const point = getMomentsEntryPoint(bounds, bounds.scaleFactor)
       const clickX = Math.round(bounds.x + point.x + Math.random() * 6 - 3)
       const clickY = Math.round(bounds.y + point.y + Math.random() * 6 - 3)
       const script = `
@@ -392,8 +394,9 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
     },
 
     async closeMomentsWindow(bounds: WindowBounds): Promise<boolean> {
-      const closeX = Math.round(bounds.x + bounds.width - 30 + Math.random() * 6 - 3)
-      const closeY = Math.round(bounds.y + 24 + Math.random() * 4 - 2)
+      const sf = bounds.scaleFactor || 1
+      const closeX = Math.round(bounds.x + bounds.width - Math.round(30 * sf) + Math.random() * 6 - 3)
+      const closeY = Math.round(bounds.y + Math.round(24 * sf) + Math.random() * 4 - 2)
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
@@ -429,7 +432,7 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
     async pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
       const originalClipboardText = clipboard.readText()
       clipboard.writeText(content)
-      const sendPoint = getMarketingCommentSendPoint(bounds)
+      const sendPoint = getMarketingCommentSendPoint(bounds, bounds.scaleFactor)
       const sendX = Math.round(sendPoint.x + Math.random() * 8 - 4)
       const sendY = Math.round(sendPoint.y + Math.random() * 6 - 3)
       const script = `

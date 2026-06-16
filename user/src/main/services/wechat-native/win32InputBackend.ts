@@ -83,8 +83,9 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
     async pasteAndSendText(bounds: WindowBounds, content: string): Promise<boolean> {
       const api = loadWin32Api()
       const originalClipboardText = clipboard.readText()
+      const sf = bounds.scaleFactor || 1
       const inputX = Math.round(bounds.x + bounds.width * 0.66)
-      const inputY = Math.round(bounds.y + bounds.height - 72)
+      const inputY = Math.round(bounds.y + bounds.height - Math.round(72 * sf))
       try {
         clipboard.writeText(content)
         await focusWindow(api, bounds.hwnd)
@@ -120,8 +121,9 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
         return false
       }
       const api = loadWin32Api()
+      const sf = bounds.scaleFactor || 1
       const inputX = Math.round(bounds.x + bounds.width * 0.66)
-      const inputY = Math.round(bounds.y + bounds.height - 72)
+      const inputY = Math.round(bounds.y + bounds.height - Math.round(72 * sf))
       clipboard.writeImage(image)
       await focusWindow(api, bounds.hwnd)
       await clickAt(api, inputX, inputY)
@@ -153,7 +155,7 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
 
     async exitConversationToList(bounds: WindowBounds): Promise<boolean> {
       const api = loadWin32Api()
-      const exitPoint = getConversationListExitPoint(bounds)
+      const exitPoint = getConversationListExitPoint(bounds, bounds.scaleFactor)
       await focusWindow(api, bounds.hwnd)
       await clickAt(api, exitPoint.x, exitPoint.y)
       console.info('原生输入后端已返回微信会话列表', {
@@ -166,7 +168,7 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
 
     async returnFromNestedConversation(bounds: WindowBounds): Promise<boolean> {
       const api = loadWin32Api()
-      const backPoint = getNestedConversationBackPoint(bounds)
+      const backPoint = getNestedConversationBackPoint(bounds, bounds.scaleFactor)
       await focusWindow(api, bounds.hwnd)
       await clickAt(api, backPoint.x, backPoint.y)
       console.info('原生输入后端已点击微信内层会话返回按钮', {
@@ -179,7 +181,7 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
 
     async clickMomentsEntry(bounds: WindowBounds): Promise<boolean> {
       const api = loadWin32Api()
-      const point = getMomentsEntryPoint(bounds)
+      const point = getMomentsEntryPoint(bounds, bounds.scaleFactor)
       const clickX = Math.round(bounds.x + point.x)
       const clickY = Math.round(bounds.y + point.y)
       await focusWindow(api, bounds.hwnd)
@@ -208,8 +210,9 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
 
     async closeMomentsWindow(bounds: WindowBounds): Promise<boolean> {
       const api = loadWin32Api()
-      const closeX = Math.round(bounds.x + bounds.width - 30)
-      const closeY = Math.round(bounds.y + 24)
+      const sf = bounds.scaleFactor || 1
+      const closeX = Math.round(bounds.x + bounds.width - Math.round(30 * sf))
+      const closeY = Math.round(bounds.y + Math.round(24 * sf))
       await focusWindow(api, bounds.hwnd)
       await clickAt(api, closeX, closeY)
       console.info('原生输入后端已点击微信朋友圈窗口关闭按钮', {
@@ -223,7 +226,7 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
     async pasteMarketingComment(bounds: WindowBounds, content: string): Promise<boolean> {
       const api = loadWin32Api()
       const originalClipboardText = clipboard.readText()
-      const sendPoint = getMarketingCommentSendPoint(bounds)
+      const sendPoint = getMarketingCommentSendPoint(bounds, bounds.scaleFactor)
       try {
         clipboard.writeText(content)
         await focusWindow(api, bounds.hwnd)

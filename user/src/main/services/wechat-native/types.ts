@@ -119,6 +119,8 @@ export type WindowBounds = {
   y: number
   width: number
   height: number
+  /** DPI 缩放因子（可选，通常由截图时填充） */
+  scaleFactor?: number
 }
 
 export type WeChatScreenshot = {
@@ -126,6 +128,8 @@ export type WeChatScreenshot = {
   png: Buffer
   width: number
   height: number
+  /** 截图实际像素与逻辑窗口坐标的缩放比（通常为显示器 DPI scaleFactor，默认 1） */
+  scaleFactor: number
 }
 
 export type WeChatVisionRuntimeConfig = {

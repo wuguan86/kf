@@ -48,13 +48,16 @@ const cropConversationRowScreenshot = (
 
   const scaleX = size.width / Math.max(1, window.width)
   const scaleY = size.height / Math.max(1, window.height)
+  const sf = screenshot.scaleFactor || 1
   const listLeftRatio = channel === 'enterprise' ? ENTERPRISE_LIST_LEFT_RATIO : PERSONAL_LIST_LEFT_RATIO
-  const rowHeight = Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, Math.round(candidate.height / Math.max(scaleY, 0.0001) * 3.8)))
+  const rowHeight = Math.max(Math.round(MIN_ROW_HEIGHT * sf), Math.min(Math.round(MAX_ROW_HEIGHT * sf), Math.round(candidate.height / Math.max(scaleY, 0.0001) * 3.8)))
   const rowCenterY = Math.round((candidate.centerY - window.y) * scaleY)
   const cropTop = Math.max(0, rowCenterY - Math.round(rowHeight / 2))
-  const cropHeight = Math.min(size.height - cropTop, rowHeight + ROW_VERTICAL_PADDING * 2)
-  const cropLeft = Math.max(0, Math.floor(size.width * listLeftRatio) - ROW_HORIZONTAL_PADDING)
-  const cropRight = Math.min(size.width, Math.floor(size.width * LIST_RIGHT_RATIO) + ROW_HORIZONTAL_PADDING)
+  const rowVPadding = Math.round(ROW_VERTICAL_PADDING * sf)
+  const rowHPadding = Math.round(ROW_HORIZONTAL_PADDING * sf)
+  const cropHeight = Math.min(size.height - cropTop, rowHeight + rowVPadding * 2)
+  const cropLeft = Math.max(0, Math.floor(size.width * listLeftRatio) - rowHPadding)
+  const cropRight = Math.min(size.width, Math.floor(size.width * LIST_RIGHT_RATIO) + rowHPadding)
   const cropWidth = Math.max(1, cropRight - cropLeft)
   if (cropHeight <= 0) {
     return null
@@ -70,6 +73,7 @@ const cropConversationRowScreenshot = (
     dataUrl: cropped.toDataURL(),
     png: cropped.toPNG(),
     width: cropped.getSize().width,
-    height: cropped.getSize().height
+    height: cropped.getSize().height,
+    scaleFactor: screenshot.scaleFactor
   }
 }
