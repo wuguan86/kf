@@ -23,6 +23,7 @@ application-prod.yml
 
 # 忽略数据库文件
 *.sql
+!admin/transit-user-api/src/main/resources/db/migration/*.sql
 !admin/transit-user-api/src/main/resources/outbound_material.sql
 
 # 忽略操作系统生成的临时文件

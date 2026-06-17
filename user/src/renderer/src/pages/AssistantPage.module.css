@@ -277,26 +277,82 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  max-width: calc(100% - 392px);
+  flex-wrap: wrap;
 }
 
 .pageHeader {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  gap: 24px;
   margin-bottom: 24px;
   flex-shrink: 0;
 }
 
-.pageTitle {
-  font-size: 20px;
+.assistantModeSwitch {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #eef3fb;
+  border: 1px solid #dce5f3;
+}
+
+.assistantModeOption {
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #5b6472;
+  font-size: 12px;
   font-weight: 600;
-  margin: 0;
+  cursor: pointer;
+}
+
+.assistantModeOption:disabled {
+  cursor: not-allowed;
+  color: #9ca3af;
+}
+
+.assistantModeOptionActive {
+  background: #1677ff;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.22);
+}
+
+.assistantModeOptionActive:disabled {
+  background: #9dbff5;
+  color: #fff;
+}
+
+.roleBadge {
+  max-width: 220px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid #e5edf6;
 }
 
 .pageHeaderActions {
   display: flex;
   gap: 12px;
   align-items: center;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.pageHeaderActions .btnStartAction {
+  margin-left: 8px;
 }
 
 .toolbarSelectWrap {

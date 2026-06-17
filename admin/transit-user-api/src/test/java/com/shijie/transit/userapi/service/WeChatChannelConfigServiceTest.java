@@ -62,4 +62,30 @@ class WeChatChannelConfigServiceTest {
     assertEquals("semi", captor.getValue().getConfigValue());
     assertNull(TenantContext.getTenantId());
   }
+
+  @Test
+  void getAssistantModeDefaultsToCustomerServiceWhenMissing() {
+    SystemConfigMapper mapper = mock(SystemConfigMapper.class);
+    WeChatChannelConfigService service = new WeChatChannelConfigService(mapper);
+    when(mapper.selectOne(any())).thenReturn(null);
+
+    assertEquals("customer_service", service.getAssistantMode(8L));
+    assertNull(TenantContext.getTenantId());
+  }
+
+  @Test
+  void saveAssistantModeStoresSalesMode() {
+    SystemConfigMapper mapper = mock(SystemConfigMapper.class);
+    WeChatChannelConfigService service = new WeChatChannelConfigService(mapper);
+    when(mapper.selectOne(any())).thenReturn(null);
+
+    service.saveAssistantMode(8L, "sales");
+
+    ArgumentCaptor<SystemConfigEntity> captor = ArgumentCaptor.forClass(SystemConfigEntity.class);
+    verify(mapper).insert(captor.capture());
+    assertEquals(8L, captor.getValue().getTenantId());
+    assertEquals("assistant_mode", captor.getValue().getConfigKey());
+    assertEquals("sales", captor.getValue().getConfigValue());
+    assertNull(TenantContext.getTenantId());
+  }
 }

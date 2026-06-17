@@ -17,6 +17,7 @@ interface Role {
   content: string
   status: string
   userId: string
+  roleType?: 'CUSTOMER_SERVICE' | 'SALES' | string
   promptTemplateId?: string
   knowledgeBaseId?: string
 }
@@ -47,6 +48,7 @@ export default function SettingsPage(props: Props): JSX.Element {
     name: '',
     content: '',
     status: 'PENDING',
+    roleType: 'CUSTOMER_SERVICE',
     knowledgeBaseId: ''
   })
 
@@ -110,6 +112,7 @@ export default function SettingsPage(props: Props): JSX.Element {
       name: role.name,
       content: role.content,
       status: role.status,
+      roleType: role.roleType === 'SALES' ? 'SALES' : 'CUSTOMER_SERVICE',
       knowledgeBaseId: role.knowledgeBaseId
     })
     fetchRoleKnowledgeBases(role.id).then(ids => setSelectedKnowledgeBaseIds(ids))
@@ -139,7 +142,12 @@ export default function SettingsPage(props: Props): JSX.Element {
     const newStatus = role.status === 'RUNNING' ? 'PENDING' : 'RUNNING'
     try {
       if (newStatus === 'RUNNING') {
-        const runningRoles = roles.filter(item => item.status === 'RUNNING' && item.id !== role.id)
+        const roleType = role.roleType === 'SALES' ? 'SALES' : 'CUSTOMER_SERVICE'
+        const runningRoles = roles.filter(item =>
+          item.status === 'RUNNING' &&
+          item.id !== role.id &&
+          (item.roleType === 'SALES' ? 'SALES' : 'CUSTOMER_SERVICE') === roleType
+        )
         if (runningRoles.length > 0) {
           await Promise.all(
             runningRoles.map(item =>
@@ -181,6 +189,7 @@ export default function SettingsPage(props: Props): JSX.Element {
         name: savedRole.name,
         content: savedRole.content,
         status: savedRole.status,
+        roleType: savedRole.roleType === 'SALES' ? 'SALES' : 'CUSTOMER_SERVICE',
         knowledgeBaseId: savedRole.knowledgeBaseId
       })
       await http.put(`/api/user/roles/${savedRole.id}/knowledge-bases`, {
@@ -211,7 +220,7 @@ export default function SettingsPage(props: Props): JSX.Element {
       const response = await http.post<any>('/api/user/dify/prompt-optimize', {
         originalPrompt: formData.content
       }, { timeout: 60000 })
-      console.log('【DEBUG】Dify response from http.post:', response)
+      console.log('【DEBUG】Dify 提示词优化响应:', response)
       
       let optimizedText = ''
       if (response && typeof response === 'string') {
@@ -232,7 +241,7 @@ export default function SettingsPage(props: Props): JSX.Element {
         }
       }
 
-      console.log('【DEBUG】Extracted optimizedText:', optimizedText)
+      console.log('【DEBUG】提取到的优化文本:', optimizedText)
 
       if (optimizedText) {
         // 尝试解析可能嵌套的 JSON 或带引号的字符串
@@ -256,7 +265,7 @@ export default function SettingsPage(props: Props): JSX.Element {
             }
           }
         } catch (e) {
-          console.warn('【DEBUG】JSON parse failed, keeping original string:', e)
+          console.warn('【DEBUG】优化结果 JSON 解析失败，保留原始字符串:', e)
         }
         
         // 处理可能遗留的转义换行符
@@ -264,7 +273,7 @@ export default function SettingsPage(props: Props): JSX.Element {
           optimizedText = optimizedText.replace(/\\n/g, '\n')
         }
         
-        console.log('【DEBUG】Final optimizedText to set:', optimizedText)
+        console.log('【DEBUG】最终写入表单的优化文本:', optimizedText)
         
         // 直接更新表单数据
         setFormData(prev => ({
@@ -273,11 +282,11 @@ export default function SettingsPage(props: Props): JSX.Element {
         }))
         showToast('提示词优化成功', 'success')
       } else {
-        console.error('【DEBUG】No valid text extracted. Response structure:', response)
+        console.error('【DEBUG】未提取到有效优化文本，响应结构:', response)
         showToast('优化失败，未返回内容或解析失败', 'error')
       }
     } catch (error) {
-      console.error('【DEBUG】Failed to optimize prompt', error)
+      console.error('【DEBUG】提示词优化失败', error)
       showToast('提示词优化请求失败', 'error')
     } finally {
       setIsOptimizing(false)
@@ -392,12 +401,39 @@ export default function SettingsPage(props: Props): JSX.Element {
             <div className={styles.card}>
               <div className={styles.cardHeader}>
                 <div>
+                  <h5 className={styles.cardTitle}>角色用途</h5>
+                  <p className={styles.cardSubtitle}>客服角色用于接待回复，销售角色用于线索跟进和朋友圈营销</p>
+                </div>
+              </div>
+              <div className={styles.cardBody}>
+                <div className={styles.roleTypeSwitch}>
+                  <button
+                    type="button"
+                    className={`${styles.roleTypeOption} ${formData.roleType !== 'SALES' ? styles.roleTypeOptionActive : ''}`}
+                    onClick={() => setFormData({ ...formData, roleType: 'CUSTOMER_SERVICE' })}
+                  >
+                    智能客服
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.roleTypeOption} ${formData.roleType === 'SALES' ? styles.roleTypeOptionActive : ''}`}
+                    onClick={() => setFormData({ ...formData, roleType: 'SALES' })}
+                  >
+                    智能销售
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
+                <div>
                   <h5 className={styles.cardTitle}>角色设定</h5>
                   <p className={styles.cardSubtitle}>描述角色目标、语气与输出格式</p>
                 </div>
                 <button onClick={openTemplateModal} className={styles.linkBtn}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                  角色设定模版
+                  角色设定模板
                 </button>
               </div>
               <div className={styles.cardBody}>
@@ -415,7 +451,7 @@ export default function SettingsPage(props: Props): JSX.Element {
                     onClick={handleOptimizePrompt}
                     disabled={isOptimizing}
                   >
-                    <span className={styles.pillIcon}>{isOptimizing ? '⏳' : '⚡'}</span>
+                    <span className={styles.pillIcon}>{isOptimizing ? '...' : 'AI'}</span>
                     {isOptimizing ? '优化中...' : 'AI优化'}
                   </button>
                 </div>
@@ -485,8 +521,8 @@ export default function SettingsPage(props: Props): JSX.Element {
                 <table className={styles.table}>
                   <thead>
                     <tr>
-                      <th>模版名称</th>
-                      <th>模版内容</th>
+                      <th>模板名称</th>
+                      <th>模板内容</th>
                       <th className={styles.tableRight}>操作</th>
                     </tr>
                   </thead>
@@ -505,7 +541,7 @@ export default function SettingsPage(props: Props): JSX.Element {
                   </tbody>
                 </table>
                 <div className={styles.modalFooter}>
-                  <span>共 {templates.length} 个模版</span>
+                  <span>共 {templates.length} 个模板</span>
                   <div className={styles.modalActions}>
                     <button onClick={() => fetchTemplates()} className={styles.ghostBtn}>刷新</button>
                     <button onClick={() => setIsTemplateModalOpen(false)} className={styles.ghostBtn}>关闭</button>
@@ -544,7 +580,7 @@ export default function SettingsPage(props: Props): JSX.Element {
                     </div>
                     <div className={styles.kbList}>
                       {knowledgeBases.length === 0 ? (
-                        <div className={styles.kbEmpty}>暂无知识库，请先到“知识库管理”创建</div>
+                        <div className={styles.kbEmpty}>暂无知识库，请先到知识库管理创建</div>
                       ) : (
                         knowledgeBases.map(item => (
                           <label key={item.id} className={styles.kbItem}>
@@ -582,8 +618,8 @@ export default function SettingsPage(props: Props): JSX.Element {
 
         <ConfirmDialog
           isOpen={!!roleToDelete}
-          title="确定删除?"
-          content="删除角色后将无法恢复，确定删除么?"
+          title="确定删除？"
+          content="删除角色后将无法恢复，确定删除吗？"
           onConfirm={confirmDelete}
           onCancel={() => setRoleToDelete(null)}
         />
@@ -605,6 +641,7 @@ export default function SettingsPage(props: Props): JSX.Element {
                 name: '',
                 content: '',
                 status: 'PENDING',
+                roleType: 'CUSTOMER_SERVICE',
                 knowledgeBaseId: ''
               })
               setSelectedKnowledgeBaseIds([])
@@ -637,6 +674,7 @@ export default function SettingsPage(props: Props): JSX.Element {
               <thead>
                 <tr>
                   <th className={styles.colName}>角色名称</th>
+                  <th className={styles.colType}>用途</th>
                   <th className={styles.colDesc}>角色设定</th>
                   <th className={styles.colUser}>用户</th>
                   <th className={styles.colStatus}>开启状态</th>
@@ -647,6 +685,11 @@ export default function SettingsPage(props: Props): JSX.Element {
                 {roles.map(role => (
                   <tr key={role.id}>
                     <td className={styles.colName}>{role.name}</td>
+                    <td className={styles.colType}>
+                      <span className={`${styles.roleTypeBadge} ${role.roleType === 'SALES' ? styles.roleTypeBadgeSales : ''}`}>
+                        {role.roleType === 'SALES' ? '智能销售' : '智能客服'}
+                      </span>
+                    </td>
                     <td className={styles.colDesc}>
                       <div className={styles.cellContent}>{role.content}</div>
                     </td>
@@ -690,6 +733,7 @@ export default function SettingsPage(props: Props): JSX.Element {
                         name: '',
                         content: '',
                         status: 'PENDING',
+                        roleType: 'CUSTOMER_SERVICE',
                         knowledgeBaseId: ''
                       })
                       setSelectedKnowledgeBaseIds([])
@@ -709,8 +753,8 @@ export default function SettingsPage(props: Props): JSX.Element {
         </div>
         <ConfirmDialog
           isOpen={!!roleToDelete}
-          title="确定删除?"
-          content="删除角色后将无法恢复，确定删除么?"
+          title="确定删除？"
+          content="删除角色后将无法恢复，确定删除吗？"
           onConfirm={confirmDelete}
           onCancel={() => setRoleToDelete(null)}
         />
@@ -718,3 +762,4 @@ export default function SettingsPage(props: Props): JSX.Element {
     </div>
   )
 }
+

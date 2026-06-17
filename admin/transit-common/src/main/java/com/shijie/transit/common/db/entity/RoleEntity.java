@@ -19,6 +19,11 @@ public class RoleEntity extends BaseTenantEntity {
 
     private String status; // PENDING, RUNNING, COMPLETED, FAILED
 
+    /**
+     * 角色用途类型：CUSTOMER_SERVICE 表示智能客服，SALES 表示智能销售。
+     */
+    private String roleType;
+
     @JsonSerialize(using = ToStringSerializer.class)
     private Long promptTemplateId;
 
@@ -54,6 +59,14 @@ public class RoleEntity extends BaseTenantEntity {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getRoleType() {
+        return roleType;
+    }
+
+    public void setRoleType(String roleType) {
+        this.roleType = roleType;
     }
 
     public Long getPromptTemplateId() {

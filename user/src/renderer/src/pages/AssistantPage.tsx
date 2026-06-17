@@ -20,7 +20,9 @@ import styles from './AssistantPage.module.css'
 import { AppConfig } from '../config'
 
 type CaptureBounds = { x: number; y: number; w: number; h: number }
-type Role = { id: number; name: string; content: string; status: string }
+type AssistantMode = 'customer_service' | 'sales'
+type RoleType = 'CUSTOMER_SERVICE' | 'SALES'
+type Role = { id: number; name: string; content: string; status: string; roleType?: RoleType | string }
 type SessionConfig = {
   sceneConfig: {
     replyIntervalStartSec: number
@@ -70,6 +72,7 @@ type StoreContext = {
 type WeChatChannelConfig = {
   channel: 'personal' | 'enterprise'
   managedMode?: 'full' | 'semi'
+  assistantMode?: AssistantMode
 }
 
 const WECHAT_POLL_INTERVAL_MS = 1500
@@ -84,7 +87,8 @@ type WeChatChannel = 'personal' | 'enterprise'
 
 const defaultWechatChannelConfig: WeChatChannelConfig = {
   channel: 'personal',
-  managedMode: 'full'
+  managedMode: 'full',
+  assistantMode: 'customer_service'
 }
 
 const getItemCenterY = (item: any): number => {
@@ -547,6 +551,7 @@ function AssistantPage(props: Props): JSX.Element {
   const [activeRole, setActiveRole] = useState<Role | null>(null)
   const [lastReplied, setLastReplied] = useState<{ contact: string; text: string; at: number } | null>(null)
   const [managedMode, setManagedMode] = useState<'full' | 'semi'>('full')
+  const [assistantMode, setAssistantMode] = useState<AssistantMode>('customer_service')
   const [knowledgeBaseOptions, setKnowledgeBaseOptions] = useState<SelectableKnowledgeBase[]>([])
   const [storeDialogOpen, setStoreDialogOpen] = useState(false)
   const [storeSubmitting, setStoreSubmitting] = useState(false)
@@ -556,6 +561,7 @@ function AssistantPage(props: Props): JSX.Element {
   const [showNoRoleDialog, setShowNoRoleDialog] = useState(false)
   const [wechatChannelConfig, setWechatChannelConfig] = useState<WeChatChannelConfig>(defaultWechatChannelConfig)
   const managedModeRef = useRef<'full' | 'semi'>('full')
+  const assistantModeRef = useRef<AssistantMode>('customer_service')
   const seenBridgeMessageIdsRef = useRef<Set<string>>(new Set())
 
   const syncManagedModeToBridge = async (mode: 'full' | 'semi') => {
@@ -593,6 +599,30 @@ function AssistantPage(props: Props): JSX.Element {
       return
     }
     setManagedMode(mode)
+  }
+
+  const handleAssistantModeChange = async (mode: AssistantMode) => {
+    if (isRunningRef.current || isConnecting) {
+      showToast('运行中不能切换业务模式，请先停止运行', 'info')
+      return
+    }
+    if (mode === assistantModeRef.current) {
+      return
+    }
+    const previousMode = assistantModeRef.current
+    assistantModeRef.current = mode
+    setAssistantMode(mode)
+    try {
+      await http.post('/api/user/system-config/assistant-mode', { mode })
+      setActiveRole(null)
+      await fetchRunningRole(mode)
+      showToast(mode === 'sales' ? '已切换为智能销售' : '已切换为智能客服', 'success')
+    } catch (error: any) {
+      assistantModeRef.current = previousMode
+      setAssistantMode(previousMode)
+      console.error('保存业务模式失败', error)
+      showToast(`切换业务模式失败: ${error?.message || '未知错误'}`, 'error')
+    }
   }
 
   const handleWechatChannelChange = async (channel: WeChatChannel) => {
@@ -637,7 +667,8 @@ function AssistantPage(props: Props): JSX.Element {
 
   const normalizeWechatChannelConfig = (config?: Partial<WeChatChannelConfig> | null): WeChatChannelConfig => ({
     channel: config?.channel === 'enterprise' ? 'enterprise' : 'personal',
-    managedMode: config?.managedMode === 'semi' ? 'semi' : 'full'
+    managedMode: config?.managedMode === 'semi' ? 'semi' : 'full',
+    assistantMode: config?.assistantMode === 'sales' ? 'sales' : 'customer_service'
   })
 
   const fetchWechatChannelConfig = async (): Promise<WeChatChannelConfig> => {
@@ -646,22 +677,35 @@ function AssistantPage(props: Props): JSX.Element {
       const nextConfig = normalizeWechatChannelConfig(res)
       setWechatChannelConfig(nextConfig)
       wechatChannelRef.current = nextConfig.channel
+      assistantModeRef.current = nextConfig.assistantMode || 'customer_service'
+      setAssistantMode(nextConfig.assistantMode || 'customer_service')
       return nextConfig
     } catch (error) {
       console.warn('获取微信消息通道失败，默认使用个人微信通道', error)
       showToast('获取微信消息通道失败，已默认使用个人微信', 'error')
       setWechatChannelConfig(defaultWechatChannelConfig)
       wechatChannelRef.current = 'personal'
+      assistantModeRef.current = 'customer_service'
+      setAssistantMode('customer_service')
       return defaultWechatChannelConfig
     }
   }
 
-  const fetchRunningRole = async (): Promise<Role | null> => {
+  const normalizeRoleType = (role?: Role | null): RoleType => {
+    return role?.roleType === 'SALES' ? 'SALES' : 'CUSTOMER_SERVICE'
+  }
+
+  const roleTypeForAssistantMode = (mode: AssistantMode): RoleType => {
+    return mode === 'sales' ? 'SALES' : 'CUSTOMER_SERVICE'
+  }
+
+  const fetchRunningRole = async (mode: AssistantMode = assistantModeRef.current): Promise<Role | null> => {
     try {
       const res = await http.get<Role[]>('/api/user/roles')
       // http.ts returns res.data directly if success, which is Role[]
       const roles = res as unknown as Role[]
-      const running = roles.find((role) => role.status === 'RUNNING') || null
+      const expectedRoleType = roleTypeForAssistantMode(mode)
+      const running = roles.find((role) => role.status === 'RUNNING' && normalizeRoleType(role) === expectedRoleType) || null
       setActiveRole(running)
       return running
     } catch (error) {
@@ -743,8 +787,12 @@ function AssistantPage(props: Props): JSX.Element {
   }, [activeRole])
 
   useEffect(() => {
+    assistantModeRef.current = assistantMode
+  }, [assistantMode])
+
+  useEffect(() => {
     if (backendBaseUrl && userToken) {
-      fetchRunningRole()
+      fetchRunningRole(assistantModeRef.current)
       fetchSessionConfig()
     } else {
       setActiveRole(null)
@@ -1347,9 +1395,13 @@ function AssistantPage(props: Props): JSX.Element {
     if (!isRunning) {
       return
     }
+    if (assistantModeRef.current !== 'sales') {
+      return
+    }
 
     const loop = async () => {
       if (!isRunningRef.current) return
+      if (assistantModeRef.current !== 'sales') return
       try {
         const api = (window as any).api
         const currentChannel = wechatChannelRef.current
@@ -1406,7 +1458,7 @@ function AssistantPage(props: Props): JSX.Element {
         clearTimeout(pollTimeoutRef.current)
       }
     }
-  }, [isRunning])
+  }, [isRunning, assistantMode])
 
   useEffect(() => {
     if (marketingLikeTimeoutRef.current) {
@@ -1416,9 +1468,13 @@ function AssistantPage(props: Props): JSX.Element {
     if (!isRunning) {
       return
     }
+    if (assistantModeRef.current !== 'sales') {
+      return
+    }
 
     const loop = async () => {
       if (!isRunningRef.current) return
+      if (assistantModeRef.current !== 'sales') return
       let nextDelay = 90_000
       try {
         const likeConfig = await fetchLikeConfig()
@@ -1456,7 +1512,7 @@ function AssistantPage(props: Props): JSX.Element {
         clearTimeout(marketingLikeTimeoutRef.current)
       }
     }
-  }, [isRunning])
+  }, [isRunning, assistantMode])
 
   useEffect(() => {
     if (marketingCommentTimeoutRef.current) {
@@ -1466,9 +1522,13 @@ function AssistantPage(props: Props): JSX.Element {
     if (!isRunning) {
       return
     }
+    if (assistantModeRef.current !== 'sales') {
+      return
+    }
 
     const loop = async () => {
       if (!isRunningRef.current) return
+      if (assistantModeRef.current !== 'sales') return
       let nextDelay = 120_000
       try {
         const commentConfig = await fetchCommentConfig()
@@ -1519,7 +1579,7 @@ function AssistantPage(props: Props): JSX.Element {
         clearTimeout(marketingCommentTimeoutRef.current)
       }
     }
-  }, [isRunning])
+  }, [isRunning, assistantMode])
 
   const handleUpdateProcessItem = (id: string, newContent: string) => {
     setProcessItems((prev) =>
@@ -1678,9 +1738,10 @@ function AssistantPage(props: Props): JSX.Element {
     setDifyResponse('')
 
     try {
-      const runningRole = await fetchRunningRole()
+      const runningRole = await fetchRunningRole(assistantModeRef.current)
       if (!runningRole?.id) {
         setShowNoRoleDialog(true)
+        setDifyResponse(assistantModeRef.current === 'sales' ? '请先在角色配置中启用一个销售角色' : '请先在角色配置中启用一个客服角色')
         setIsConnecting(false)
         return
       }
@@ -1769,6 +1830,8 @@ function AssistantPage(props: Props): JSX.Element {
   }
 
   const configurationDisabled = isRunning || isConnecting
+  const assistantModeLabel = assistantMode === 'sales' ? '智能销售' : '智能客服'
+  const activeRoleLabel = activeRole?.name || (assistantMode === 'sales' ? '未启用销售角色' : '未启用客服角色')
 
   const groupedChatSessions = messages.reduce<Array<{ sessionKey: string; contact: string; messages: ChatMessage[] }>>((groups, message) => {
     const existing = groups.find((group) => group.sessionKey === message.sessionKey)
@@ -1789,10 +1852,30 @@ function AssistantPage(props: Props): JSX.Element {
     <div className={styles.assistantPage}>
       <header className={styles.pageHeader}>
         <div className={styles.pageHeaderTitleGroup}>
-          <h4 className={styles.pageTitle}>AI 运营助手</h4>
+          <div className={styles.assistantModeSwitch} title={configurationDisabled ? '运行中请先停止运行，再切换业务模式' : '选择当前运营助手业务模式'}>
+            <button
+              type="button"
+              className={`${styles.assistantModeOption} ${assistantMode === 'customer_service' ? styles.assistantModeOptionActive : ''}`}
+              disabled={configurationDisabled}
+              onClick={() => handleAssistantModeChange('customer_service')}
+            >
+              智能客服
+            </button>
+            <button
+              type="button"
+              className={`${styles.assistantModeOption} ${assistantMode === 'sales' ? styles.assistantModeOptionActive : ''}`}
+              disabled={configurationDisabled}
+              onClick={() => handleAssistantModeChange('sales')}
+            >
+              智能销售
+            </button>
+          </div>
           <div className={`${styles.statusBadge} ${isRunning ? styles.active : ''}`}>
             <div className={styles.statusIndicator}></div>
             {isRunning ? '运行中' : '就绪'}
+          </div>
+          <div className={styles.roleBadge}>
+            {assistantModeLabel} · {activeRoleLabel}
           </div>
         </div>
         

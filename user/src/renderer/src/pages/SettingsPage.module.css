@@ -256,6 +256,56 @@
   background: rgba(239, 68, 68, 0.08);
 }
 
+.roleTypeSwitch {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 8px;
+  background: #eef3fb;
+  border: 1px solid #dce5f3;
+}
+
+.roleTypeOption {
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #5b6472;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.roleTypeOptionActive {
+  background: #1677ff;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.22);
+}
+
+.colType {
+  width: 96px;
+}
+
+.roleTypeBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: #1677ff;
+  background: rgba(22, 119, 255, 0.08);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.roleTypeBadgeSales {
+  color: #0f766e;
+  background: rgba(15, 118, 110, 0.1);
+}
+
 .pillBtn {
   background: rgba(22, 119, 255, 0.1);
   color: var(--color-primary);

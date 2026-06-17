@@ -65,6 +65,7 @@ public class UserSystemConfigController {
         String channel = weChatChannelConfigService.getChannelConfig(principal.tenantId()).channel();
         config.put("channel", "enterprise".equalsIgnoreCase(channel) ? "enterprise" : "personal");
         config.put("managedMode", weChatChannelConfigService.getManagedMode(principal.tenantId()));
+        config.put("assistantMode", weChatChannelConfigService.getAssistantMode(principal.tenantId()));
         return Result.success(config);
     }
 
@@ -81,6 +82,14 @@ public class UserSystemConfigController {
                                                 Authentication authentication) {
         TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
         weChatChannelConfigService.saveManagedMode(principal.tenantId(), request.mode());
+        return Result.success(null);
+    }
+
+    @PostMapping("/assistant-mode")
+    public Result<Void> updateAssistantMode(@RequestBody AssistantModeRequest request,
+                                            Authentication authentication) {
+        TransitPrincipal principal = (TransitPrincipal) authentication.getPrincipal();
+        weChatChannelConfigService.saveAssistantMode(principal.tenantId(), request.mode());
         return Result.success(null);
     }
 
@@ -113,5 +122,8 @@ public class UserSystemConfigController {
     }
 
     public record ManagedModeRequest(String mode) {
+    }
+
+    public record AssistantModeRequest(String mode) {
     }
 }

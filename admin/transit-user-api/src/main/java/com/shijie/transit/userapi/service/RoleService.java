@@ -40,6 +40,7 @@ public class RoleService {
         entity.setUserId(userId);
         entity.setTenantId(TenantContext.getTenantId());
         entity.setStatus("PENDING");
+        entity.setRoleType(normalizeRoleType(entity.getRoleType()));
         roleMapper.insert(entity);
         return entity;
     }
@@ -59,7 +60,8 @@ public class RoleService {
         if (entity.getStatus() != null) existing.setStatus(entity.getStatus());
         if (entity.getPromptTemplateId() != null) existing.setPromptTemplateId(entity.getPromptTemplateId());
         if (entity.getKnowledgeBaseId() != null) existing.setKnowledgeBaseId(entity.getKnowledgeBaseId());
-        
+        if (entity.getRoleType() != null) existing.setRoleType(normalizeRoleType(entity.getRoleType()));
+
         roleMapper.updateById(existing);
         return existing;
     }
@@ -85,5 +87,12 @@ public class RoleService {
         if (name != null && name.length() > 15) {
             throw new IllegalArgumentException("Role name length must be <= 15");
         }
+    }
+
+    private String normalizeRoleType(String roleType) {
+        if ("SALES".equalsIgnoreCase(roleType)) {
+            return "SALES";
+        }
+        return "CUSTOMER_SERVICE";
     }
 }

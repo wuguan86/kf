@@ -12,9 +12,12 @@ import org.springframework.util.StringUtils;
 public class WeChatChannelConfigService {
   public static final String CHANNEL_PERSONAL = "personal";
   public static final String CHANNEL_ENTERPRISE = "enterprise";
+  public static final String ASSISTANT_MODE_CUSTOMER_SERVICE = "customer_service";
+  public static final String ASSISTANT_MODE_SALES = "sales";
 
   private static final String CHANNEL_CONFIG_KEY = "wechat_channel";
   private static final String MANAGED_MODE_CONFIG_KEY = "wechat_managed_mode";
+  private static final String ASSISTANT_MODE_CONFIG_KEY = "assistant_mode";
 
   private final SystemConfigMapper systemConfigMapper;
 
@@ -40,6 +43,15 @@ public class WeChatChannelConfigService {
     }
   }
 
+  public String getAssistantMode(long tenantId) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      return normalizeAssistantMode(readConfig(ASSISTANT_MODE_CONFIG_KEY));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
   @Transactional
   public void saveTenantConfig(long tenantId, SaveWeChatChannelCommand command) {
     TenantContext.setTenantId(tenantId);
@@ -55,6 +67,16 @@ public class WeChatChannelConfigService {
     TenantContext.setTenantId(tenantId);
     try {
       saveConfig(MANAGED_MODE_CONFIG_KEY, normalizeManagedMode(mode), "微信托管模式");
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Transactional
+  public void saveAssistantMode(long tenantId, String mode) {
+    TenantContext.setTenantId(tenantId);
+    try {
+      saveConfig(ASSISTANT_MODE_CONFIG_KEY, normalizeAssistantMode(mode), "AI 运营助手业务模式");
     } finally {
       TenantContext.clear();
     }
@@ -91,6 +113,11 @@ public class WeChatChannelConfigService {
 
   private String normalizeManagedMode(String value) {
     return "semi".equalsIgnoreCase(StringUtils.hasText(value) ? value.trim() : "") ? "semi" : "full";
+  }
+
+  private String normalizeAssistantMode(String value) {
+    String normalized = StringUtils.hasText(value) ? value.trim().toLowerCase() : ASSISTANT_MODE_CUSTOMER_SERVICE;
+    return ASSISTANT_MODE_SALES.equals(normalized) ? ASSISTANT_MODE_SALES : ASSISTANT_MODE_CUSTOMER_SERVICE;
   }
 
   public record WeChatChannelConfig(String channel) {

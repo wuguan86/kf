@@ -26,7 +26,7 @@ class UserMarketingCommentControllerTest {
     RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
     UserMarketingCommentController controller = new UserMarketingCommentController(
         difyClient,
-        new FakeRoleService(),
+        new FakeRoleService(List.of(role("RUNNING", "SALES", "保持自然短评"))),
         properties,
         objectMapper);
 
@@ -51,6 +51,71 @@ class UserMarketingCommentControllerTest {
     }
   }
 
+  @Test
+  void generateCommentPrefersRunningSalesRole() {
+    ObjectMapper objectMapper = new ObjectMapper();
+    DifyProperties properties = new DifyProperties();
+    properties.setCommentWorkflowApiKey("comment-key");
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+    UserMarketingCommentController controller = new UserMarketingCommentController(
+        difyClient,
+        new FakeRoleService(List.of(
+            role("RUNNING", "CUSTOMER_SERVICE", "客服回复设定"),
+            role("RUNNING", "SALES", "销售评论设定"))),
+        properties,
+        objectMapper);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(7L, 1L, "USER"), null));
+    try {
+      controller.generateComment(new UserMarketingCommentController.CommentGenerationRequest(
+          "今天新品到店",
+          "客户A",
+          "2小时前"));
+
+      assertEquals("销售评论设定", difyClient.inputs.path("user_custom_role").asText());
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
+  void generateCommentRejectsWhenSalesRoleIsMissing() {
+    ObjectMapper objectMapper = new ObjectMapper();
+    DifyProperties properties = new DifyProperties();
+    properties.setCommentWorkflowApiKey("comment-key");
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+    UserMarketingCommentController controller = new UserMarketingCommentController(
+        difyClient,
+        new FakeRoleService(List.of(role("RUNNING", "CUSTOMER_SERVICE", "客服回复设定"))),
+        properties,
+        objectMapper);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(7L, 1L, "USER"), null));
+    try {
+      Result<String> result = controller.generateComment(new UserMarketingCommentController.CommentGenerationRequest(
+          "今天新品到店",
+          "客户A",
+          "2小时前"));
+
+      assertEquals(40000, result.getCode());
+      assertEquals("请先启用一个销售角色后再生成朋友圈评论", result.getMsg());
+      assertEquals(null, difyClient.inputs);
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  private static RoleEntity role(String status, String roleType, String content) {
+    RoleEntity role = new RoleEntity();
+    role.setId(10L);
+    role.setStatus(status);
+    role.setRoleType(roleType);
+    role.setContent(content);
+    return role;
+  }
+
   private static class RecordingDifyClient extends DifyClient {
     String apiKey;
     String user;
@@ -70,17 +135,16 @@ class UserMarketingCommentControllerTest {
   }
 
   private static class FakeRoleService extends RoleService {
-    FakeRoleService() {
+    private final List<RoleEntity> roles;
+
+    FakeRoleService(List<RoleEntity> roles) {
       super(null, new RoleKnowledgeBaseService(null, null));
+      this.roles = roles;
     }
 
     @Override
     public List<RoleEntity> list(Long userId) {
-      RoleEntity role = new RoleEntity();
-      role.setId(10L);
-      role.setStatus("RUNNING");
-      role.setContent("保持自然短评");
-      return List.of(role);
+      return roles;
     }
   }
 }
