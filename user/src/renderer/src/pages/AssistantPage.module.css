@@ -329,20 +329,6 @@
   color: #fff;
 }
 
-.roleBadge {
-  max-width: 220px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: #f8fafc;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border: 1px solid #e5edf6;
-}
-
 .pageHeaderActions {
   display: flex;
   gap: 12px;

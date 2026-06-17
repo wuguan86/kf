@@ -1830,8 +1830,6 @@ function AssistantPage(props: Props): JSX.Element {
   }
 
   const configurationDisabled = isRunning || isConnecting
-  const assistantModeLabel = assistantMode === 'sales' ? '智能销售' : '智能客服'
-  const activeRoleLabel = activeRole?.name || (assistantMode === 'sales' ? '未启用销售角色' : '未启用客服角色')
 
   const groupedChatSessions = messages.reduce<Array<{ sessionKey: string; contact: string; messages: ChatMessage[] }>>((groups, message) => {
     const existing = groups.find((group) => group.sessionKey === message.sessionKey)
@@ -1873,9 +1871,6 @@ function AssistantPage(props: Props): JSX.Element {
           <div className={`${styles.statusBadge} ${isRunning ? styles.active : ''}`}>
             <div className={styles.statusIndicator}></div>
             {isRunning ? '运行中' : '就绪'}
-          </div>
-          <div className={styles.roleBadge}>
-            {assistantModeLabel} · {activeRoleLabel}
           </div>
         </div>
         
