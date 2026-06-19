@@ -175,7 +175,7 @@ public class SmartSalesTagService {
     entity.setTenantId(tenantId);
     entity.setOwnerUserId(ownerUserId);
     entity.setContactKey(contactKey);
-    entity.setRemarkName("");
+    entity.setRemarkName(null);
     entity.setPhone("");
     entity.setSource("UNKNOWN");
     entity.setStage("LEAD");

@@ -24,7 +24,7 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
       <script>
       SELECT
         ui.contact_key AS contactKey,
-        IFNULL(c.remark_name, ui.contact_key) AS customerName,
+        IFNULL(NULLIF(c.remark_name, ''), ui.contact_key) AS customerName,
         ui.intent_level AS intentLevel,
         ui.total_score AS totalScore,
         ui.daily_summary AS dailySummary,
@@ -159,7 +159,7 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
   /** 待跟进：已建档且 next_follow_up_at 不为空且早于截止时间的客户。 */
   @Select("""
       SELECT c.contact_key AS contactKey,
-             IFNULL(c.remark_name, c.contact_key) AS customerName,
+             IFNULL(NULLIF(c.remark_name, ''), c.contact_key) AS customerName,
              c.next_follow_up_at AS nextFollowUpAt,
              ui.intent_level AS intentLevel
       FROM crm_customer c

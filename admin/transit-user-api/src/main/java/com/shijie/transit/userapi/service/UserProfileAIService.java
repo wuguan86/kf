@@ -136,7 +136,7 @@ public class UserProfileAIService {
       customer.setTenantId(tenantId);
       customer.setOwnerUserId(ownerUserId);
       customer.setContactKey(contactKey.trim());
-      customer.setRemarkName("");
+      customer.setRemarkName(null);
       customer.setPhone("");
       customer.setSource("UNKNOWN");
       customer.setStage("LEAD");
