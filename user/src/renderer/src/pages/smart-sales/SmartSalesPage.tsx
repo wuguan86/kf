@@ -39,7 +39,10 @@ export default function SmartSalesPage(): JSX.Element {
   return (
     <div className={styles.page}>
       <div className={styles.header}>
-        <h1 className={styles.title}>智能销售</h1>
+        <div className={styles.titleBlock}>
+          <h1 className={styles.title}>智能销售</h1>
+          <div className={styles.subtitle}>客户来自微信消息和意向分析，销售阶段与跟进记录由人工确认维护。</div>
+        </div>
       </div>
       <div className={styles.tabs}>
         <div

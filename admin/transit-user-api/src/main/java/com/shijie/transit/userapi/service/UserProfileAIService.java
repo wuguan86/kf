@@ -57,6 +57,7 @@ public class UserProfileAIService {
   private final ObjectMapper objectMapper;
   private final Clock clock;
   private final RestClient restClient;
+  private final SalesTextSafetyService safetyService;
   private final String apiKey;
   private final String compatibleEndpoint;
   private final String model;
@@ -67,6 +68,7 @@ public class UserProfileAIService {
       SessionMessageHistoryMapper sessionMessageHistoryMapper,
       ObjectMapper objectMapper,
       Clock clock,
+      SalesTextSafetyService safetyService,
       RestClient.Builder restClientBuilder,
       @Value("${spring.ai.dashscope.api-key:}") String dashScopeApiKey,
       @Value("${spring.ai.dashscope.chat.base-url:${spring.ai.dashscope.base-url:https://dashscope.aliyuncs.com}}") String dashScopeBaseUrl,
@@ -76,6 +78,7 @@ public class UserProfileAIService {
     this.sessionMessageHistoryMapper = sessionMessageHistoryMapper;
     this.objectMapper = objectMapper;
     this.clock = clock;
+    this.safetyService = safetyService;
     this.apiKey = dashScopeApiKey == null ? "" : dashScopeApiKey.trim();
     this.compatibleEndpoint = buildCompatibleEndpoint(dashScopeBaseUrl);
     this.model = StringUtils.hasText(profileModel) ? profileModel.trim() : "qwen-plus";
@@ -197,12 +200,8 @@ public class UserProfileAIService {
       // 模型输出可能是 JSON 字符串，也可能被包了一层代码块
       node = objectMapper.readTree(stripJsonFence(raw));
     } catch (Exception ex) {
-      // 非 JSON 时按纯文本作为沟通重点
-      String text = raw.trim();
-      if (text.isEmpty()) {
-        return null;
-      }
-      return new AiProfile(text, List.of(), null, LocalDateTime.now(clock));
+      log.warn("AI画像模型返回非JSON，跳过写入可展示画像");
+      return null;
     }
     // 兼容多种命名风格
     if (node.hasNonNull("communicationFocus") || node.hasNonNull("communication_focus")
@@ -222,14 +221,24 @@ public class UserProfileAIService {
   }
 
   private AiProfile fromNode(JsonNode node) {
-    String focus = readText(node, "communicationFocus", "communication_focus");
-    String action = readText(node, "suggestedNextAction", "suggested_next_action");
-    List<String> tags = readStringList(node, "interestTags", "interest_tags");
+    String focus = safeProfileText(readText(node, "communicationFocus", "communication_focus"));
+    String action = safeProfileText(readText(node, "suggestedNextAction", "suggested_next_action"));
+    List<String> rawTags = readStringList(node, "interestTags", "interest_tags");
+    List<String> tags = rawTags == null ? List.of() : rawTags.stream()
+        .map(this::safeProfileText)
+        .filter(StringUtils::hasText)
+        .limit(6)
+        .toList();
     if (!StringUtils.hasText(focus) && !StringUtils.hasText(action)
         && (tags == null || tags.isEmpty())) {
       return null;
     }
     return new AiProfile(focus, tags == null ? List.of() : tags, action, LocalDateTime.now(clock));
+  }
+
+  private String safeProfileText(String text) {
+    SalesTextSafetyService.SafetyResult result = safetyService.checkProfileText(text);
+    return result.safe() ? result.safeText() : null;
   }
 
   private void writeAiProfile(CrmCustomerEntity customer, AiProfile aiProfile) {

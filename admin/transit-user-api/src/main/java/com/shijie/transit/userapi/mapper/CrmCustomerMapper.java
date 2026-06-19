@@ -135,6 +135,27 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
       @Param("tenantId") Long tenantId,
       @Param("ownerUserId") Long ownerUserId);
 
+  /**
+   * 统计高意向但尚未建 CRM 档案的微信联系人数量。
+   */
+  @Select("""
+      SELECT COUNT(1)
+      FROM user_intent ui
+      WHERE ui.tenant_id = #{tenantId}
+        AND ui.owner_user_id = #{ownerUserId}
+        AND ui.intent_level = 3
+        AND NOT EXISTS (
+          SELECT 1
+          FROM crm_customer c
+          WHERE c.tenant_id = ui.tenant_id
+            AND c.owner_user_id = ui.owner_user_id
+            AND c.contact_key = ui.contact_key
+        )
+      """)
+  Long countHighIntentWithoutCustomer(
+      @Param("tenantId") Long tenantId,
+      @Param("ownerUserId") Long ownerUserId);
+
   /** 待跟进：已建档且 next_follow_up_at 不为空且早于截止时间的客户。 */
   @Select("""
       SELECT c.contact_key AS contactKey,

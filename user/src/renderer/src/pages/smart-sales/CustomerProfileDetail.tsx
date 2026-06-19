@@ -405,7 +405,7 @@ export default function CustomerProfileDetail({
             )}
             <textarea
               className={styles.textarea}
-              placeholder="记录本次跟进内容..."
+              placeholder="记录本次跟进内容；AI 建议需人工确认后保存..."
               value={followUpContent}
               onChange={(e) => {
                 setFollowUpContent(e.target.value)
@@ -438,7 +438,7 @@ export default function CustomerProfileDetail({
                 className={styles.ghostBtn}
                 onClick={handleSuggestFollowUp}
                 disabled={suggestingFollowUp}
-                title="AI 根据客户画像生成跟进话术建议"
+                title="AI 根据微信会话和客户画像生成草稿，需人工确认"
               >
                 {suggestingFollowUp ? 'AI 生成中...' : '✨ AI 建议'}
               </button>
