@@ -676,7 +676,6 @@ export default function SettingsPage(props: Props): JSX.Element {
                   <th className={styles.colName}>角色名称</th>
                   <th className={styles.colType}>用途</th>
                   <th className={styles.colDesc}>角色设定</th>
-                  <th className={styles.colUser}>用户</th>
                   <th className={styles.colStatus}>开启状态</th>
                   <th className={styles.colAction}>操作</th>
                 </tr>
@@ -693,7 +692,6 @@ export default function SettingsPage(props: Props): JSX.Element {
                     <td className={styles.colDesc}>
                       <div className={styles.cellContent}>{role.content}</div>
                     </td>
-                    <td className={styles.colUser}>默认用户</td>
                     <td className={styles.colStatus}>
                       <ToggleSwitch
                         checked={role.status === 'RUNNING'}

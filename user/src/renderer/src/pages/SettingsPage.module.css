@@ -379,16 +379,12 @@
 }
 
 .colName {
-  width: 20%;
+  width: 110px;
   font-weight: 600;
 }
 
 .colDesc {
-  width: 25%;
-}
-
-.colUser {
-  width: 10%;
+  width: auto;
 }
 
 .colStatus {
