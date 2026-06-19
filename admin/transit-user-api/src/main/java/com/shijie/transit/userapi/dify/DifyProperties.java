@@ -10,6 +10,10 @@ public class DifyProperties {
   private String commentWorkflowApiKey;
   private String intentWorkflowApiKey;
   private String promptOptimizeWorkflowApiKey;
+  /** 用户画像 AI 补充工作流 API Key(dify.profile-workflow-api-key)。 */
+  private String profileWorkflowApiKey;
+  /** 是否启用智能销售画像 AI 补充，默认开启。 */
+  private Boolean profileAiEnabled = Boolean.TRUE;
   private Double retrieveScoreThreshold = 0.6d;
 
   public String getBaseUrl() {
@@ -66,5 +70,21 @@ public class DifyProperties {
 
   public void setRetrieveScoreThreshold(Double retrieveScoreThreshold) {
     this.retrieveScoreThreshold = retrieveScoreThreshold;
+  }
+
+  public String getProfileWorkflowApiKey() {
+    return profileWorkflowApiKey;
+  }
+
+  public void setProfileWorkflowApiKey(String profileWorkflowApiKey) {
+    this.profileWorkflowApiKey = profileWorkflowApiKey;
+  }
+
+  public Boolean getProfileAiEnabled() {
+    return profileAiEnabled;
+  }
+
+  public void setProfileAiEnabled(Boolean profileAiEnabled) {
+    this.profileAiEnabled = profileAiEnabled;
   }
 }
