@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import http from '../utils/http'
 import { readAuthSnapshot } from '../auth/authStore'
 import { ProcessVisualizer, ProcessItem, ProcessStep, ProcessAttachment } from '../components/ProcessVisualizer'
@@ -1395,13 +1395,9 @@ function AssistantPage(props: Props): JSX.Element {
     if (!isRunning) {
       return
     }
-    if (assistantModeRef.current !== 'sales') {
-      return
-    }
 
     const loop = async () => {
       if (!isRunningRef.current) return
-      if (assistantModeRef.current !== 'sales') return
       try {
         const api = (window as any).api
         const currentChannel = wechatChannelRef.current
