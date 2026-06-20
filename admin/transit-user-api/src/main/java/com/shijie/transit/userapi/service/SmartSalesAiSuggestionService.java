@@ -119,7 +119,7 @@ public class SmartSalesAiSuggestionService {
       String reason = text(node.path("reason"));
       return new SmartSalesVo.FollowUpSuggestion(safety.safeText(), reason);
     } catch (Exception ex) {
-      log.warn("解析AI跟进建议JSON失败，不写入可发送草稿", ex);
+      log.warn("解析AI跟进建议JSON失败，不写入可发送草稿 reason={}", ex.getMessage());
       return new SmartSalesVo.FollowUpSuggestion("", "AI 返回格式非标准，请人工编辑后再使用");
     }
   }

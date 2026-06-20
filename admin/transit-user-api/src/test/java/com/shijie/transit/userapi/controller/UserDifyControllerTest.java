@@ -22,6 +22,7 @@ import com.shijie.transit.userapi.service.RoleKnowledgeBaseService;
 import com.shijie.transit.userapi.service.RoleService;
 import com.shijie.transit.userapi.service.SessionConfigService;
 import com.shijie.transit.userapi.service.SessionHistoryService;
+import com.shijie.transit.userapi.service.SmartSalesDifyContextService;
 import java.time.Clock;
 import java.util.HashMap;
 import java.util.List;
@@ -210,6 +211,40 @@ class UserDifyControllerTest {
   }
 
   @Test
+  void monitorChatAddsSalesStageAndCustomerProfileForSalesMode() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+    FakeSmartSalesDifyContextService salesDifyContextService = new FakeSmartSalesDifyContextService(
+        new SmartSalesDifyContextService.SalesDifyContext(
+            "FOLLOWING（跟进中）",
+            "客户名称：张三\nAI沟通重点：关注价格"));
+
+    UserDifyController controller = controller(
+        objectMapper,
+        difyClient,
+        salesRole(""),
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        null,
+        salesDifyContextService);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      controller.monitorChat(new UserDifyController.MonitorChatRequest(
+          10L, "hello", "", "", "wxid_zhangsan", "", "", "", "sales"));
+
+      JsonNode inputs = objectMapper.readTree(difyClient.requestBodyJson).path("inputs");
+      assertEquals("FOLLOWING（跟进中）", inputs.path("sales_stage").asText());
+      assertEquals("客户名称：张三\nAI沟通重点：关注价格", inputs.path("customer_profile").asText());
+      assertEquals(1L, salesDifyContextService.ownerUserId);
+      assertEquals("wxid_zhangsan", salesDifyContextService.contactKey);
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
   void monitorChatRejectsSalesModeWithCustomerServiceRole() {
     ObjectMapper objectMapper = new ObjectMapper();
 
@@ -264,9 +299,27 @@ class UserDifyControllerTest {
       FakeRoleKnowledgeBaseService roleKnowledgeBaseService,
       FakeKnowledgeBaseService knowledgeBaseService,
       OutboundMaterialDecisionService decisionService) {
+    return controller(
+        objectMapper,
+        difyClient,
+        role,
+        roleKnowledgeBaseService,
+        knowledgeBaseService,
+        decisionService,
+        null);
+  }
+
+  private static UserDifyController controller(
+      ObjectMapper objectMapper,
+      RecordingDifyClient difyClient,
+      RoleEntity role,
+      FakeRoleKnowledgeBaseService roleKnowledgeBaseService,
+      FakeKnowledgeBaseService knowledgeBaseService,
+      OutboundMaterialDecisionService decisionService,
+      SmartSalesDifyContextService salesDifyContextService) {
     return new UserDifyController(
         difyClient,
-        new DifyContactConversationMappingService(null, Clock.systemDefaultZone()),
+        new FakeDifyContactConversationMappingService(),
         new FakeRoleService(role, roleKnowledgeBaseService),
         roleKnowledgeBaseService,
         knowledgeBaseService,
@@ -275,6 +328,7 @@ class UserDifyControllerTest {
         null,
         null,
         decisionService,
+        salesDifyContextService,
         new DifyProperties(),
         objectMapper);
   }
@@ -312,6 +366,7 @@ class UserDifyControllerTest {
     String answer = "ok";
     String rawJson = "{\"answer\":\"ok\"}";
     String assistantMode;
+    String requestBodyJson;
 
     RecordingDifyClient(ObjectMapper objectMapper) {
       super(new DifyProperties(), objectMapper);
@@ -325,13 +380,33 @@ class UserDifyControllerTest {
 
     @Override
     public DifyChatResult chatMessages(String requestBodyJson) {
+      this.requestBodyJson = requestBodyJson;
       return new DifyChatResult(rawJson, "conv-1", answer);
     }
 
     @Override
     public DifyChatResult chatMessages(String requestBodyJson, String assistantMode) {
       this.assistantMode = assistantMode;
+      this.requestBodyJson = requestBodyJson;
       return new DifyChatResult(rawJson, "conv-1", answer);
+    }
+  }
+
+  private static class FakeSmartSalesDifyContextService extends SmartSalesDifyContextService {
+    private final SalesDifyContext context;
+    Long ownerUserId;
+    String contactKey;
+
+    FakeSmartSalesDifyContextService(SalesDifyContext context) {
+      super(null, null);
+      this.context = context;
+    }
+
+    @Override
+    public SalesDifyContext buildContext(Long ownerUserId, String contactKey) {
+      this.ownerUserId = ownerUserId;
+      this.contactKey = contactKey;
+      return context;
     }
   }
 
@@ -361,6 +436,21 @@ class UserDifyControllerTest {
   private static class FakeOutboundMaterialService extends OutboundMaterialService {
     FakeOutboundMaterialService() {
       super(null, "uploads/materials");
+    }
+  }
+
+  private static class FakeDifyContactConversationMappingService extends DifyContactConversationMappingService {
+    FakeDifyContactConversationMappingService() {
+      super(null, Clock.systemDefaultZone());
+    }
+
+    @Override
+    public String getConversationId(long userId, long roleId, String wechatContact) {
+      return null;
+    }
+
+    @Override
+    public void upsertConversationId(long userId, long roleId, String wechatContact, String conversationId) {
     }
   }
 

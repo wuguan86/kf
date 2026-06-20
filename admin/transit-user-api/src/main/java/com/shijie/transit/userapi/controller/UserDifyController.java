@@ -24,6 +24,7 @@ import com.shijie.transit.userapi.service.SessionHistoryService;
 import com.shijie.transit.userapi.service.MembershipEntitlementService;
 import com.shijie.transit.userapi.service.MembershipQueryService;
 import com.shijie.transit.userapi.service.OutboundMaterialDecisionService;
+import com.shijie.transit.userapi.service.SmartSalesDifyContextService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -75,6 +76,7 @@ public class UserDifyController {
     private final MembershipEntitlementService membershipEntitlementService;
     private final MembershipQueryService membershipQueryService;
     private final OutboundMaterialDecisionService outboundMaterialDecisionService;
+    private final SmartSalesDifyContextService smartSalesDifyContextService;
     private final DifyProperties difyProperties;
     private final ObjectMapper objectMapper;
 
@@ -89,6 +91,7 @@ public class UserDifyController {
             MembershipEntitlementService membershipEntitlementService,
             MembershipQueryService membershipQueryService,
             OutboundMaterialDecisionService outboundMaterialDecisionService,
+            SmartSalesDifyContextService smartSalesDifyContextService,
             DifyProperties difyProperties,
             ObjectMapper objectMapper) {
         this.difyClient = difyClient;
@@ -101,6 +104,7 @@ public class UserDifyController {
         this.membershipEntitlementService = membershipEntitlementService;
         this.membershipQueryService = membershipQueryService;
         this.outboundMaterialDecisionService = outboundMaterialDecisionService;
+        this.smartSalesDifyContextService = smartSalesDifyContextService;
         this.difyProperties = difyProperties;
         this.objectMapper = objectMapper;
     }
@@ -135,6 +139,7 @@ public class UserDifyController {
             sceneType = "GROUP";
         }
         String sessionKey = resolveSessionKey(request.roleId(), request.wechatContact());
+        addSalesContextToInputs(inputs, principal.subjectId(), sessionKey, assistantMode);
         int memoryRounds = resolveMemoryRounds(principal.subjectId(), sceneType);
         addHistoryToInputs(inputs, principal.subjectId(), request.roleId(), sceneType, sessionKey, memoryRounds);
         sessionHistoryService.appendMessage(
@@ -358,6 +363,7 @@ public class UserDifyController {
                     inputs.put("user_custom_role", roleContent);
                 }
                 int memoryRounds = resolveMemoryRounds(principal.subjectId(), sceneType);
+                addSalesContextToInputs(inputs, principal.subjectId(), sessionKey, assistantMode);
                 addHistoryToInputs(inputs, principal.subjectId(), request.roleId(), sceneType, sessionKey, memoryRounds);
                 sessionHistoryService.appendMessage(
                         principal.subjectId(), request.roleId(), sceneType, sessionKey, "USER", request.message());
@@ -695,6 +701,16 @@ public class UserDifyController {
             }
         }
         inputs.put("history", sb.toString());
+    }
+
+    private void addSalesContextToInputs(ObjectNode inputs, Long userId, String sessionKey, String assistantMode) {
+        if (!DifyClient.ASSISTANT_MODE_SALES.equals(assistantMode) || smartSalesDifyContextService == null) {
+            return;
+        }
+        SmartSalesDifyContextService.SalesDifyContext salesContext =
+                smartSalesDifyContextService.buildContext(userId, sessionKey);
+        inputs.put("sales_stage", salesContext.salesStage() == null ? "" : salesContext.salesStage());
+        inputs.put("customer_profile", salesContext.customerProfile() == null ? "" : salesContext.customerProfile());
     }
 
     private int resolveMemoryRounds(Long userId, String sceneType) {
