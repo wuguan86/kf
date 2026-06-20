@@ -1074,6 +1074,7 @@ function AssistantPage(props: Props): JSX.Element {
             wechatContact: sessionKey,
             wechatContactDisplayName: contact,
             roomType,
+            assistantMode: assistantModeRef.current,
             ...(requestImageDataUrl ? { imageDataUrl: requestImageDataUrl } : {})
           }),
           signal: currentAbortController.signal

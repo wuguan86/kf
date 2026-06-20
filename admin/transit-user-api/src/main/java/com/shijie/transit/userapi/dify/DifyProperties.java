@@ -6,6 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class DifyProperties {
   private String baseUrl;
   private String chatApiKey;
+  private String salesChatApiKey;
   private String datasetApiKey;
   private String commentWorkflowApiKey;
   private String intentWorkflowApiKey;
@@ -30,6 +31,14 @@ public class DifyProperties {
 
   public void setChatApiKey(String chatApiKey) {
     this.chatApiKey = chatApiKey;
+  }
+
+  public String getSalesChatApiKey() {
+    return salesChatApiKey;
+  }
+
+  public void setSalesChatApiKey(String salesChatApiKey) {
+    this.salesChatApiKey = salesChatApiKey;
   }
 
   public String getDatasetApiKey() {

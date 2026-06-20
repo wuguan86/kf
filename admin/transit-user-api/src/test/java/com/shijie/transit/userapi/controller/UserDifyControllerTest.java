@@ -1,6 +1,7 @@
 package com.shijie.transit.userapi.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,6 +11,7 @@ import com.shijie.transit.common.db.entity.OutboundMaterialEntity;
 import com.shijie.transit.common.db.entity.RoleEntity;
 import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.web.Result;
+import com.shijie.transit.common.web.TransitException;
 import com.shijie.transit.userapi.dify.DifyClient;
 import com.shijie.transit.userapi.dify.DifyProperties;
 import com.shijie.transit.userapi.service.DifyContactConversationMappingService;
@@ -182,6 +184,79 @@ class UserDifyControllerTest {
     }
   }
 
+  @Test
+  void monitorChatPassesSalesAssistantModeToDifyClient() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+
+    UserDifyController controller = controller(
+        objectMapper,
+        difyClient,
+        salesRole(""),
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        null);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      controller.monitorChat(new UserDifyController.MonitorChatRequest(
+          10L, "hello", "", "", "", "", "", "", "sales"));
+
+      assertEquals("sales", difyClient.assistantMode);
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
+  void monitorChatRejectsSalesModeWithCustomerServiceRole() {
+    ObjectMapper objectMapper = new ObjectMapper();
+
+    UserDifyController controller = controller(
+        objectMapper,
+        new RecordingDifyClient(objectMapper),
+        role(""),
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        null);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      TransitException ex = assertThrows(TransitException.class, () -> controller.monitorChat(
+          new UserDifyController.MonitorChatRequest(10L, "hello", "", "", "", "", "", "", "sales")));
+
+      assertEquals("智能销售模式只能使用销售角色", ex.getMessage());
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
+  void monitorChatRejectsCustomerServiceModeWithSalesRole() {
+    ObjectMapper objectMapper = new ObjectMapper();
+
+    UserDifyController controller = controller(
+        objectMapper,
+        new RecordingDifyClient(objectMapper),
+        salesRole(""),
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        null);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      TransitException ex = assertThrows(TransitException.class, () -> controller.monitorChat(
+          new UserDifyController.MonitorChatRequest(10L, "hello", "", "", "", "", "", "", "customer_service")));
+
+      assertEquals("智能客服模式只能使用客服角色", ex.getMessage());
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
   private static UserDifyController controller(
       ObjectMapper objectMapper,
       RecordingDifyClient difyClient,
@@ -210,6 +285,13 @@ class UserDifyControllerTest {
     role.setName("assistant");
     role.setContent("reply politely");
     role.setKnowledgeBaseId(knowledgeBaseId);
+    role.setRoleType("CUSTOMER_SERVICE");
+    return role;
+  }
+
+  private static RoleEntity salesRole(String knowledgeBaseId) {
+    RoleEntity role = role(knowledgeBaseId);
+    role.setRoleType("SALES");
     return role;
   }
 
@@ -229,6 +311,7 @@ class UserDifyControllerTest {
     int retrieveCount;
     String answer = "ok";
     String rawJson = "{\"answer\":\"ok\"}";
+    String assistantMode;
 
     RecordingDifyClient(ObjectMapper objectMapper) {
       super(new DifyProperties(), objectMapper);
@@ -242,6 +325,12 @@ class UserDifyControllerTest {
 
     @Override
     public DifyChatResult chatMessages(String requestBodyJson) {
+      return new DifyChatResult(rawJson, "conv-1", answer);
+    }
+
+    @Override
+    public DifyChatResult chatMessages(String requestBodyJson, String assistantMode) {
+      this.assistantMode = assistantMode;
       return new DifyChatResult(rawJson, "conv-1", answer);
     }
   }

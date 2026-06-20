@@ -36,6 +36,8 @@ import org.springframework.web.multipart.MultipartFile;
 @Component
 public class DifyClient {
   private static final Logger log = LoggerFactory.getLogger(DifyClient.class);
+  public static final String ASSISTANT_MODE_CUSTOMER_SERVICE = "customer_service";
+  public static final String ASSISTANT_MODE_SALES = "sales";
   private final DifyProperties properties;
   private final ObjectMapper objectMapper;
 
@@ -45,7 +47,12 @@ public class DifyClient {
   }
 
   public DifyChatResult chatMessages(String requestBodyJson) {
+    return chatMessages(requestBodyJson, ASSISTANT_MODE_CUSTOMER_SERVICE);
+  }
+
+  public DifyChatResult chatMessages(String requestBodyJson, String assistantMode) {
     ChatRequestPayload chatRequestPayload = normalizeChatRequestPayload(requestBodyJson);
+    String normalizedAssistantMode = normalizeAssistantMode(assistantMode);
     if (chatRequestPayload.responseModeAdjusted()) {
       log.warn("Dify chatMessages 检测到 response_mode={}，当前 Chatflow 场景自动切换为 streaming",
           chatRequestPayload.originalResponseMode());
@@ -56,19 +63,20 @@ public class DifyClient {
         containsFiles(chatRequestPayload.requestBodyJson()),
         containsConversationId(chatRequestPayload.requestBodyJson()));
     if (chatRequestPayload.streaming()) {
-      return chatMessagesByStreaming(chatRequestPayload.requestBodyJson());
+      return chatMessagesByStreaming(chatRequestPayload.requestBodyJson(), normalizedAssistantMode);
     }
-    return chatMessagesByBlocking(chatRequestPayload.requestBodyJson());
+    return chatMessagesByBlocking(chatRequestPayload.requestBodyJson(), normalizedAssistantMode);
   }
 
-  private DifyChatResult chatMessagesByBlocking(String requestBodyJson) {
+  private DifyChatResult chatMessagesByBlocking(String requestBodyJson, String assistantMode) {
     String requestUrl = buildChatRequestUrl();
-    String maskedHeader = "Authorization=Bearer " + maskToken(properties.getChatApiKey()) + ", Content-Type=application/json";
+    String apiKey = resolveChatApiKey(assistantMode);
+    String maskedHeader = "Authorization=Bearer " + maskToken(apiKey) + ", Content-Type=application/json";
     long startedAt = System.currentTimeMillis();
     try {
       log.info("Dify chatMessages 发起请求 url={} 请求头={} 请求体={}",
           requestUrl, maskedHeader, abbreviate(requestBodyJson, 6000));
-      ResponseEntity<String> responseEntity = restClientForChat().post()
+      ResponseEntity<String> responseEntity = restClientForChat(assistantMode).post()
           .uri("/v1/chat-messages")
           .contentType(MediaType.APPLICATION_JSON)
           .body(requestBodyJson)
@@ -114,15 +122,12 @@ public class DifyClient {
     }
   }
 
-  private DifyChatResult chatMessagesByStreaming(String requestBodyJson) {
+  private DifyChatResult chatMessagesByStreaming(String requestBodyJson, String assistantMode) {
     String requestUrl = buildChatRequestUrl();
-    String maskedHeader = "Authorization=Bearer " + maskToken(properties.getChatApiKey()) + ", Content-Type=application/json";
+    String apiKey = resolveChatApiKey(assistantMode);
+    String maskedHeader = "Authorization=Bearer " + maskToken(apiKey) + ", Content-Type=application/json";
     long startedAt = System.currentTimeMillis();
     try {
-      String apiKey = properties.getChatApiKey();
-      if (!StringUtils.hasText(apiKey)) {
-        throw new TransitException(ErrorCode.UNAUTHORIZED, "DIFY_CHAT_API_KEY 未配置");
-      }
       log.info("Dify chatMessages 发起请求 url={} 请求头={} 请求体={}",
           requestUrl, maskedHeader, abbreviate(requestBodyJson, 6000));
       HttpRequest request = HttpRequest.newBuilder()
@@ -347,6 +352,10 @@ public class DifyClient {
   }
 
   public String uploadChatFile(String user, String filename, String mimeType, byte[] bytes) {
+    return uploadChatFile(user, filename, mimeType, bytes, ASSISTANT_MODE_CUSTOMER_SERVICE);
+  }
+
+  public String uploadChatFile(String user, String filename, String mimeType, byte[] bytes, String assistantMode) {
     MultiValueMap<String, Object> multipartBody = new LinkedMultiValueMap<>();
     multipartBody.add("user", user);
     ByteArrayResource fileResource = new ByteArrayResource(bytes) {
@@ -361,9 +370,10 @@ public class DifyClient {
     }
     multipartBody.add("file", new HttpEntity<>(fileResource, fileHeaders));
     try {
-      log.info("Dify uploadChatFile user={} fileName={} mimeType={} size={}",
-          user, filename, mimeType, bytes == null ? 0 : bytes.length);
-      String response = restClientForChat().post()
+      String normalizedAssistantMode = normalizeAssistantMode(assistantMode);
+      log.info("Dify uploadChatFile assistantMode={} user={} fileName={} mimeType={} size={}",
+          normalizedAssistantMode, user, filename, mimeType, bytes == null ? 0 : bytes.length);
+      String response = restClientForChat(normalizedAssistantMode).post()
           .uri("/v1/files/upload")
           .contentType(MediaType.MULTIPART_FORM_DATA)
           .body(multipartBody)
@@ -544,18 +554,40 @@ public class DifyClient {
   }
 
   private RestClient restClientForChat() {
+    return restClientForChat(ASSISTANT_MODE_CUSTOMER_SERVICE);
+  }
+
+  private RestClient restClientForChat(String assistantMode) {
     String baseUrl = properties.getBaseUrl();
-    String apiKey = properties.getChatApiKey();
+    String apiKey = resolveChatApiKey(assistantMode);
     if (!StringUtils.hasText(baseUrl)) {
       throw new TransitException(ErrorCode.INTERNAL_ERROR, "DIFY_BASE_URL 未配置");
-    }
-    if (!StringUtils.hasText(apiKey)) {
-      throw new TransitException(ErrorCode.UNAUTHORIZED, "DIFY_CHAT_API_KEY 未配置");
     }
     return RestClient.builder()
         .baseUrl(baseUrl)
         .defaultHeader("Authorization", "Bearer " + apiKey)
         .build();
+  }
+
+  String resolveChatApiKey(String assistantMode) {
+    String normalizedAssistantMode = normalizeAssistantMode(assistantMode);
+    String apiKey = ASSISTANT_MODE_SALES.equals(normalizedAssistantMode)
+        ? properties.getSalesChatApiKey()
+        : properties.getChatApiKey();
+    if (!StringUtils.hasText(apiKey)) {
+      String configName = ASSISTANT_MODE_SALES.equals(normalizedAssistantMode)
+          ? "DIFY_SALES_CHAT_API_KEY"
+          : "DIFY_CHAT_API_KEY";
+      throw new TransitException(ErrorCode.UNAUTHORIZED, configName + " 未配置");
+    }
+    return apiKey.trim();
+  }
+
+  private String normalizeAssistantMode(String assistantMode) {
+    String normalized = StringUtils.hasText(assistantMode)
+        ? assistantMode.trim().toLowerCase()
+        : ASSISTANT_MODE_CUSTOMER_SERVICE;
+    return ASSISTANT_MODE_SALES.equals(normalized) ? ASSISTANT_MODE_SALES : ASSISTANT_MODE_CUSTOMER_SERVICE;
   }
 
   private RestClient restClientForDataset() {

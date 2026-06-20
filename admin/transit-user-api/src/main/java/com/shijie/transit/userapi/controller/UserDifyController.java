@@ -112,6 +112,8 @@ public class UserDifyController {
             return Result.success(objectMapper.createObjectNode());
         }
         RoleEntity role = roleService.getById(principal.subjectId(), request.roleId());
+        String assistantMode = resolveAssistantMode(request);
+        validateRoleMatchesAssistantMode(role, assistantMode);
         List<String> datasetIds = resolveRoleDatasetIds(principal.subjectId(), role);
         List<String> retrieveResults = retrieveFromDatasets(datasetIds, request.message());
         String context = buildContextFromRetrieve(retrieveResults);
@@ -150,7 +152,7 @@ public class UserDifyController {
         }
 
         DifyClient.DifyChatResult result = executeChatWithImageFallback(
-                payload, principal.subjectId(), request.imageDataUrl(), true, "monitor-chat-" + principal.subjectId());
+                payload, principal.subjectId(), request.imageDataUrl(), true, "monitor-chat-" + principal.subjectId(), assistantMode);
         if (StringUtils.hasText(result.conversationId()) && StringUtils.hasText(request.wechatContact())) {
             contactConversationMappingService.upsertConversationId(
                     principal.subjectId(), request.roleId(), request.wechatContact(), result.conversationId());
@@ -218,6 +220,8 @@ public class UserDifyController {
                 }
 
                 RoleEntity role = roleService.getById(principal.subjectId(), request.roleId());
+                String assistantMode = resolveAssistantMode(request);
+                validateRoleMatchesAssistantMode(role, assistantMode);
                 String question = request.message().length() > 20 ? request.message().substring(0, 20) + "..." : request.message();
                 String contactName = resolveContactDisplayName(request);
                 emitter.send(SseEmitter.event().data(new StepMsg("INTENT",
@@ -376,7 +380,7 @@ public class UserDifyController {
                         StringUtils.hasText(conversationId),
                         StringUtils.hasText(request.imageDataUrl()));
                 DifyClient.DifyChatResult result = waitForChatResultWithHeartbeat(
-                        emitter, payload, principal.subjectId(), request.imageDataUrl(), true, streamTraceId);
+                        emitter, payload, principal.subjectId(), request.imageDataUrl(), true, streamTraceId, assistantMode);
                 String channel = resolveWechatChannel(request);
                 ReplyPlan replyPlan = resolveReplyPlan(result.answer(), principal.subjectId(), channel);
                 if (replyPlan.attachments().isEmpty() && outboundMaterialDecisionService != null) {
@@ -857,8 +861,28 @@ public class UserDifyController {
         return "personal";
     }
 
+    private String resolveAssistantMode(MonitorChatRequest request) {
+        String mode = request == null ? null : request.assistantMode();
+        String normalized = StringUtils.hasText(mode)
+                ? mode.trim().toLowerCase(Locale.ROOT)
+                : DifyClient.ASSISTANT_MODE_CUSTOMER_SERVICE;
+        return DifyClient.ASSISTANT_MODE_SALES.equals(normalized)
+                ? DifyClient.ASSISTANT_MODE_SALES
+                : DifyClient.ASSISTANT_MODE_CUSTOMER_SERVICE;
+    }
+
+    private void validateRoleMatchesAssistantMode(RoleEntity role, String assistantMode) {
+        String roleType = role != null && "SALES".equalsIgnoreCase(role.getRoleType()) ? "SALES" : "CUSTOMER_SERVICE";
+        if (DifyClient.ASSISTANT_MODE_SALES.equals(assistantMode) && !"SALES".equals(roleType)) {
+            throw new TransitException(ErrorCode.BAD_REQUEST, "智能销售模式只能使用销售角色");
+        }
+        if (DifyClient.ASSISTANT_MODE_CUSTOMER_SERVICE.equals(assistantMode) && "SALES".equals(roleType)) {
+            throw new TransitException(ErrorCode.BAD_REQUEST, "智能客服模式只能使用客服角色");
+        }
+    }
+
     private DifyClient.DifyChatResult executeChatWithImageFallback(
-            ObjectNode payload, Long userId, String imageDataUrl, boolean allowConversationFallback, String traceId) {
+            ObjectNode payload, Long userId, String imageDataUrl, boolean allowConversationFallback, String traceId, String assistantMode) {
         ImagePayload imagePayload = parseImagePayload(imageDataUrl);
         String responseMode = payload.path("response_mode").asText("");
         boolean preferLocalFileFirst = imagePayload != null && "streaming".equalsIgnoreCase(responseMode);
@@ -874,7 +898,7 @@ public class UserDifyController {
                     preferLocalFileFirst,
                     payload.hasNonNull("conversation_id"));
             if (preferLocalFileFirst) {
-                attachLocalFile(payload, userId, imagePayload, traceId);
+                attachLocalFile(payload, userId, imagePayload, traceId, assistantMode);
                 log.info("图片消息使用 local_file 首次尝试 traceId={} reason=chatflow_streaming", traceId);
             } else {
                 attachBase64File(payload, imagePayload);
@@ -893,7 +917,7 @@ public class UserDifyController {
                     payload.hasNonNull("conversation_id"),
                     strippedConversationId);
             try {
-                DifyClient.DifyChatResult result = difyClient.chatMessages(payload.toString());
+                DifyClient.DifyChatResult result = difyClient.chatMessages(payload.toString(), assistantMode);
                 if (imagePayload != null) {
                     log.info("图片消息调用 Dify 成功 traceId={} attempt={} transferMethod={} conversationId={} answerLength={}",
                             traceId,
@@ -914,7 +938,7 @@ public class UserDifyController {
                 if (!switchedToLocalFile && imagePayload != null && isBase64TransferUnsupported(ex)) {
                     log.warn("Dify base64 图片调用失败，准备切换 local_file traceId={} msg={}", traceId, ex.getMessage());
                     try {
-                        attachLocalFile(payload, userId, imagePayload, traceId);
+                        attachLocalFile(payload, userId, imagePayload, traceId, assistantMode);
                     } catch (TransitException uploadEx) {
                         log.error("图片上传到 Dify 失败 traceId={} msg={}", traceId, uploadEx.getMessage(), uploadEx);
                         throw new TransitException(ErrorCode.BAD_REQUEST,
@@ -968,10 +992,10 @@ public class UserDifyController {
     }
 
     private DifyClient.DifyChatResult waitForChatResultWithHeartbeat(
-            SseEmitter emitter, ObjectNode payload, Long userId, String imageDataUrl, boolean allowConversationFallback, String traceId)
+            SseEmitter emitter, ObjectNode payload, Long userId, String imageDataUrl, boolean allowConversationFallback, String traceId, String assistantMode)
             throws Exception {
         CompletableFuture<DifyClient.DifyChatResult> future = CompletableFuture.supplyAsync(
-                () -> executeChatWithImageFallback(payload, userId, imageDataUrl, allowConversationFallback, traceId));
+                () -> executeChatWithImageFallback(payload, userId, imageDataUrl, allowConversationFallback, traceId, assistantMode));
         long startedAt = System.currentTimeMillis();
         int heartbeatCount = 0;
         while (true) {
@@ -1060,9 +1084,9 @@ public class UserDifyController {
         payload.set("files", files);
     }
 
-    private void attachLocalFile(ObjectNode payload, Long userId, ImagePayload imagePayload, String traceId) {
+    private void attachLocalFile(ObjectNode payload, Long userId, ImagePayload imagePayload, String traceId, String assistantMode) {
         String uploadFileId = difyClient.uploadChatFile(
-                "user-" + userId, imagePayload.fileName(), imagePayload.mimeType(), imagePayload.bytes());
+                "user-" + userId, imagePayload.fileName(), imagePayload.mimeType(), imagePayload.bytes(), assistantMode);
         log.info("图片已上传到 Dify traceId={} uploadFileId={} fileName={} mimeType={} byteSize={}",
                 traceId,
                 uploadFileId,
@@ -1100,7 +1124,19 @@ public class UserDifyController {
             String wechatContact,
             String wechatContactDisplayName,
             String roomType,
-            String imageDataUrl) {
+            String imageDataUrl,
+            String assistantMode) {
+        public MonitorChatRequest(
+                Long roleId,
+                String message,
+                String role,
+                String conversationId,
+                String wechatContact,
+                String wechatContactDisplayName,
+                String roomType,
+                String imageDataUrl) {
+            this(roleId, message, role, conversationId, wechatContact, wechatContactDisplayName, roomType, imageDataUrl, null);
+        }
     }
 
     public record StepMsg(String step, String content) {
