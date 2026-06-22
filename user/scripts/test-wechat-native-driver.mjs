@@ -105,7 +105,10 @@ function loadNativeDriver(mocks = {}) {
       return { captureWeChatWindow: mocks.captureWeChatWindow }
     }
     if (id === './snapshotDiff') {
-      return { comparePngSnapshots: mocks.comparePngSnapshots }
+      return {
+        comparePngSnapshots: mocks.comparePngSnapshots,
+        comparePngSnapshotRegion: mocks.comparePngSnapshotRegion || mocks.comparePngSnapshots
+      }
     }
     if (id === './visionClient') {
       return {
@@ -1449,7 +1452,41 @@ async function testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMe
   assert.equal(result.messages[0].trigger_reply, true)
 }
 
-async function testMinorCurrentChatChangeStillTriggersVisionParsing() {
+async function testLeftListOnlyChangeDoesNotTriggerVisionParsing() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=list-change',
+      png: Buffer.from(`left-list-change-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-left-list-change', changedRatio: 0.03 }),
+    comparePngSnapshotRegion: () => ({ changed: false, digest: 'digest-chat-region-unchanged', changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'left-list-change-customer',
+        messages: [{ content: 'should not parse', isSelf: false, uiId: `left-list-${parseCount}` }],
+        snapshotDigest: `digest-left-list-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.equal(parseCount, 0)
+  assert.deepEqual(result.messages, [])
+}
+
+async function testCurrentChatRegionChangeStillTriggersVisionParsing() {
   let parseCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
     findWeChatWindow: async () => testWindow,
@@ -1460,6 +1497,7 @@ async function testMinorCurrentChatChangeStillTriggersVisionParsing() {
       height: 700
     }),
     comparePngSnapshots: () => ({ changed: false, digest: `digest-minor-${parseCount}`, changedRatio: 0.004 }),
+    comparePngSnapshotRegion: () => ({ changed: true, digest: `digest-chat-region-${parseCount}`, changedRatio: 0.004 }),
     parseWeChatSnapshotWithVision: async () => {
       parseCount += 1
       return {
@@ -1482,6 +1520,53 @@ async function testMinorCurrentChatChangeStillTriggersVisionParsing() {
   assert.equal(parseCount, 1)
   assert.equal(result.messages.length, 1)
   assert.equal(result.messages[0].content, 'short new text')
+}
+
+async function testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged() {
+  const originalDateNow = Date.now
+  let nowMs = 1_800_010_000_000
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=retry-cooldown',
+      png: Buffer.from(`retry-cooldown-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({
+      changed: parseCount === 0,
+      digest: `digest-retry-cooldown-${parseCount}`,
+      changedRatio: parseCount === 0 ? 1 : 0
+    }),
+    comparePngSnapshotRegion: () => ({
+      changed: parseCount === 0,
+      digest: `digest-retry-cooldown-region-${parseCount}`,
+      changedRatio: parseCount === 0 ? 1 : 0
+    }),
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      throw new Error('vision backend unavailable')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  try {
+    Date.now = () => nowMs
+    await driver.start()
+    const firstResult = await driver.poll()
+    nowMs += 2_000
+    driver.lastPollAt = 0
+    const secondResult = await driver.poll()
+
+    assert.deepEqual(firstResult.messages, [])
+    assert.deepEqual(secondResult.messages, [])
+    assert.equal(parseCount, 1)
+  } finally {
+    Date.now = originalDateNow
+  }
 }
 
 async function testNativeSendReturnsSelfMessageForDisplay() {
@@ -4293,7 +4378,9 @@ await testNewNonLatestCustomerMessageIsDisplayedWithoutTriggeringReply()
 await testUnreadSwitchOnlyReportsLatestVisibleCustomerMessage()
 await testStartupCurrentChatShortHistoryIsNotReportedWhenNewMessageArrives()
 await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
-await testMinorCurrentChatChangeStillTriggersVisionParsing()
+await testLeftListOnlyChangeDoesNotTriggerVisionParsing()
+await testCurrentChatRegionChangeStillTriggersVisionParsing()
+await testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged()
 await testNativeSendReturnsSelfMessageForDisplay()
 await testNativeSendSendsTextThenAttachments()
 await testNativeSendAttachmentOnlyDoesNotRecordEmptyReply()

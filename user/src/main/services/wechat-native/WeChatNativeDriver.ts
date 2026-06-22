@@ -5,7 +5,7 @@ import { createHash } from 'crypto'
 import { recognizeUnreadConversationCandidate } from './conversationListRecognizer'
 import { clickConversationCandidate, clickMarketingPoint, clickMomentsEntry, closeMomentsWindow, exitConversationToList, pasteAndSendAttachments, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
 import { captureWeChatWindow } from './screenReader'
-import { comparePngSnapshots } from './snapshotDiff'
+import { comparePngSnapshotRegion, comparePngSnapshots, type SnapshotRegion } from './snapshotDiff'
 import { findUnreadConversationCandidates } from './unreadDetector'
 import { parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } from './visionClient'
 import { findWeChatMomentsWindow, findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
@@ -39,6 +39,7 @@ const SHORT_TEXT_MESSAGE_CONTENT_FINGERPRINT_TTL_MS = 90_000
 const RECENT_MESSAGE_CONTENT_FINGERPRINT_TTL_MS = 24 * 60 * 60_000
 const NATIVE_POLL_INTERVAL_MS = 1500
 const MAX_CONSECUTIVE_VISION_FAILURES = 3
+const VISION_FAILURE_RETRY_COOLDOWN_MS = 10_000
 const UNREAD_SWITCH_SETTLE_MIN_MS = 320
 const UNREAD_SWITCH_SETTLE_MAX_MS = 760
 const SKIPPED_CANDIDATE_TTL_MS = 60_000
@@ -49,6 +50,10 @@ const MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH = 8
 const SHORT_TEXT_REPLY_CONTENT_MAX_LENGTH = 6
 const MESSAGE_BOUNDS_FINGERPRINT_BUCKET_PX = 16
 const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
+const CURRENT_CHAT_REGION_CHANGE_RATIO = 0.015
+const CURRENT_CHAT_REGION_LEFT_RATIO = 0.38
+const CURRENT_CHAT_REGION_TOP_RATIO = 0.1
+const CURRENT_CHAT_REGION_BOTTOM_RATIO = 0.82
 const LOCKED_UNREAD_CONTACT_TTL_MS = 30_000
 const IMAGE_MESSAGE_CACHE_TTL_MS = 2 * 60_000
 const IMAGE_CROP_PADDING_PX = 6
@@ -240,6 +245,7 @@ export class WeChatNativeDriver {
   private visionRequestRunning = false
   private consecutiveVisionFailures = 0
   private lastVisionErrorMessage = ''
+  private nextVisionRetryAt = 0
   private runGeneration = 0
   private activeReplySessionKey = ''
   private pendingReplySessionKey = ''
@@ -297,6 +303,7 @@ export class WeChatNativeDriver {
     this.lastSnapshotDigest = ''
     this.consecutiveVisionFailures = 0
     this.lastVisionErrorMessage = ''
+    this.nextVisionRetryAt = 0
     this.activeReplySessionKey = ''
     this.pendingReplySessionKey = ''
     this.skippedConversationCandidates.clear()
@@ -333,6 +340,7 @@ export class WeChatNativeDriver {
     this.lastSnapshotDigest = ''
     this.visionRequestRunning = false
     this.lastVisionErrorMessage = ''
+    this.nextVisionRetryAt = 0
     this.activeReplySessionKey = ''
     this.pendingReplySessionKey = ''
     this.latestSnapshotScreenshot = null
@@ -2321,24 +2329,44 @@ export class WeChatNativeDriver {
     return !!fingerprints?.has(this.buildStartupBaselineCustomerTextFingerprint(contact, normalizedContent))
   }
 
+  private buildCurrentChatSnapshotRegion(screenshot: WeChatScreenshot): SnapshotRegion {
+    const left = Math.floor(screenshot.width * CURRENT_CHAT_REGION_LEFT_RATIO)
+    const top = Math.floor(screenshot.height * CURRENT_CHAT_REGION_TOP_RATIO)
+    const bottom = Math.floor(screenshot.height * CURRENT_CHAT_REGION_BOTTOM_RATIO)
+    return {
+      x: left,
+      y: top,
+      width: Math.max(1, screenshot.width - left),
+      height: Math.max(1, bottom - top)
+    }
+  }
+
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {
+    const previousScreenshotPng = this.lastScreenshotPng
     let screenshot = await captureWeChatWindow(window)
     window.scaleFactor = screenshot.scaleFactor
-    let diff = comparePngSnapshots(this.lastScreenshotPng, screenshot.png)
+    let diff = comparePngSnapshots(previousScreenshotPng, screenshot.png)
+    let currentChatDiff = comparePngSnapshotRegion(
+      previousScreenshotPng,
+      screenshot.png,
+      this.buildCurrentChatSnapshotRegion(screenshot),
+      CURRENT_CHAT_REGION_CHANGE_RATIO
+    )
     this.lastScreenshotPng = screenshot.png
     this.latestSnapshotFromUnreadSwitch = false
     const shouldRetryFailedVision = this.consecutiveVisionFailures > 0
-    const shouldParseMinorCurrentChatChange = !diff.changed &&
+    const shouldParseMinorCurrentChatChange = !currentChatDiff.changed &&
       !shouldRetryFailedVision &&
-      diff.changedRatio >= MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO
+      currentChatDiff.changedRatio >= MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO
+    const shouldParseCurrentChatChange = currentChatDiff.changed || shouldParseMinorCurrentChatChange
     let switchedUnreadConversation = false
     if (shouldParseMinorCurrentChatChange) {
       console.info('新方式检测到当前聊天轻微变化，按短消息气泡处理并请求视觉解析', {
-        digest: diff.digest,
-        changedRatio: diff.changedRatio
+        digest: currentChatDiff.digest,
+        changedRatio: currentChatDiff.changedRatio
       })
     }
-    if (!diff.changed && !shouldParseMinorCurrentChatChange && !shouldRetryFailedVision) {
+    if (!shouldParseCurrentChatChange) {
       const unreadCandidates = findUnreadConversationCandidates(screenshot, window, this.channel)
       this.cleanupStartupUnreadCandidateBaseline(unreadCandidates)
       const candidate = unreadCandidates.find((item) => {
@@ -2378,29 +2406,48 @@ export class WeChatNativeDriver {
               screenshot = await captureWeChatWindow(window)
               window.scaleFactor = screenshot.scaleFactor
               diff = comparePngSnapshots(previousPng, screenshot.png)
+              currentChatDiff = comparePngSnapshotRegion(
+                previousPng,
+                screenshot.png,
+                this.buildCurrentChatSnapshotRegion(screenshot),
+                CURRENT_CHAT_REGION_CHANGE_RATIO
+              )
               this.lastScreenshotPng = screenshot.png
               console.info('新方式已切换未读会话并重新截图', {
                 candidateId: candidate.id,
                 settleMs,
-                changedRatio: diff.changedRatio
+                changedRatio: diff.changedRatio,
+                currentChatChangedRatio: currentChatDiff.changedRatio
               })
             }
           }
         }
       }
     }
-    if (!diff.changed && !shouldParseMinorCurrentChatChange && !shouldRetryFailedVision && !switchedUnreadConversation) {
+    if (!shouldParseCurrentChatChange && !shouldRetryFailedVision && !switchedUnreadConversation) {
       console.info('新方式截图无明显变化，本轮不请求视觉模型', {
         digest: diff.digest,
-        changedRatio: diff.changedRatio
+        changedRatio: diff.changedRatio,
+        currentChatChangedRatio: currentChatDiff.changedRatio
       })
       this.lastSnapshotDigest = diff.digest
       return null
     }
-    if (!diff.changed && !shouldParseMinorCurrentChatChange && shouldRetryFailedVision) {
+    if (!shouldParseCurrentChatChange && shouldRetryFailedVision && !switchedUnreadConversation && Date.now() < this.nextVisionRetryAt) {
+      console.info('新方式上次视觉解析失败且当前聊天区无变化，等待冷却后再重试', {
+        digest: diff.digest,
+        failureCount: this.consecutiveVisionFailures,
+        nextVisionRetryAt: this.nextVisionRetryAt,
+        currentChatChangedRatio: currentChatDiff.changedRatio
+      })
+      this.lastSnapshotDigest = diff.digest
+      return null
+    }
+    if (!shouldParseCurrentChatChange && shouldRetryFailedVision) {
       console.info('新方式上次视觉解析失败，本轮复用当前截图继续重试', {
         digest: diff.digest,
-        failureCount: this.consecutiveVisionFailures
+        failureCount: this.consecutiveVisionFailures,
+        currentChatChangedRatio: currentChatDiff.changedRatio
       })
     }
 
@@ -2419,9 +2466,11 @@ export class WeChatNativeDriver {
       this.lastSnapshotDigest = snapshot.snapshotDigest || diff.digest
       this.consecutiveVisionFailures = 0
       this.lastVisionErrorMessage = ''
+      this.nextVisionRetryAt = 0
       return guardedSnapshot
     } catch (error: any) {
       this.consecutiveVisionFailures += 1
+      this.nextVisionRetryAt = Date.now() + VISION_FAILURE_RETRY_COOLDOWN_MS
       const errorMessage = error?.message || String(error)
       this.lastVisionErrorMessage = this.consecutiveVisionFailures >= MAX_CONSECUTIVE_VISION_FAILURES
         ? `新方式视觉解析连续失败，请检查后端 Qwen-VL 配置或网络连接：${errorMessage}`

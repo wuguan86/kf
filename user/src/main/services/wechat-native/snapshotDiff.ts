@@ -11,11 +11,18 @@ export type SnapshotDiffResult = {
   changedRatio: number
 }
 
+export type SnapshotRegion = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export const calculateSnapshotDigest = (png: Buffer): string => {
   return createHash('sha256').update(png).digest('hex')
 }
 
-const compareBitmapSnapshots = (previous: Buffer, current: Buffer): number | null => {
+const compareBitmapSnapshots = (previous: Buffer, current: Buffer, region?: SnapshotRegion): number | null => {
   const previousImage = nativeImage.createFromBuffer(previous)
   const currentImage = nativeImage.createFromBuffer(current)
   const previousSize = previousImage.getSize()
@@ -36,15 +43,29 @@ const compareBitmapSnapshots = (previous: Buffer, current: Buffer): number | nul
     return null
   }
 
+  const startX = Math.max(0, Math.floor(region?.x || 0))
+  const startY = Math.max(0, Math.floor(region?.y || 0))
+  const endX = Math.min(previousSize.width, Math.ceil((region?.x || 0) + (region?.width || previousSize.width)))
+  const endY = Math.min(previousSize.height, Math.ceil((region?.y || 0) + (region?.height || previousSize.height)))
+  if (startX >= endX || startY >= endY) {
+    return null
+  }
+
   let total = 0
   let changed = 0
-  for (let index = 0; index < sampleLength; index += PIXEL_SAMPLE_STEP * 4) {
-    total += 1
-    const blueDiff = Math.abs(previousBitmap[index] - currentBitmap[index])
-    const greenDiff = Math.abs(previousBitmap[index + 1] - currentBitmap[index + 1])
-    const redDiff = Math.abs(previousBitmap[index + 2] - currentBitmap[index + 2])
-    if (Math.max(redDiff, greenDiff, blueDiff) > PIXEL_DIFF_THRESHOLD) {
-      changed += 1
+  for (let y = startY; y < endY; y += PIXEL_SAMPLE_STEP) {
+    for (let x = startX; x < endX; x += PIXEL_SAMPLE_STEP) {
+      const index = (y * previousSize.width + x) * 4
+      if (index + 2 >= sampleLength) {
+        continue
+      }
+      total += 1
+      const blueDiff = Math.abs(previousBitmap[index] - currentBitmap[index])
+      const greenDiff = Math.abs(previousBitmap[index + 1] - currentBitmap[index + 1])
+      const redDiff = Math.abs(previousBitmap[index + 2] - currentBitmap[index + 2])
+      if (Math.max(redDiff, greenDiff, blueDiff) > PIXEL_DIFF_THRESHOLD) {
+        changed += 1
+      }
     }
   }
   return total === 0 ? null : changed / total
@@ -61,6 +82,27 @@ export const comparePngSnapshots = (previous: Buffer | null, current: Buffer): S
   }
   return {
     changed: changedRatio >= CHANGE_RATIO_THRESHOLD,
+    digest,
+    changedRatio
+  }
+}
+
+export const comparePngSnapshotRegion = (
+  previous: Buffer | null,
+  current: Buffer,
+  region: SnapshotRegion,
+  changedRatioThreshold = CHANGE_RATIO_THRESHOLD
+): SnapshotDiffResult => {
+  const digest = calculateSnapshotDigest(current)
+  if (!previous || previous.length === 0) {
+    return { changed: true, digest, changedRatio: 1 }
+  }
+  const changedRatio = compareBitmapSnapshots(previous, current, region)
+  if (changedRatio === null) {
+    return { changed: true, digest, changedRatio: 1 }
+  }
+  return {
+    changed: changedRatio >= changedRatioThreshold,
     digest,
     changedRatio
   }
