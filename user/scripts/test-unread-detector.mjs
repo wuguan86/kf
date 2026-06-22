@@ -10,6 +10,17 @@ function createBitmap(width, height) {
   const bitmap = Buffer.alloc(width * height * 4, 255)
   return {
     bitmap,
+    fillRect(left, top, rectWidth, rectHeight, color) {
+      for (let y = top; y < top + rectHeight; y += 1) {
+        for (let x = left; x < left + rectWidth; x += 1) {
+          const index = (y * width + x) * 4
+          bitmap[index] = color.blue
+          bitmap[index + 1] = color.green
+          bitmap[index + 2] = color.red
+          bitmap[index + 3] = 255
+        }
+      }
+    },
     drawRedSquare(left, top, size) {
       for (let y = top; y < top + size; y += 1) {
         for (let x = left; x < left + size; x += 1) {
@@ -58,7 +69,7 @@ function testFindsUnreadRedDotInConversationList() {
   const width = 400
   const height = 300
   const image = createBitmap(width, height)
-  image.drawRedSquare(118, 72, 10)
+  image.drawRedSquare(53, 62, 10)
   const { findUnreadConversationCandidates } = loadUnreadDetector(width, height, image.bitmap)
 
   const candidates = findUnreadConversationCandidates(
@@ -68,8 +79,8 @@ function testFindsUnreadRedDotInConversationList() {
   )
 
   assert.equal(candidates.length, 1)
-  assert.equal(candidates[0].centerX, 256)
-  assert.equal(candidates[0].centerY, 174)
+  assert.equal(candidates[0].centerX, 126)
+  assert.equal(candidates[0].centerY, 154)
 }
 
 function testIgnoresRedDotOutsideConversationList() {
@@ -104,6 +115,41 @@ function testIgnoresLargeRedAvatarBlockInConversationList() {
   assert.deepEqual(candidates, [])
 }
 
+function testIgnoresSmallRedIconInsideAvatarArea() {
+  const width = 400
+  const height = 300
+  const image = createBitmap(width, height)
+  image.drawRedSquare(42, 72, 8)
+  const { findUnreadConversationCandidates } = loadUnreadDetector(width, height, image.bitmap)
+
+  const candidates = findUnreadConversationCandidates(
+    { dataUrl: '', png: Buffer.from('mock'), width, height },
+    { hwnd: 1, title: '微信', className: 'Weixin', processName: 'Weixin', x: 10, y: 20, width: 800, height: 600 },
+    'personal'
+  )
+
+  assert.deepEqual(candidates, [])
+}
+
+function testIgnoresRedIconInsideSelectedConversationRow() {
+  const width = 400
+  const height = 300
+  const image = createBitmap(width, height)
+  image.fillRect(30, 62, 120, 44, { red: 7, green: 193, blue: 96 })
+  image.drawRedSquare(118, 76, 8)
+  const { findUnreadConversationCandidates } = loadUnreadDetector(width, height, image.bitmap)
+
+  const candidates = findUnreadConversationCandidates(
+    { dataUrl: '', png: Buffer.from('mock'), width, height },
+    { hwnd: 1, title: '微信', className: 'Weixin', processName: 'Weixin', x: 10, y: 20, width: 800, height: 600 },
+    'personal'
+  )
+
+  assert.deepEqual(candidates, [])
+}
+
 testFindsUnreadRedDotInConversationList()
 testIgnoresRedDotOutsideConversationList()
 testIgnoresLargeRedAvatarBlockInConversationList()
+testIgnoresSmallRedIconInsideAvatarArea()
+testIgnoresRedIconInsideSelectedConversationRow()

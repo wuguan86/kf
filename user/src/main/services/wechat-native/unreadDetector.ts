@@ -19,6 +19,15 @@ const ENTERPRISE_LIST_LEFT_RATIO = 0.045
 const LIST_RIGHT_RATIO = 0.38
 const LIST_TOP_RATIO = 0.075
 const LIST_BOTTOM_RATIO = 0.92
+const PERSONAL_AVATAR_LEFT_RATIO = 0.085
+const PERSONAL_BADGE_MIN_X_RATIO = 0.12
+const PERSONAL_BADGE_MAX_X_RATIO = 0.18
+const ENTERPRISE_BADGE_MIN_X_RATIO = 0.1
+const ENTERPRISE_BADGE_MAX_X_RATIO = 0.22
+const SELECTED_ROW_SCAN_LEFT_PADDING_PX = 88
+const SELECTED_ROW_SCAN_RIGHT_PADDING_PX = 8
+const SELECTED_ROW_SCAN_VERTICAL_PADDING_PX = 22
+const SELECTED_ROW_MIN_GREEN_PIXELS = 80
 const RED_PIXEL_MIN_COUNT = 8
 const RED_CLUSTER_MAX_SIZE = 42
 const RED_CLUSTER_MIN_SIZE = 4
@@ -27,6 +36,14 @@ const RED_BADGE_MAX_AREA = 620
 
 const isUnreadRedPixel = (red: number, green: number, blue: number): boolean => {
   return red >= 170 && green <= 105 && blue <= 105 && red - Math.max(green, blue) >= 70
+}
+
+const isSelectedConversationGreenPixel = (red: number, green: number, blue: number): boolean => {
+  return green >= 155 &&
+    red <= 80 &&
+    blue <= 140 &&
+    green - red >= 70 &&
+    green - blue >= 35
 }
 
 const toBitmap = (screenshot: WeChatScreenshot): { bitmap: Buffer; size: BitmapSize } | null => {
@@ -60,6 +77,37 @@ const pushOrMergeCluster = (clusters: RedPixelCluster[], x: number, y: number, m
   nearbyCluster.count += 1
 }
 
+const isInsideSelectedConversationRow = (
+  bitmap: Buffer,
+  size: BitmapSize,
+  cluster: RedPixelCluster,
+  scaleFactor: number
+): boolean => {
+  const centerX = Math.round((cluster.minX + cluster.maxX) / 2)
+  const centerY = Math.round((cluster.minY + cluster.maxY) / 2)
+  const minX = Math.max(0, centerX - Math.round(SELECTED_ROW_SCAN_LEFT_PADDING_PX * scaleFactor))
+  const maxX = Math.min(size.width - 1, centerX + Math.round(SELECTED_ROW_SCAN_RIGHT_PADDING_PX * scaleFactor))
+  const minY = Math.max(0, centerY - Math.round(SELECTED_ROW_SCAN_VERTICAL_PADDING_PX * scaleFactor))
+  const maxY = Math.min(size.height - 1, centerY + Math.round(SELECTED_ROW_SCAN_VERTICAL_PADDING_PX * scaleFactor))
+  let greenPixels = 0
+  const minGreenPixels = Math.round(SELECTED_ROW_MIN_GREEN_PIXELS * scaleFactor * scaleFactor)
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const index = (y * size.width + x) * 4
+      const blue = bitmap[index]
+      const green = bitmap[index + 1]
+      const red = bitmap[index + 2]
+      if (isSelectedConversationGreenPixel(red, green, blue)) {
+        greenPixels += 1
+        if (greenPixels >= minGreenPixels) {
+          return true
+        }
+      }
+    }
+  }
+  return false
+}
+
 export const findUnreadConversationCandidates = (
   screenshot: WeChatScreenshot,
   window: WindowBounds,
@@ -74,8 +122,13 @@ export const findUnreadConversationCandidates = (
   // 截图实际像素与逻辑窗口坐标的缩放比，用于动态调整硬编码像素阈值
   const sf = screenshot.scaleFactor || 1
   const listLeftRatio = channel === 'enterprise' ? ENTERPRISE_LIST_LEFT_RATIO : PERSONAL_LIST_LEFT_RATIO
+  const unreadBadgeMinXRatio = channel === 'enterprise' ? ENTERPRISE_BADGE_MIN_X_RATIO : PERSONAL_BADGE_MIN_X_RATIO
+  const unreadBadgeMaxXRatio = channel === 'enterprise' ? ENTERPRISE_BADGE_MAX_X_RATIO : PERSONAL_BADGE_MAX_X_RATIO
   const minX = Math.max(0, Math.floor(size.width * listLeftRatio))
   const maxX = Math.min(size.width - 1, Math.floor(size.width * LIST_RIGHT_RATIO))
+  const minBadgeCenterX = Math.max(minX, Math.floor(size.width * unreadBadgeMinXRatio))
+  const maxBadgeCenterX = Math.min(maxX, Math.floor(size.width * unreadBadgeMaxXRatio))
+  const avatarLeftX = Math.floor(size.width * PERSONAL_AVATAR_LEFT_RATIO)
   const minY = Math.max(0, Math.floor(size.height * LIST_TOP_RATIO))
   const maxY = Math.min(size.height - 1, Math.floor(size.height * LIST_BOTTOM_RATIO))
   const redPixelMinCount = Math.round(RED_PIXEL_MIN_COUNT * sf)
@@ -118,6 +171,15 @@ export const findUnreadConversationCandidates = (
 
       const relativeCenterX = cluster.minX + width / 2
       const relativeCenterY = cluster.minY + height / 2
+      if (relativeCenterX < minBadgeCenterX || relativeCenterX > maxBadgeCenterX) {
+        return null
+      }
+      if (channel === 'personal' && cluster.minX < avatarLeftX) {
+        return null
+      }
+      if (isInsideSelectedConversationRow(bitmap, size, cluster, sf)) {
+        return null
+      }
       return {
         id: `unread-${index}-${Math.round(relativeCenterY)}`,
         x: Math.round(window.x + cluster.minX * scaleX),
