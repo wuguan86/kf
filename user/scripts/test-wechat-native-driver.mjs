@@ -1019,6 +1019,58 @@ async function testRepeatedCustomerMessageInSameVisionResultIsReportedOnce() {
   assert.equal(result.messages[0].trigger_reply, true)
 }
 
+async function testCustomerMessageCanTriggerAfterGeometryBecomesReliable() {
+  let parseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=customer-geometry-retry',
+      png: Buffer.from(`customer-geometry-retry-window-${parseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-customer-geometry-retry-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: 'geometry-retry-customer',
+        messages: [
+          {
+            content: '待久了会不舒服',
+            isSelf: false,
+            uiId: `geometry-retry-${parseCount}`,
+            bounds: parseCount === 1 ? undefined : { x: 120, y: 360, w: 118, h: 34 }
+          }
+        ],
+        snapshotDigest: `digest-customer-geometry-retry-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    nativeImage: {
+      createFromBuffer: () => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 900, height: 700 }),
+        toBitmap: () => Buffer.alloc(900 * 700 * 4, 255)
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  disableStartupBaselineForTest(driver)
+  driver.seenMessageFingerprints.add('existing-baseline')
+  const firstResult = await driver.poll()
+  driver.lastPollAt = 0
+  const secondResult = await driver.poll()
+
+  assert.deepEqual(firstResult.messages, [])
+  assert.equal(secondResult.messages.length, 1)
+  assert.equal(secondResult.messages[0].content, '待久了会不舒服')
+  assert.equal(secondResult.messages[0].trigger_reply, true)
+}
+
 async function testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow() {
   let parseCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -4370,6 +4422,7 @@ await testSpecialConversationNameFallbackExitsAfterOpen()
 await testCustomerServiceConversationNameFallbackExitsAfterOpen()
 await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
+await testCustomerMessageCanTriggerAfterGeometryBecomesReliable()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
 await testRepliedTextCustomerMessageDoesNotTriggerAfterShortTtlExpired()

@@ -429,7 +429,7 @@ export class WeChatNativeDriver {
     const snapshotSessionKey = this.buildSessionKey(snapshot.contact)
 
     const messages: NativeDriverMessage[] = []
-    const observedContentFingerprints = new Set<string>()
+    const handledContentFingerprints = new Set<string>()
     const currentSnapshotLatestFingerprintByContent = this.buildLatestFingerprintByContent(snapshot)
     let hasNewReplyTrigger = false
     this.cleanupRecentSentSelfReplyContents(Date.now())
@@ -440,7 +440,6 @@ export class WeChatNativeDriver {
       const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, parsedMessage.isSelf, parsedMessage.uiId)
       const contentFingerprint = this.buildParsedMessageContentFingerprint(snapshot.contact, parsedMessage)
       const customerReplyFingerprint = this.buildCustomerReplyFingerprint(snapshot.contact, parsedMessage)
-      observedContentFingerprints.add(contentFingerprint)
       if (currentSnapshotLatestFingerprintByContent.get(contentFingerprint) !== fingerprint) {
         this.seenMessageFingerprints.add(fingerprint)
         console.info('新方式识别到同一轮重复消息，已保留最新气泡并跳过较早重复项', {
@@ -473,6 +472,7 @@ export class WeChatNativeDriver {
           uiId: parsedMessage.uiId,
           bounds: parsedMessage.bounds
         })
+        handledContentFingerprints.add(contentFingerprint)
         continue
       }
       if (this.shouldSuppressStartupBaselineShortText(snapshot.contact, parsedMessage, isLatestVisibleCustomerMessage)) {
@@ -482,6 +482,7 @@ export class WeChatNativeDriver {
           uiId: parsedMessage.uiId,
           bounds: parsedMessage.bounds
         })
+        handledContentFingerprints.add(contentFingerprint)
         continue
       }
       if (!parsedMessage.isSelf && this.isRecentSentSelfReplyContent(snapshot.contact, parsedMessage.content)) {
@@ -500,6 +501,7 @@ export class WeChatNativeDriver {
         })
         if (!hadPreviousBaseline) {
           this.markStartupBaselineShortText(snapshot.contact, parsedMessage)
+          handledContentFingerprints.add(contentFingerprint)
         }
         continue
       }
@@ -525,6 +527,7 @@ export class WeChatNativeDriver {
           uiId: parsedMessage.uiId,
           type: parsedMessageType
         })
+        handledContentFingerprints.add(contentFingerprint)
         continue
       }
       const shouldDisplayCustomerMessage = hasReliableCustomerTriggerGeometry &&
@@ -546,6 +549,7 @@ export class WeChatNativeDriver {
           isSelf: parsedMessage.isSelf
         })
         this.markStartupBaselineShortText(snapshot.contact, parsedMessage)
+        handledContentFingerprints.add(contentFingerprint)
         continue
       }
 
@@ -559,6 +563,9 @@ export class WeChatNativeDriver {
           hasReliableCustomerTriggerGeometry,
           hasRepliedCustomerMessage
         })
+        if (hasRepliedCustomerMessage) {
+          handledContentFingerprints.add(contentFingerprint)
+        }
         continue
       }
 
@@ -591,8 +598,9 @@ export class WeChatNativeDriver {
         skip_auto_reply: snapshot.skipAutoReply,
         skip_reason: snapshot.skipReason
       })
+      handledContentFingerprints.add(contentFingerprint)
     }
-    for (const contentFingerprint of observedContentFingerprints) {
+    for (const contentFingerprint of handledContentFingerprints) {
       this.markRecentMessageContentFingerprint(contentFingerprint)
     }
 
