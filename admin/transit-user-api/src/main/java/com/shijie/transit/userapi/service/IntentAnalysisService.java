@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.shijie.transit.common.db.entity.CrmCustomerEntity;
 import com.shijie.transit.common.db.entity.IntentAnalysisLogEntity;
 import com.shijie.transit.common.db.entity.IntentDailyStatsEntity;
 import com.shijie.transit.common.db.entity.SystemConfigEntity;
@@ -13,6 +14,7 @@ import com.shijie.transit.common.mapper.SystemConfigMapper;
 import com.shijie.transit.common.tenant.TenantContext;
 import com.shijie.transit.userapi.dify.DifyClient;
 import com.shijie.transit.userapi.dify.DifyProperties;
+import com.shijie.transit.userapi.mapper.CrmCustomerMapper;
 import com.shijie.transit.userapi.mapper.IntentAnalysisLogMapper;
 import com.shijie.transit.userapi.mapper.IntentDailyStatsMapper;
 import com.shijie.transit.userapi.mapper.SessionMessageHistoryMapper;
@@ -47,6 +49,7 @@ public class IntentAnalysisService {
   private final IntentDailyStatsMapper intentDailyStatsMapper;
   private final UserIntentDailySnapshotMapper userIntentDailySnapshotMapper;
   private final SystemConfigMapper systemConfigMapper;
+  private final CrmCustomerMapper customerMapper;
   private final DifyClient difyClient;
   private final DifyProperties difyProperties;
   private final ObjectMapper objectMapper;
@@ -59,6 +62,7 @@ public class IntentAnalysisService {
       IntentDailyStatsMapper intentDailyStatsMapper,
       UserIntentDailySnapshotMapper userIntentDailySnapshotMapper,
       SystemConfigMapper systemConfigMapper,
+      CrmCustomerMapper customerMapper,
       DifyClient difyClient,
       DifyProperties difyProperties,
       ObjectMapper objectMapper,
@@ -69,6 +73,7 @@ public class IntentAnalysisService {
     this.intentDailyStatsMapper = intentDailyStatsMapper;
     this.userIntentDailySnapshotMapper = userIntentDailySnapshotMapper;
     this.systemConfigMapper = systemConfigMapper;
+    this.customerMapper = customerMapper;
     this.difyClient = difyClient;
     this.difyProperties = difyProperties;
     this.objectMapper = objectMapper;
@@ -164,6 +169,7 @@ public class IntentAnalysisService {
     } else {
       userIntentMapper.updateById(intent);
     }
+    persistStageSuggestion(tenantId, ownerUserId, contactKey, result);
 
     IntentAnalysisLogEntity logEntity = new IntentAnalysisLogEntity();
     logEntity.setTenantId(tenantId);
@@ -227,6 +233,38 @@ public class IntentAnalysisService {
             .last("limit 1"));
   }
 
+  private CrmCustomerEntity getCustomer(Long tenantId, Long ownerUserId, String contactKey) {
+    return customerMapper.selectOne(
+        new LambdaQueryWrapper<CrmCustomerEntity>()
+            .eq(CrmCustomerEntity::getTenantId, tenantId)
+            .eq(CrmCustomerEntity::getOwnerUserId, ownerUserId)
+            .eq(CrmCustomerEntity::getContactKey, contactKey)
+            .last("limit 1"));
+  }
+
+  private void persistStageSuggestion(
+      Long tenantId,
+      Long ownerUserId,
+      String contactKey,
+      IntentAnalysisSupport.AnalysisResult result) {
+    if (!StringUtils.hasText(result.stageSuggestion())) {
+      return;
+    }
+    CrmCustomerEntity customer = getCustomer(tenantId, ownerUserId, contactKey);
+    if (customer == null) {
+      log.info("跳过AI阶段建议写入：客户尚未建档 tenantId={} userId={} contactKey={} suggestion={}",
+          tenantId, ownerUserId, contactKey, result.stageSuggestion());
+      return;
+    }
+    customer.setAiStageSuggestion(result.stageSuggestion());
+    customer.setAiStageConfidence(result.stageConfidence());
+    customer.setAiStageReason(result.stageReason());
+    customer.setAiStageUpdatedAt(LocalDateTime.now(clock));
+    customerMapper.updateById(customer);
+    log.info("AI阶段建议已写入 tenantId={} userId={} contactKey={} suggestion={} confidence={}",
+        tenantId, ownerUserId, contactKey, result.stageSuggestion(), result.stageConfidence());
+  }
+
   private String runWorkflow(Long ownerUserId, String contactKey, Long maxMsgId, String currentContent, String currentContext) {
     String apiKey = difyProperties.getIntentWorkflowApiKey();
     if (!StringUtils.hasText(apiKey)) {
@@ -256,7 +294,7 @@ public class IntentAnalysisService {
     return difyClient.runWorkflow(apiKey, inputs, ownerUserId + ":" + contactKey);
   }
 
-  private IntentAnalysisSupport.AnalysisResult buildWorkflowResult(
+  IntentAnalysisSupport.AnalysisResult buildWorkflowResult(
       String workflowRaw,
       IntentAnalysisSupport.ScoringConfig config,
       String previousSummary) {
@@ -271,6 +309,12 @@ public class IntentAnalysisService {
     String latestEvent = IntentAnalysisSupport.normalizeEvent(readText(node, "event"));
     String reason = readText(node, "reason");
     String summary = readText(node, "summary");
+    String stageSuggestion = IntentAnalysisSupport.normalizeStageSuggestion(
+        firstText(node, "stage_suggestion", "stageSuggestion"));
+    Integer stageConfidence = stageSuggestion == null
+        ? null
+        : IntentAnalysisSupport.normalizeStageConfidence(readInt(node, "stage_confidence", "stageConfidence"));
+    String stageReason = stageSuggestion == null ? null : firstText(node, "stage_reason", "stageReason");
     if (!StringUtils.hasText(reason)) {
       reason = "工作流意向分析";
     }
@@ -295,7 +339,10 @@ public class IntentAnalysisService {
         intentLevel,
         reason,
         summary,
-        "WORKFLOW");
+        "WORKFLOW",
+        stageSuggestion,
+        stageConfidence,
+        stageReason);
   }
 
   private void refreshDailyStats(Long ownerUserId, boolean isNewUser, boolean becameHigh) {
@@ -494,6 +541,31 @@ public class IntentAnalysisService {
       }
     }
     return null;
+  }
+
+  private int readInt(JsonNode node, String... fields) {
+    if (node == null || fields == null) {
+      return 0;
+    }
+    for (String field : fields) {
+      JsonNode value = node.path(field);
+      if (value.isMissingNode() || value.isNull()) {
+        continue;
+      }
+      if (value.isNumber()) {
+        return value.asInt(0);
+      }
+      String text = value.asText(null);
+      if (!StringUtils.hasText(text)) {
+        continue;
+      }
+      try {
+        return Integer.parseInt(text.trim());
+      } catch (NumberFormatException ignored) {
+        return 0;
+      }
+    }
+    return 0;
   }
 
   private String defaultText(String value) {

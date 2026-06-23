@@ -58,6 +58,28 @@ final class IntentAnalysisSupport {
     return "none";
   }
 
+  static String normalizeStageSuggestion(String value) {
+    if (!StringUtils.hasText(value)) {
+      return null;
+    }
+    String trimmed = value.trim();
+    String key = trimmed.toUpperCase(Locale.ROOT);
+    if ("LEAD".equals(key) || "线索".equals(trimmed)) {
+      return "LEAD";
+    }
+    if ("FOLLOWING".equals(key) || "跟进中".equals(trimmed)) {
+      return "FOLLOWING";
+    }
+    if ("INTENDED".equals(key) || "明确意向".equals(trimmed)) {
+      return "INTENDED";
+    }
+    return null;
+  }
+
+  static int normalizeStageConfidence(int value) {
+    return Math.max(0, Math.min(100, value));
+  }
+
   static int toIntentLevel(int totalScore, int mediumThreshold, int highThreshold) {
     if (totalScore >= highThreshold) {
       return 3;
@@ -120,7 +142,10 @@ final class IntentAnalysisSupport {
       int intentLevel,
       String reason,
       String dailySummary,
-      String analysisSource) {
+      String analysisSource,
+      String stageSuggestion,
+      Integer stageConfidence,
+      String stageReason) {
     static AnalysisResult keywordHigh(String keyword, int highThreshold, String dailySummary) {
       int score = Math.max(highThreshold, 70);
       return new AnalysisResult(
@@ -136,7 +161,10 @@ final class IntentAnalysisSupport {
           3,
           "命中高意向关键词: " + keyword,
           dailySummary,
-          "KEYWORD");
+          "KEYWORD",
+          null,
+          null,
+          null);
     }
 
     static AnalysisResult keywordLow(String keyword, String dailySummary) {
@@ -153,7 +181,10 @@ final class IntentAnalysisSupport {
           1,
           "命中低意向关键词: " + keyword,
           dailySummary,
-          "KEYWORD");
+          "KEYWORD",
+          null,
+          null,
+          null);
     }
   }
 

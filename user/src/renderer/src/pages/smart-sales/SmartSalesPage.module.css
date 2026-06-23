@@ -367,6 +367,24 @@
   color: #3730a3;
 }
 
+.stageCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.stageSuggestionTag {
+  display: inline-flex;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 18px;
+  background: rgba(22, 119, 255, 0.08);
+  color: #1d39c4;
+  white-space: nowrap;
+}
+
 .starCell {
   cursor: pointer;
   font-size: 16px;

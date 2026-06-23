@@ -11,6 +11,19 @@ import {
 import CustomerProfileDetail from './CustomerProfileDetail'
 
 type TabKey = 'dashboard' | 'list'
+type CustomerListFilters = {
+  keyword: string
+  intentLevel: string
+  stage: string
+  starred: string
+}
+
+const EMPTY_CUSTOMER_LIST_FILTERS: CustomerListFilters = {
+  keyword: '',
+  intentLevel: '',
+  stage: '',
+  starred: ''
+}
 
 export default function SmartSalesPage(): JSX.Element {
   const [tab, setTab] = useState<TabKey>('dashboard')
@@ -206,21 +219,21 @@ function CustomerListTab({
   const [stage, setStage] = useState('')
   const [starred, setStarred] = useState('')
   // 用于触发实际查询的已应用条件
-  const [applied, setApplied] = useState({ keyword: '', intentLevel: '', stage: '', starred: '' })
+  const [applied, setApplied] = useState<CustomerListFilters>(EMPTY_CUSTOMER_LIST_FILTERS)
 
   useEffect(() => {
     loadList(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const loadList = async (page: number) => {
+  const loadList = async (page: number, filters = applied) => {
     setLoading(true)
     try {
       const params: any = { pageNo: page, pageSize }
-      if (applied.intentLevel) params.intentLevel = Number(applied.intentLevel)
-      if (applied.stage) params.stage = applied.stage
-      if (applied.starred === 'true') params.starred = true
-      if (applied.keyword.trim()) params.keyword = applied.keyword.trim()
+      if (filters.intentLevel) params.intentLevel = Number(filters.intentLevel)
+      if (filters.stage) params.stage = filters.stage
+      if (filters.starred === 'true') params.starred = true
+      if (filters.keyword.trim()) params.keyword = filters.keyword.trim()
       const data: CustomerListResponse = await smartSalesApi.listCustomers(params)
       setList(data.list || [])
       setTotal(data.total || 0)
@@ -234,8 +247,9 @@ function CustomerListTab({
   }
 
   const handleQuery = () => {
-    setApplied({ keyword, intentLevel, stage, starred })
-    loadList(1)
+    const nextApplied = { keyword, intentLevel, stage, starred }
+    setApplied(nextApplied)
+    loadList(1, nextApplied)
   }
 
   const handleReset = () => {
@@ -243,8 +257,9 @@ function CustomerListTab({
     setIntentLevel('')
     setStage('')
     setStarred('')
-    setApplied({ keyword: '', intentLevel: '', stage: '', starred: '' })
-    setTimeout(() => loadList(1), 0)
+    const nextApplied = { keyword: '', intentLevel: '', stage: '', starred: '' }
+    setApplied(nextApplied)
+    loadList(1, nextApplied)
   }
 
   const handleToggleStar = async (item: CustomerListItem, e: React.MouseEvent) => {
@@ -367,13 +382,20 @@ function CustomerListTab({
                     </span>
                   </td>
                   <td>
-                    {item.stage ? (
-                      <span className={styles.stageTag}>
-                        {stageLabel(item.stage)}
-                      </span>
-                    ) : (
-                      <span className={styles.unknownTag}>未建档</span>
-                    )}
+                    <div className={styles.stageCell}>
+                      {item.stage ? (
+                        <span className={styles.stageTag}>
+                          {stageLabel(item.stage)}
+                        </span>
+                      ) : (
+                        <span className={styles.unknownTag}>未建档</span>
+                      )}
+                      {item.aiStageSuggestion && item.aiStageSuggestion !== item.stage && (
+                        <span className={styles.stageSuggestionTag}>
+                          AI建议：{item.aiStageSuggestionLabel || stageLabel(item.aiStageSuggestion)}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td>
                     {item.tags && item.tags.length > 0 ? (

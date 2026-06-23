@@ -106,6 +106,11 @@ public class SmartSalesCustomerService {
             item.getPhone(),
             item.getSource(),
             item.getStage(),
+            item.getAiStageSuggestion(),
+            stageLabel(item.getAiStageSuggestion()),
+            item.getAiStageConfidence(),
+            item.getAiStageReason(),
+            item.getAiStageUpdatedAt(),
             item.getStarred(),
             item.getNextFollowUpAt(),
             item.getLastChatTime(),
@@ -165,6 +170,12 @@ public class SmartSalesCustomerService {
     Long tenantId = TenantContext.getTenantId();
     CrmCustomerEntity entity = customerAccess.ensureCustomer(tenantId, ownerUserId, contactKey.trim());
     entity.setStage(stage);
+    if (stage.equals(entity.getAiStageSuggestion())) {
+      entity.setAiStageSuggestion(null);
+      entity.setAiStageConfidence(null);
+      entity.setAiStageReason(null);
+      entity.setAiStageUpdatedAt(null);
+    }
     customerMapper.updateById(entity);
     log.info("智能销售阶段流转 tenantId={} userId={} contactKey={} stage={}",
         tenantId, ownerUserId, contactKey, stage);
@@ -220,6 +231,11 @@ public class SmartSalesCustomerService {
         customer == null ? null : customer.getPhone(),
         customer == null ? null : customer.getSource(),
         customer == null ? null : customer.getStage(),
+        customer == null ? null : customer.getAiStageSuggestion(),
+        stageLabel(customer == null ? null : customer.getAiStageSuggestion()),
+        customer == null ? null : customer.getAiStageConfidence(),
+        customer == null ? null : customer.getAiStageReason(),
+        customer == null ? null : customer.getAiStageUpdatedAt(),
         customer == null ? null : customer.getStarred(),
         customer == null ? null : customer.getNextFollowUpAt(),
         lastChatTime,
@@ -274,6 +290,13 @@ public class SmartSalesCustomerService {
       return customer.getRemarkName();
     }
     return contactKey;
+  }
+
+  private String stageLabel(String stage) {
+    if (!StringUtils.hasText(stage)) {
+      return null;
+    }
+    return SmartSalesConstants.STAGE_LABELS.getOrDefault(stage, stage);
   }
 
   private String asString(Object value) {

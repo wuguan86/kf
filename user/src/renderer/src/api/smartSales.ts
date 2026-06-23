@@ -45,6 +45,11 @@ export interface CustomerListItem {
   phone: string | null
   source: string | null
   stage: string | null
+  aiStageSuggestion: string | null
+  aiStageSuggestionLabel: string | null
+  aiStageConfidence: number | null
+  aiStageReason: string | null
+  aiStageUpdatedAt: string | null
   starred: number | null
   nextFollowUpAt: string | null
   lastChatTime: string | null
@@ -77,6 +82,11 @@ export interface CustomerProfile {
   phone: string | null
   source: string | null
   stage: string | null
+  aiStageSuggestion: string | null
+  aiStageSuggestionLabel: string | null
+  aiStageConfidence: number | null
+  aiStageReason: string | null
+  aiStageUpdatedAt: string | null
   starred: number | null
   nextFollowUpAt: string | null
   lastChatTime: string | null

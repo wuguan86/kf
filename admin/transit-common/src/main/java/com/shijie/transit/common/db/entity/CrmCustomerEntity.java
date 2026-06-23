@@ -33,6 +33,11 @@ public class CrmCustomerEntity extends BaseTenantEntity {
   private String aiProfileJson;
   @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
   private LocalDateTime aiProfileUpdatedAt;
+  private String aiStageSuggestion;
+  private Integer aiStageConfidence;
+  private String aiStageReason;
+  @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+  private LocalDateTime aiStageUpdatedAt;
 
   public Long getOwnerUserId() {
     return ownerUserId;
@@ -128,5 +133,37 @@ public class CrmCustomerEntity extends BaseTenantEntity {
 
   public void setAiProfileUpdatedAt(LocalDateTime aiProfileUpdatedAt) {
     this.aiProfileUpdatedAt = aiProfileUpdatedAt;
+  }
+
+  public String getAiStageSuggestion() {
+    return aiStageSuggestion;
+  }
+
+  public void setAiStageSuggestion(String aiStageSuggestion) {
+    this.aiStageSuggestion = aiStageSuggestion;
+  }
+
+  public Integer getAiStageConfidence() {
+    return aiStageConfidence;
+  }
+
+  public void setAiStageConfidence(Integer aiStageConfidence) {
+    this.aiStageConfidence = aiStageConfidence;
+  }
+
+  public String getAiStageReason() {
+    return aiStageReason;
+  }
+
+  public void setAiStageReason(String aiStageReason) {
+    this.aiStageReason = aiStageReason;
+  }
+
+  public LocalDateTime getAiStageUpdatedAt() {
+    return aiStageUpdatedAt;
+  }
+
+  public void setAiStageUpdatedAt(LocalDateTime aiStageUpdatedAt) {
+    this.aiStageUpdatedAt = aiStageUpdatedAt;
   }
 }

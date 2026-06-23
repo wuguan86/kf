@@ -50,8 +50,19 @@ docker compose up -d
 - `DIFY_BASE_URL`：例如 `http://119.91.142.187`
 - `DIFY_API_KEY`：Dify Chat App API Key
 - `DIFY_SALES_CHAT_API_KEY`：智能销售 Dify Chat App API Key
+- `DIFY_INTENT_WORKFLOW_API_KEY`：智能销售意向分析 Dify Workflow API Key
 - `WECHAT_APP_ID` / `WECHAT_APP_SECRET`：微信开放平台扫码登录配置
 - `WECHAT_CALLBACK_URL`：例如 `http://localhost:8081/api/user/auth/wechat/callback`
+
+### 智能销售意向分析工作流
+
+意向分析工作流输入保持现状，阶段建议通过输出字段扩展：
+
+- `stage_suggestion`：`LEAD` / `FOLLOWING` / `INTENDED` / `UNKNOWN`
+- `stage_confidence`：`0-100`
+- `stage_reason`：中文理由，需要引用对话或意向依据
+
+后端只保存 `LEAD`、`FOLLOWING`、`INTENDED` 三类建议；`WON`、`LOST`、`UNKNOWN` 不会写入客户真实阶段，真实 `stage` 仍由人工确认。
 
 ## 启动服务
 

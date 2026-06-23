@@ -26,6 +26,7 @@ export default function CustomerProfileDetail({
   const [profile, setProfile] = useState<CustomerProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshingAi, setRefreshingAi] = useState(false)
+  const [autoRefreshAiKey, setAutoRefreshAiKey] = useState('')
   const [savingStage, setSavingStage] = useState(false)
 
   // 跟进表单
@@ -113,6 +114,18 @@ export default function CustomerProfileDetail({
       setRefreshingAi(false)
     }
   }
+
+  useEffect(() => {
+    if (!profile || refreshingAi || autoRefreshAiKey === contactKey) {
+      return
+    }
+    if (!shouldAutoRefreshAiProfile(profile)) {
+      return
+    }
+    setAutoRefreshAiKey(contactKey)
+    handleRefreshAi(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, refreshingAi, autoRefreshAiKey, contactKey])
 
   const handleCreateTag = async () => {
     if (!newTagName.trim()) return
@@ -278,6 +291,33 @@ export default function CustomerProfileDetail({
           </select>
         </div>
       </div>
+      {profile.aiStageSuggestion && profile.aiStageSuggestion !== profile.stage && (
+        <div className={styles.stageSuggestionBlock}>
+          <div>
+            <div className={styles.stageSuggestionTitle}>
+              AI建议阶段：{profile.aiStageSuggestionLabel || stageLabel(profile.aiStageSuggestion)}
+              {profile.aiStageConfidence != null && (
+                <span className={styles.stageConfidence}>
+                  置信度 {profile.aiStageConfidence}%
+                </span>
+              )}
+            </div>
+            {profile.aiStageReason && (
+              <div className={styles.stageSuggestionReason}>{profile.aiStageReason}</div>
+            )}
+            {profile.aiStageUpdatedAt && (
+              <div className={styles.aiEmpty}>更新时间：{formatTime(profile.aiStageUpdatedAt)}</div>
+            )}
+          </div>
+          <button
+            className={styles.primaryBtn}
+            onClick={() => handleStageChange(profile.aiStageSuggestion!)}
+            disabled={savingStage}
+          >
+            采纳建议
+          </button>
+        </div>
+      )}
 
       <div className={styles.grid}>
         {/* 左列：意向评分 + AI 画像 */}
@@ -625,6 +665,30 @@ function sourceLabel(source: string | null): string {
     default:
       return '未知'
   }
+}
+
+function stageLabel(stage: string | null): string {
+  if (!stage) return '未知'
+  const found = STAGE_OPTIONS.find((s) => s.value === stage)
+  return found ? found.label : stage
+}
+
+function shouldAutoRefreshAiProfile(profile: CustomerProfile): boolean {
+  if (!profile.lastChatTime) {
+    return false
+  }
+  if (!profile.aiProfile) {
+    return true
+  }
+  if (!profile.aiProfile.updatedAt) {
+    return true
+  }
+  const updatedAt = new Date(profile.aiProfile.updatedAt).getTime()
+  const lastChatTime = new Date(profile.lastChatTime).getTime()
+  if (Number.isNaN(updatedAt) || Number.isNaN(lastChatTime)) {
+    return false
+  }
+  return lastChatTime > updatedAt
 }
 
 function followUpTypeLabel(type: string): string {

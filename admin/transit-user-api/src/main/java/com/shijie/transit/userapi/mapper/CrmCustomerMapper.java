@@ -41,6 +41,10 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
         c.phone AS phone,
         c.source AS source,
         c.stage AS stage,
+        c.ai_stage_suggestion AS aiStageSuggestion,
+        c.ai_stage_confidence AS aiStageConfidence,
+        c.ai_stage_reason AS aiStageReason,
+        c.ai_stage_updated_at AS aiStageUpdatedAt,
         c.starred AS starred,
         c.next_follow_up_at AS nextFollowUpAt,
         (
@@ -204,6 +208,10 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
     private String phone;
     private String source;
     private String stage;
+    private String aiStageSuggestion;
+    private Integer aiStageConfidence;
+    private String aiStageReason;
+    private LocalDateTime aiStageUpdatedAt;
     private Integer starred;
     private LocalDateTime nextFollowUpAt;
     private LocalDateTime lastChatTime;
@@ -244,6 +252,14 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
     public void setSource(String source) { this.source = source; }
     public String getStage() { return stage; }
     public void setStage(String stage) { this.stage = stage; }
+    public String getAiStageSuggestion() { return aiStageSuggestion; }
+    public void setAiStageSuggestion(String aiStageSuggestion) { this.aiStageSuggestion = aiStageSuggestion; }
+    public Integer getAiStageConfidence() { return aiStageConfidence; }
+    public void setAiStageConfidence(Integer aiStageConfidence) { this.aiStageConfidence = aiStageConfidence; }
+    public String getAiStageReason() { return aiStageReason; }
+    public void setAiStageReason(String aiStageReason) { this.aiStageReason = aiStageReason; }
+    public LocalDateTime getAiStageUpdatedAt() { return aiStageUpdatedAt; }
+    public void setAiStageUpdatedAt(LocalDateTime aiStageUpdatedAt) { this.aiStageUpdatedAt = aiStageUpdatedAt; }
     public Integer getStarred() { return starred; }
     public void setStarred(Integer starred) { this.starred = starred; }
     public LocalDateTime getNextFollowUpAt() { return nextFollowUpAt; }

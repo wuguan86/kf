@@ -143,6 +143,43 @@
   cursor: not-allowed;
 }
 
+.stageSuggestionBlock {
+  border: 1px solid #d6e4ff;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 12px 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.stageSuggestionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stageConfidence {
+  border-radius: 999px;
+  background: rgba(22, 119, 255, 0.12);
+  color: #1d39c4;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.stageSuggestionReason {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .starBtn {
   font-size: 20px;
   color: #d4d4d4;
