@@ -147,6 +147,10 @@ public class IntentAnalysisService {
     intent.setDemandLevel(result.demandLevel());
     intent.setBudgetLevel(result.budgetLevel());
     intent.setTimeLevel(result.timeLevel());
+    intent.setBudgetDesc(result.budgetDesc());
+    intent.setTimeDesc(result.timeDesc());
+    intent.setPainPoints(result.painPoints());
+    intent.setCompetitors(result.competitors());
     intent.setLatestEvent(result.latestEvent());
     intent.setTotalScore(result.totalScore());
     intent.setIntentLevel(result.intentLevel());
@@ -260,6 +264,10 @@ public class IntentAnalysisService {
     String demandLevel = IntentAnalysisSupport.normalizeDemandBudget(readText(node, "demand"));
     String budgetLevel = IntentAnalysisSupport.normalizeDemandBudget(readText(node, "budget"));
     String timeLevel = IntentAnalysisSupport.normalizeTime(readText(node, "time"));
+    String budgetDesc = firstText(node, "budget_desc", "budgetDesc");
+    String timeDesc = firstText(node, "time_desc", "timeDesc");
+    String painPoints = firstText(node, "pain_points", "painPoints");
+    String competitors = firstText(node, "competitors");
     String latestEvent = IntentAnalysisSupport.normalizeEvent(readText(node, "event"));
     String reason = readText(node, "reason");
     String summary = readText(node, "summary");
@@ -278,6 +286,10 @@ public class IntentAnalysisService {
         demandLevel,
         budgetLevel,
         timeLevel,
+        budgetDesc,
+        timeDesc,
+        painPoints,
+        competitors,
         latestEvent,
         totalScore,
         intentLevel,
@@ -463,8 +475,29 @@ public class IntentAnalysisService {
     return "当前意向：" + intentText
         + "；需求强度：" + demandText
         + "；预算：" + budgetText
+        + "；预算描述：" + defaultText(existing == null ? null : existing.getBudgetDesc())
+        + "；购买时间描述：" + defaultText(existing == null ? null : existing.getTimeDesc())
+        + "；核心痛点：" + defaultText(existing == null ? null : existing.getPainPoints())
+        + "；提及竞品：" + defaultText(existing == null ? null : existing.getCompetitors())
         + "；今日总结：" + dailySummary
         + "。请在此基础上根据新消息更新。";
+  }
+
+  private String firstText(JsonNode node, String... fields) {
+    if (fields == null) {
+      return null;
+    }
+    for (String field : fields) {
+      String text = readText(node, field);
+      if (StringUtils.hasText(text)) {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  private String defaultText(String value) {
+    return StringUtils.hasText(value) ? value.trim() : "无";
   }
 
   private String toIntentText(Integer intentLevel) {

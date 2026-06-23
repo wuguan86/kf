@@ -13,6 +13,10 @@ public class UserIntentEntity extends BaseTenantEntity {
   private String demandLevel;
   private String budgetLevel;
   private String timeLevel;
+  private String budgetDesc;
+  private String timeDesc;
+  private String painPoints;
+  private String competitors;
   private String latestEvent;
   private Integer totalScore;
   private Integer intentLevel;
@@ -61,6 +65,38 @@ public class UserIntentEntity extends BaseTenantEntity {
 
   public void setTimeLevel(String timeLevel) {
     this.timeLevel = timeLevel;
+  }
+
+  public String getBudgetDesc() {
+    return budgetDesc;
+  }
+
+  public void setBudgetDesc(String budgetDesc) {
+    this.budgetDesc = budgetDesc;
+  }
+
+  public String getTimeDesc() {
+    return timeDesc;
+  }
+
+  public void setTimeDesc(String timeDesc) {
+    this.timeDesc = timeDesc;
+  }
+
+  public String getPainPoints() {
+    return painPoints;
+  }
+
+  public void setPainPoints(String painPoints) {
+    this.painPoints = painPoints;
+  }
+
+  public String getCompetitors() {
+    return competitors;
+  }
+
+  public void setCompetitors(String competitors) {
+    this.competitors = competitors;
   }
 
   public String getLatestEvent() {

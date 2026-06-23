@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shijie.transit.common.db.entity.CrmCustomerEntity;
 import com.shijie.transit.common.db.entity.UserIntentEntity;
 import com.shijie.transit.common.tenant.TenantContext;
+import com.shijie.transit.userapi.vo.SmartSalesVo.TagView;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class SmartSalesDifyContextServiceTest {
@@ -29,11 +31,18 @@ class SmartSalesDifyContextServiceTest {
     intent.setIntentLevel(3);
     intent.setTotalScore(86);
     intent.setDemandLevel("HIGH");
+    intent.setBudgetDesc("预算在 3 万以内，关注年付优惠");
+    intent.setTimeDesc("希望本周完成试用并尽快上线");
+    intent.setPainPoints("人工回复慢，夜间咨询容易漏掉");
+    intent.setCompetitors("竞品A、竞品B");
     intent.setDailySummary("客户持续追问价格和落地周期");
 
     SmartSalesDifyContextService service = new SmartSalesDifyContextService(
         new FakeSmartSalesCustomerAccess(customer, intent),
-        new ObjectMapper());
+        new ObjectMapper(),
+        new FakeSmartSalesTagService(List.of(
+            new TagView(1L, "高价值客户", "#F59E0B", "CUSTOM"),
+            new TagView(2L, "已约演示", "#22C55E", "CUSTOM"))));
 
     TenantContext.setTenantId(9L);
     try {
@@ -44,8 +53,13 @@ class SmartSalesDifyContextServiceTest {
       assertTrue(context.customerProfile().contains("客户名称：张三"));
       assertTrue(context.customerProfile().contains("AI沟通重点：先解释私域转化效果"));
       assertTrue(context.customerProfile().contains("兴趣标签：企业微信、自动回复"));
+      assertTrue(context.customerProfile().contains("客户标签：高价值客户、已约演示"));
       assertTrue(context.customerProfile().contains("建议下一步：约演示"));
       assertTrue(context.customerProfile().contains("意向等级：高意向"));
+      assertTrue(context.customerProfile().contains("预算描述：预算在 3 万以内，关注年付优惠"));
+      assertTrue(context.customerProfile().contains("购买时间描述：希望本周完成试用并尽快上线"));
+      assertTrue(context.customerProfile().contains("核心痛点：人工回复慢，夜间咨询容易漏掉"));
+      assertTrue(context.customerProfile().contains("提及竞品：竞品A、竞品B"));
       assertTrue(context.customerProfile().contains("沟通摘要：客户持续追问价格和落地周期"));
     } finally {
       TenantContext.clear();
@@ -70,6 +84,20 @@ class SmartSalesDifyContextServiceTest {
     @Override
     UserIntentEntity getIntent(Long tenantId, Long ownerUserId, String contactKey) {
       return intent;
+    }
+  }
+
+  private static class FakeSmartSalesTagService extends SmartSalesTagService {
+    private final List<TagView> tags;
+
+    FakeSmartSalesTagService(List<TagView> tags) {
+      super(null, null, null);
+      this.tags = tags;
+    }
+
+    @Override
+    List<TagView> loadTagsOfCustomer(Long tenantId, Long customerId) {
+      return tags;
     }
   }
 }

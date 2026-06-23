@@ -398,7 +398,7 @@ class UserDifyControllerTest {
     String contactKey;
 
     FakeSmartSalesDifyContextService(SalesDifyContext context) {
-      super(null, null);
+      super(null, null, null);
       this.context = context;
     }
 

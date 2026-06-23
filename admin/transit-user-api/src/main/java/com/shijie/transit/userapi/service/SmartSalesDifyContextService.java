@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shijie.transit.common.db.entity.CrmCustomerEntity;
 import com.shijie.transit.common.db.entity.UserIntentEntity;
 import com.shijie.transit.common.tenant.TenantContext;
+import com.shijie.transit.userapi.vo.SmartSalesVo.TagView;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
@@ -23,10 +24,15 @@ public class SmartSalesDifyContextService {
 
   private final SmartSalesCustomerAccess customerAccess;
   private final ObjectMapper objectMapper;
+  private final SmartSalesTagService tagService;
 
-  public SmartSalesDifyContextService(SmartSalesCustomerAccess customerAccess, ObjectMapper objectMapper) {
+  public SmartSalesDifyContextService(
+      SmartSalesCustomerAccess customerAccess,
+      ObjectMapper objectMapper,
+      SmartSalesTagService tagService) {
     this.customerAccess = customerAccess;
     this.objectMapper = objectMapper;
+    this.tagService = tagService;
   }
 
   public SalesDifyContext buildContext(Long ownerUserId, String contactKey) {
@@ -39,7 +45,8 @@ public class SmartSalesDifyContextService {
       CrmCustomerEntity customer = customerAccess.findCustomer(tenantId, ownerUserId, normalizedContactKey);
       UserIntentEntity intent = customerAccess.getIntent(tenantId, ownerUserId, normalizedContactKey);
       String salesStage = buildSalesStage(customer);
-      String customerProfile = buildCustomerProfile(normalizedContactKey, customer, intent);
+      List<TagView> tags = loadCustomerTags(tenantId, customer);
+      String customerProfile = buildCustomerProfile(normalizedContactKey, customer, tags, intent);
       return new SalesDifyContext(salesStage, customerProfile);
     } catch (Exception ex) {
       log.warn("构建智能销售 Dify 上下文失败，已降级为空上下文 tenantId={} userId={} contactKey={}",
@@ -57,12 +64,17 @@ public class SmartSalesDifyContextService {
     return StringUtils.hasText(label) ? stage + "（" + label + "）" : stage;
   }
 
-  private String buildCustomerProfile(String contactKey, CrmCustomerEntity customer, UserIntentEntity intent) {
+  private String buildCustomerProfile(
+      String contactKey,
+      CrmCustomerEntity customer,
+      List<TagView> tags,
+      UserIntentEntity intent) {
     StringJoiner profile = new StringJoiner("\n");
     appendLine(profile, "客户标识", contactKey);
     if (customer != null) {
       appendLine(profile, "客户名称", resolveCustomerName(customer, contactKey));
       appendLine(profile, "销售阶段", buildSalesStage(customer));
+      appendTags(profile, tags);
       appendLine(profile, "客户来源", customer.getSource());
       appendLine(profile, "联系电话", customer.getPhone());
       appendLine(profile, "客户备注", customer.getRemark());
@@ -77,6 +89,10 @@ public class SmartSalesDifyContextService {
       appendLine(profile, "需求强度", intent.getDemandLevel());
       appendLine(profile, "预算匹配", intent.getBudgetLevel());
       appendLine(profile, "时间紧迫", intent.getTimeLevel());
+      appendLine(profile, "预算描述", intent.getBudgetDesc());
+      appendLine(profile, "购买时间描述", intent.getTimeDesc());
+      appendLine(profile, "核心痛点", intent.getPainPoints());
+      appendLine(profile, "提及竞品", intent.getCompetitors());
       appendLine(profile, "最近事件", intent.getLatestEvent());
       appendLine(profile, "沟通摘要", intent.getDailySummary());
       appendLine(profile, "AI判断原因", intent.getAiReason());
@@ -89,6 +105,33 @@ public class SmartSalesDifyContextService {
       return customer.getRemarkName().trim();
     }
     return contactKey;
+  }
+
+  private List<TagView> loadCustomerTags(Long tenantId, CrmCustomerEntity customer) {
+    if (tagService == null || customer == null || customer.getId() == null) {
+      return List.of();
+    }
+    try {
+      return tagService.loadTagsOfCustomer(tenantId, customer.getId());
+    } catch (Exception ex) {
+      log.warn("加载智能销售客户标签失败，已跳过标签补充 tenantId={} customerId={}",
+          tenantId, customer.getId(), ex);
+      return List.of();
+    }
+  }
+
+  private void appendTags(StringJoiner profile, List<TagView> tags) {
+    if (tags == null || tags.isEmpty()) {
+      return;
+    }
+    String text = tags.stream()
+        .filter(java.util.Objects::nonNull)
+        .map(TagView::name)
+        .filter(StringUtils::hasText)
+        .distinct()
+        .reduce((left, right) -> left + "、" + right)
+        .orElse("");
+    appendLine(profile, "客户标签", text);
   }
 
   private void appendAiProfile(StringJoiner profile, CrmCustomerEntity customer) {

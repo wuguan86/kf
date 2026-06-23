@@ -31,6 +31,10 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
         ui.demand_level AS demandLevel,
         ui.budget_level AS budgetLevel,
         ui.time_level AS timeLevel,
+        ui.budget_desc AS budgetDesc,
+        ui.time_desc AS timeDesc,
+        ui.pain_points AS painPoints,
+        ui.competitors AS competitors,
         ui.latest_event AS latestEvent,
         c.id AS customerId,
         c.remark_name AS remarkName,
@@ -190,6 +194,10 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
     private String demandLevel;
     private String budgetLevel;
     private String timeLevel;
+    private String budgetDesc;
+    private String timeDesc;
+    private String painPoints;
+    private String competitors;
     private String latestEvent;
     private Long customerId;
     private String remarkName;
@@ -216,6 +224,14 @@ public interface CrmCustomerMapper extends BaseMapper<CrmCustomerEntity> {
     public void setBudgetLevel(String budgetLevel) { this.budgetLevel = budgetLevel; }
     public String getTimeLevel() { return timeLevel; }
     public void setTimeLevel(String timeLevel) { this.timeLevel = timeLevel; }
+    public String getBudgetDesc() { return budgetDesc; }
+    public void setBudgetDesc(String budgetDesc) { this.budgetDesc = budgetDesc; }
+    public String getTimeDesc() { return timeDesc; }
+    public void setTimeDesc(String timeDesc) { this.timeDesc = timeDesc; }
+    public String getPainPoints() { return painPoints; }
+    public void setPainPoints(String painPoints) { this.painPoints = painPoints; }
+    public String getCompetitors() { return competitors; }
+    public void setCompetitors(String competitors) { this.competitors = competitors; }
     public String getLatestEvent() { return latestEvent; }
     public void setLatestEvent(String latestEvent) { this.latestEvent = latestEvent; }
     public Long getCustomerId() { return customerId; }
