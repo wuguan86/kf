@@ -12,6 +12,7 @@ import com.shijie.transit.common.db.entity.CrmCustomerTagEntity;
 import com.shijie.transit.common.db.entity.CrmCustomerTagRelEntity;
 import com.shijie.transit.common.tenant.TenantContext;
 import com.shijie.transit.common.web.TransitException;
+import com.shijie.transit.userapi.dto.SmartSalesDto.UpdateTagRequest;
 import com.shijie.transit.userapi.dto.SmartSalesDto.UpdateCustomerTagsRequest;
 import com.shijie.transit.userapi.mapper.CrmCustomerMapper;
 import com.shijie.transit.userapi.mapper.CrmCustomerTagMapper;
@@ -91,5 +92,76 @@ class SmartSalesTagServiceTest {
         7L,
         "客户A",
         new UpdateCustomerTagsRequest(List.of(22L), List.of())));
+  }
+
+  @Test
+  void ownedCustomTagCanBeRenamedAndRecolored() {
+    TenantContext.setTenantId(88L);
+    CrmCustomerMapper customerMapper = mock(CrmCustomerMapper.class);
+    CrmCustomerTagMapper tagMapper = mock(CrmCustomerTagMapper.class);
+    CrmCustomerTagRelMapper tagRelMapper = mock(CrmCustomerTagRelMapper.class);
+    SmartSalesTagService service = new SmartSalesTagService(customerMapper, tagMapper, tagRelMapper);
+
+    CrmCustomerTagEntity tag = new CrmCustomerTagEntity();
+    tag.setId(22L);
+    tag.setTenantId(88L);
+    tag.setOwnerUserId(7L);
+    tag.setName("旧标签");
+    tag.setColor("#5B8FF9");
+    tag.setCategory("CUSTOM");
+    when(tagMapper.selectById(22L)).thenReturn(tag);
+    when(tagMapper.selectCount(any())).thenReturn(0L);
+
+    service.updateTag(7L, 22L, new UpdateTagRequest("高价值客户", "#F59E0B"));
+
+    ArgumentCaptor<CrmCustomerTagEntity> captor = ArgumentCaptor.forClass(CrmCustomerTagEntity.class);
+    verify(tagMapper).updateById(captor.capture());
+    assertEquals(22L, captor.getValue().getId());
+    assertEquals("高价值客户", captor.getValue().getName());
+    assertEquals("#F59E0B", captor.getValue().getColor());
+  }
+
+  @Test
+  void presetTagCannotBeRenamed() {
+    TenantContext.setTenantId(88L);
+    CrmCustomerMapper customerMapper = mock(CrmCustomerMapper.class);
+    CrmCustomerTagMapper tagMapper = mock(CrmCustomerTagMapper.class);
+    CrmCustomerTagRelMapper tagRelMapper = mock(CrmCustomerTagRelMapper.class);
+    SmartSalesTagService service = new SmartSalesTagService(customerMapper, tagMapper, tagRelMapper);
+
+    CrmCustomerTagEntity preset = new CrmCustomerTagEntity();
+    preset.setId(9000000000000000001L);
+    preset.setTenantId(0L);
+    preset.setOwnerUserId(0L);
+    preset.setName("预设标签");
+    preset.setCategory("PRESET");
+    when(tagMapper.selectById(9000000000000000001L)).thenReturn(preset);
+
+    assertThrows(TransitException.class, () -> service.updateTag(
+        7L,
+        9000000000000000001L,
+        new UpdateTagRequest("新名称", "#1677FF")));
+  }
+
+  @Test
+  void deletingOwnedCustomTagAlsoClearsCustomerRelations() {
+    TenantContext.setTenantId(88L);
+    CrmCustomerMapper customerMapper = mock(CrmCustomerMapper.class);
+    CrmCustomerTagMapper tagMapper = mock(CrmCustomerTagMapper.class);
+    CrmCustomerTagRelMapper tagRelMapper = mock(CrmCustomerTagRelMapper.class);
+    SmartSalesTagService service = new SmartSalesTagService(customerMapper, tagMapper, tagRelMapper);
+
+    CrmCustomerTagEntity tag = new CrmCustomerTagEntity();
+    tag.setId(22L);
+    tag.setTenantId(88L);
+    tag.setOwnerUserId(7L);
+    tag.setName("可删除标签");
+    tag.setCategory("CUSTOM");
+    when(tagMapper.selectById(22L)).thenReturn(tag);
+
+    service.deleteTag(7L, 22L);
+
+    verify(tagRelMapper).delete(any());
+    verify(tagMapper).deleteById(22L);
   }
 }

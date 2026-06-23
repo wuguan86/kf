@@ -44,6 +44,10 @@ public final class SmartSalesDto {
   public record CreateTagRequest(String name, String color) {
   }
 
+  /** 更新自定义标签请求。预设标签只读，不能通过用户侧标签管理改名或改色。 */
+  public record UpdateTagRequest(String name, String color) {
+  }
+
   /** 新增跟进记录请求。aiSuggested=1 表示内容由 AI 生成。 */
   public record CreateFollowUpRequest(
       String content,

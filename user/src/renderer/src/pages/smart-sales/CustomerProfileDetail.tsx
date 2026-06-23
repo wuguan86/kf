@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import styles from './CustomerProfileDetail.module.css'
+import TagManagementModal from './TagManagementModal'
 import {
   smartSalesApi,
   CustomerProfile,
@@ -37,6 +38,7 @@ export default function CustomerProfileDetail({
 
   // 标签管理
   const [allTags, setAllTags] = useState<TagView[]>([])
+  const [tagManagerOpen, setTagManagerOpen] = useState(false)
   const [newTagName, setNewTagName] = useState('')
   const [newTagColor, setNewTagColor] = useState('#5B8FF9')
 
@@ -143,6 +145,11 @@ export default function CustomerProfileDetail({
       console.error('取消标签失败', error)
       showToast('取消标签失败', 'error')
     }
+  }
+
+  const handleManagedTagsChanged = async (tags: TagView[]) => {
+    setAllTags(tags)
+    await loadProfile()
   }
 
   const handleSubmitFollowUp = async () => {
@@ -314,6 +321,13 @@ export default function CustomerProfileDetail({
         {/* 右列：标签 + 跟进时间线 */}
         <div className={styles.card}>
           <h2 className={styles.cardTitle}>客户标签</h2>
+          <button
+            className={styles.tagManageBtn}
+            onClick={() => setTagManagerOpen(true)}
+            title="标签管理"
+          >
+            ⚙ 标签管理
+          </button>
           {customerTags.length === 0 ? (
             <div className={styles.empty}>暂无标签</div>
           ) : (
@@ -366,7 +380,7 @@ export default function CustomerProfileDetail({
               title="标签颜色"
             />
             <button className={styles.primaryBtn} onClick={handleCreateTag}>
-              新建并添加
+              新建标签
             </button>
           </div>
 
@@ -454,6 +468,12 @@ export default function CustomerProfileDetail({
           </div>
         </div>
       </div>
+      <TagManagementModal
+        open={tagManagerOpen}
+        onClose={() => setTagManagerOpen(false)}
+        showToast={showToast}
+        onChanged={handleManagedTagsChanged}
+      />
     </div>
   )
 }

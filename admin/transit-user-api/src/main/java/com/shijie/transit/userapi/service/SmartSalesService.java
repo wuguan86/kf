@@ -70,6 +70,14 @@ public class SmartSalesService {
     return tagService.createTag(ownerUserId, request);
   }
 
+  public TagView updateTag(Long ownerUserId, Long tagId, SmartSalesDto.UpdateTagRequest request) {
+    return tagService.updateTag(ownerUserId, tagId, request);
+  }
+
+  public void deleteTag(Long ownerUserId, Long tagId) {
+    tagService.deleteTag(ownerUserId, tagId);
+  }
+
   public List<TagView> updateCustomerTags(
       Long ownerUserId, String contactKey, SmartSalesDto.UpdateCustomerTagsRequest request) {
     return tagService.updateCustomerTags(ownerUserId, contactKey, request);

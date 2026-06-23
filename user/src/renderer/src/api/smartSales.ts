@@ -154,6 +154,10 @@ export const smartSalesApi = {
   listTags: () => http.get<any, TagView[]>(`${BASE}/tags`),
   createTag: (name: string, color?: string) =>
     http.post<any, TagView>(`${BASE}/tags`, { name, color }),
+  updateTag: (tagId: string, name: string, color?: string) =>
+    http.put<any, TagView>(`${BASE}/tags/${encodeURIComponent(tagId)}`, { name, color }),
+  deleteTag: (tagId: string) =>
+    http.delete<any, boolean>(`${BASE}/tags/${encodeURIComponent(tagId)}`),
   updateCustomerTags: (contactKey: string, addTagIds: string[], removeTagIds: string[]) =>
     http.post<any, TagView[]>(`${BASE}/customers/${encodeURIComponent(contactKey)}/tags`, {
       addTagIds,

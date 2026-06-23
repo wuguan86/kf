@@ -8,6 +8,7 @@ import com.shijie.transit.userapi.dto.SmartSalesDto.SaveCustomerRequest;
 import com.shijie.transit.userapi.dto.SmartSalesDto.UpdateCustomerTagsRequest;
 import com.shijie.transit.userapi.dto.SmartSalesDto.UpdateStageRequest;
 import com.shijie.transit.userapi.dto.SmartSalesDto.UpdateStarredRequest;
+import com.shijie.transit.userapi.dto.SmartSalesDto.UpdateTagRequest;
 import com.shijie.transit.userapi.service.SmartSalesService;
 import com.shijie.transit.userapi.service.UserProfileAIService;
 import com.shijie.transit.userapi.vo.SmartSalesVo.AiProfile;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -104,6 +106,19 @@ public class UserSmartSalesController {
   @PostMapping("/tags")
   public Result<TagView> createTag(@RequestBody CreateTagRequest request) {
     return Result.success(smartSalesService.createTag(currentUserId(), request));
+  }
+
+  @PutMapping("/tags/{tagId}")
+  public Result<TagView> updateTag(
+      @PathVariable("tagId") Long tagId,
+      @RequestBody UpdateTagRequest request) {
+    return Result.success(smartSalesService.updateTag(currentUserId(), tagId, request));
+  }
+
+  @DeleteMapping("/tags/{tagId}")
+  public Result<Boolean> deleteTag(@PathVariable("tagId") Long tagId) {
+    smartSalesService.deleteTag(currentUserId(), tagId);
+    return Result.success(true);
   }
 
   @PostMapping("/customers/{contactKey}/tags")

@@ -1,58 +1,62 @@
-import React, { useState, useEffect } from 'react';
-import styles from './SystemSettingsPage.module.css';
-import http from '../utils/http';
-import { AppConfig } from '../config';
+import React, { useEffect, useState } from 'react'
+import { Toast, useToast } from '../components/Toast'
+import { AppConfig } from '../config'
+import http from '../utils/http'
+import styles from './SystemSettingsPage.module.css'
+import TagManagementModal from './smart-sales/TagManagementModal'
 
 interface SystemSettingsPageProps {
-  onLogout: () => void;
+  onLogout: () => void
 }
 
 interface ContactConfig {
-  wechat: string;
-  wechat_qrcode: string;
-  email: string;
+  wechat: string
+  wechat_qrcode: string
+  email: string
 }
 
 const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => {
+  const { toast, showToast } = useToast()
+  const [tagManagerOpen, setTagManagerOpen] = useState(false)
   const [contactConfig, setContactConfig] = useState<ContactConfig>({
     wechat: 'VisionTech_Support',
     wechat_qrcode: '',
     email: 'support@vision.ai'
-  });
+  })
 
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const res = await http.get<ContactConfig>('/api/user/system-config/customer-service');
+        const res = await http.get<ContactConfig>('/api/user/system-config/customer-service')
         if (res) {
           setContactConfig({
             wechat: res.wechat || 'VisionTech_Support',
             wechat_qrcode: res.wechat_qrcode || '',
             email: res.email || 'support@vision.ai'
-          });
+          })
         }
       } catch (error) {
-        console.error('加载客服联系方式失败', error);
+        console.error('加载客服联系方式失败', error)
       }
-    };
-    fetchConfig();
-  }, []);
+    }
+    fetchConfig()
+  }, [])
 
   const getImageUrl = (path: string) => {
-    if (!path) return '';
-    if (path.startsWith('http')) return path;
-    const baseUrl = AppConfig.apiBaseUrl.replace(/\/$/, '');
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    return `${baseUrl}${cleanPath}`;
-  };
+    if (!path) return ''
+    if (path.startsWith('http')) return path
+    const baseUrl = AppConfig.apiBaseUrl.replace(/\/$/, '')
+    const cleanPath = path.startsWith('/') ? path : `/${path}`
+    return `${baseUrl}${cleanPath}`
+  }
 
   return (
     <div className={styles.container}>
+      {toast && <Toast message={toast.message} type={toast.type} />}
       <header className={styles.header}>
         <h2 className={styles.title}>系统设置</h2>
       </header>
 
-      {/* Software Version Section */}
       <section className={styles.section}>
         <div className={styles.sectionTitle}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -75,7 +79,28 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
         </div>
       </section>
 
-      {/* Customer Service Contact Section */}
+      <section className={styles.section}>
+        <div className={styles.sectionTitle}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><path d="M7 7h.01"/></svg>
+          智能销售
+        </div>
+        <div className={`${styles.card} ${styles.settingActionCard}`}>
+          <div className={styles.settingActionInfo}>
+            <div className={`${styles.contactIcon} ${styles.salesIcon}`}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+            </div>
+            <div className={styles.settingActionText}>
+              <h3>客户标签管理</h3>
+              <p>统一维护智能销售标签库，自定义标签会同步用于客户列表和客户详情。</p>
+            </div>
+          </div>
+          <button className={styles.checkUpdateBtn} onClick={() => setTagManagerOpen(true)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+            标签管理
+          </button>
+        </div>
+      </section>
+
       <section className={styles.section}>
         <div className={styles.sectionTitle}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
@@ -92,10 +117,10 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
             </div>
             {contactConfig.wechat_qrcode && (
               <div className={styles.qrcodeTooltip}>
-                <img 
-                  src={getImageUrl(contactConfig.wechat_qrcode)} 
-                  alt="WeChat QR Code" 
-                  className={styles.qrcodeImage} 
+                <img
+                  src={getImageUrl(contactConfig.wechat_qrcode)}
+                  alt="微信二维码"
+                  className={styles.qrcodeImage}
                 />
               </div>
             )}
@@ -112,15 +137,20 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
         </div>
       </section>
 
-      {/* Logout Button */}
       <section className={styles.logoutSection}>
         <button onClick={onLogout} className={styles.logoutBtn}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
           退出登录
         </button>
       </section>
-    </div>
-  );
-};
 
-export default SystemSettingsPage;
+      <TagManagementModal
+        open={tagManagerOpen}
+        onClose={() => setTagManagerOpen(false)}
+        showToast={showToast}
+      />
+    </div>
+  )
+}
+
+export default SystemSettingsPage

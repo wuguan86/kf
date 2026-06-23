@@ -90,6 +90,49 @@ public class SmartSalesTagService {
   }
 
   @Transactional
+  public TagView updateTag(Long ownerUserId, Long tagId, SmartSalesDto.UpdateTagRequest req) {
+    if (tagId == null) {
+      throw new TransitException(ErrorCode.BAD_REQUEST, "标签 ID 不能为空");
+    }
+    if (req == null || !StringUtils.hasText(req.name())) {
+      throw new TransitException(ErrorCode.BAD_REQUEST, "标签名称不能为空");
+    }
+    Long tenantId = TenantContext.getTenantId();
+    CrmCustomerTagEntity tag = ensureOwnedCustomTag(tenantId, ownerUserId, tagId);
+    String name = req.name().trim();
+    Long existCount = tagMapper.selectCount(new LambdaQueryWrapper<CrmCustomerTagEntity>()
+        .eq(CrmCustomerTagEntity::getTenantId, tenantId)
+        .eq(CrmCustomerTagEntity::getOwnerUserId, ownerUserId)
+        .eq(CrmCustomerTagEntity::getName, name)
+        .ne(CrmCustomerTagEntity::getId, tagId));
+    if (existCount != null && existCount > 0) {
+      throw new TransitException(ErrorCode.BAD_REQUEST, "标签名称已存在");
+    }
+    tag.setName(name);
+    tag.setColor(StringUtils.hasText(req.color()) ? req.color().trim() : "#5B8FF9");
+    tagMapper.updateById(tag);
+    log.info("更新智能销售标签 tenantId={} userId={} tagId={} name={}",
+        tenantId, ownerUserId, tagId, name);
+    return new TagView(tag.getId(), tag.getName(), tag.getColor(), tag.getCategory());
+  }
+
+  @Transactional
+  public void deleteTag(Long ownerUserId, Long tagId) {
+    if (tagId == null) {
+      throw new TransitException(ErrorCode.BAD_REQUEST, "标签 ID 不能为空");
+    }
+    Long tenantId = TenantContext.getTenantId();
+    CrmCustomerTagEntity tag = ensureOwnedCustomTag(tenantId, ownerUserId, tagId);
+    // 删除标签库条目前先清理客户关联，避免客户详情和列表继续引用已删除标签。
+    tagRelMapper.delete(new LambdaQueryWrapper<CrmCustomerTagRelEntity>()
+        .eq(CrmCustomerTagRelEntity::getTenantId, tenantId)
+        .eq(CrmCustomerTagRelEntity::getTagId, tagId));
+    tagMapper.deleteById(tag.getId());
+    log.info("删除智能销售标签 tenantId={} userId={} tagId={} name={}",
+        tenantId, ownerUserId, tagId, tag.getName());
+  }
+
+  @Transactional
   public List<TagView> updateCustomerTags(
       Long ownerUserId, String contactKey, SmartSalesDto.UpdateCustomerTagsRequest req) {
     if (!StringUtils.hasText(contactKey)) {
@@ -160,6 +203,20 @@ public class SmartSalesTagService {
     if (!presetTag && !ownedCustomTag) {
       throw new TransitException(ErrorCode.FORBIDDEN, "无权使用该标签");
     }
+  }
+
+  private CrmCustomerTagEntity ensureOwnedCustomTag(Long tenantId, Long ownerUserId, Long tagId) {
+    CrmCustomerTagEntity tag = tagMapper.selectById(tagId);
+    if (tag == null) {
+      throw new TransitException(ErrorCode.BAD_REQUEST, "标签不存在");
+    }
+    boolean ownedCustomTag = tenantId.equals(tag.getTenantId())
+        && ownerUserId.equals(tag.getOwnerUserId())
+        && "CUSTOM".equals(tag.getCategory());
+    if (!ownedCustomTag) {
+      throw new TransitException(ErrorCode.FORBIDDEN, "只能管理自己创建的自定义标签");
+    }
+    return tag;
   }
 
   private CrmCustomerEntity ensureCustomerExists(Long tenantId, Long ownerUserId, String contactKey) {

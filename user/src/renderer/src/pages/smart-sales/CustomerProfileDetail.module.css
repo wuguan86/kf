@@ -315,6 +315,27 @@
   margin-bottom: 12px;
 }
 
+.tagManageBtn {
+  height: 30px;
+  margin: -4px 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text-main);
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+}
+
+.tagManageBtn:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+  background: #f8fbff;
+}
+
 .tagChip {
   display: inline-flex;
   align-items: center;
