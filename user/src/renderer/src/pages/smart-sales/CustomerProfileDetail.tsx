@@ -290,7 +290,8 @@ export default function CustomerProfileDetail({
           </div>
           <ScoreBar label="需求强度" level={profile.demandLevel} />
           <ScoreBar label="预算" level={profile.budgetLevel} />
-          <ScoreBar label="时间紧迫" level={profile.timeLevel} />
+          <ScoreBar label="时间紧迫度" level={profile.timeLevel} />
+          <SalesInsightSection profile={profile} />
           {profile.dailySummary && (
             <div className={styles.aiBlock}>
               <span className={styles.aiLabel}>当日总结</span>
@@ -471,6 +472,36 @@ function ScoreBar({ label, level }: { label: string; level: string | null }) {
   )
 }
 
+function SalesInsightSection({ profile }: { profile: CustomerProfile }) {
+  const items = [
+    { label: '预算描述', value: displaySalesValue(profile.budgetDesc) },
+    { label: '购买时间', value: displaySalesValue(profile.timeDesc) },
+    { label: '核心痛点', value: displaySalesValue(profile.painPoints) },
+    { label: '提及竞品', value: displaySalesValue(profile.competitors) },
+    { label: '最近事件', value: displaySalesValue(latestEventText(profile.latestEvent)) }
+  ]
+
+  return (
+    <div className={styles.salesInsightBlock}>
+      <div className={styles.salesInsightHeader}>销售线索明细</div>
+      <div className={styles.salesInsightGrid}>
+        {items.map((item) => (
+          <div className={styles.salesInsightItem} key={item.label}>
+            <span className={styles.salesInsightLabel}>{item.label}</span>
+            <span
+              className={
+                item.value === '暂无' ? styles.salesInsightEmpty : styles.salesInsightValue
+              }
+            >
+              {item.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function AiProfileSection({
   aiProfile,
   refreshing,
@@ -538,6 +569,27 @@ function levelText(level: string | null): string {
   if (v === 'medium' || v === 'mid') return '中'
   if (v === 'low') return '低'
   return '未知'
+}
+
+function latestEventText(value: string | null): string | null {
+  if (!value) return null
+  const normalized = value.toLowerCase()
+  if (normalized === 'price') return '询价'
+  if (normalized === 'demo') return '预约演示'
+  if (normalized === 'trial') return '试用咨询'
+  if (normalized === 'refusal') return '明确拒绝'
+  if (normalized === 'objection') return '提出异议'
+  if (normalized === 'handoff') return '转人工跟进'
+  return value
+}
+
+function displaySalesValue(value: string | null): string {
+  if (!value) return '暂无'
+  const normalized = value.trim().toLowerCase()
+  if (['', '未知', 'none', 'null', 'undefined'].includes(normalized)) {
+    return '暂无'
+  }
+  return value.trim()
 }
 
 function sourceLabel(source: string | null): string {

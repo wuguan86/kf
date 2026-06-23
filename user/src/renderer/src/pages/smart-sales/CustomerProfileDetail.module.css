@@ -221,6 +221,53 @@
   margin-right: 8px;
 }
 
+.salesInsightBlock {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #d6e4ff;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.salesInsightHeader {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 10px;
+}
+
+.salesInsightGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.salesInsightItem {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.salesInsightLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.salesInsightValue {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.salesInsightEmpty {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
 .aiBlock {
   background: linear-gradient(135deg, #f0f7ff, #f6f0ff);
   border: 1px solid #d6e4ff;
@@ -439,6 +486,12 @@
 
 @media (max-width: 1100px) {
   .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .salesInsightGrid {
     grid-template-columns: 1fr;
   }
 }

@@ -36,6 +36,10 @@ export interface CustomerListItem {
   demandLevel: string | null
   budgetLevel: string | null
   timeLevel: string | null
+  budgetDesc: string | null
+  timeDesc: string | null
+  painPoints: string | null
+  competitors: string | null
   latestEvent: string | null
   customerId: string | null
   phone: string | null
@@ -61,6 +65,10 @@ export interface CustomerProfile {
   demandLevel: string | null
   budgetLevel: string | null
   timeLevel: string | null
+  budgetDesc: string | null
+  timeDesc: string | null
+  painPoints: string | null
+  competitors: string | null
   latestEvent: string | null
   aiReason: string | null
   dailySummary: string | null
