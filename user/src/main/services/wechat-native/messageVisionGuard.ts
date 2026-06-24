@@ -61,6 +61,9 @@ const isLikelySelfOwnedBubble = (
   if (stats.total > 0 && stats.selfGreenRatio >= SELF_GREEN_RATIO_THRESHOLD) {
     return true
   }
+  if (message.type === 'text') {
+    return false
+  }
   return bounds.x >= context.imageWidth * SELF_SIDE_LEFT_RATIO_THRESHOLD ||
     centerX >= context.imageWidth * SELF_SIDE_CENTER_RATIO_THRESHOLD
 }

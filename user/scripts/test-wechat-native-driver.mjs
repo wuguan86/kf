@@ -1997,6 +1997,77 @@ async function testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv() {
   assert.deepEqual(result.messages, [])
 }
 
+async function testLeftCustomerTextNearWindowCenterIsNotCorrectedAsSelf() {
+  let parseCount = 0
+  const bitmap = createBitmap(
+    865,
+    743,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 430, y: 575, width: 230, height: 36, color: { red: 255, green: 255, blue: 255 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=left-customer-near-center',
+      png: Buffer.from(`left-customer-near-center-${parseCount}`),
+      width: 865,
+      height: 743,
+      scaleFactor: 1
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-left-customer-near-center-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: '夏天',
+        messages: parseCount === 1
+          ? [
+              {
+                content: '下午好',
+                isSelf: false,
+                uiId: 'left-customer-baseline',
+                type: 'text',
+                bounds: { x: 430, y: 475, w: 120, h: 36 }
+              }
+            ]
+          : [
+              {
+                content: '我都工作三小时了，哈哈',
+                isSelf: false,
+                uiId: 'left-customer-near-center',
+                type: 'text',
+                bounds: { x: 430, y: 575, w: 230, h: 36 }
+              }
+            ],
+        snapshotDigest: `digest-left-customer-near-center-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    nativeImage: {
+      createFromBuffer: () => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 865, height: 743 }),
+        toBitmap: () => bitmap
+      })
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content, '我都工作三小时了，哈哈')
+  assert.equal(result.messages[0].is_self, false)
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
 async function testStartupVisibleHistoryIsOnlyUsedAsBaselineWithPixelGuard() {
   const bitmap = createBitmap(
     900,
@@ -4515,6 +4586,7 @@ await testNativeSendAttachmentOnlyDoesNotRecordEmptyReply()
 await testImageMessageCanBeCroppedFromLatestSnapshot()
 await testSmallAvatarMisreadAsImageMessageIsIgnored()
 await testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv()
+await testLeftCustomerTextNearWindowCenterIsNotCorrectedAsSelf()
 await testStartupVisibleHistoryIsOnlyUsedAsBaselineWithPixelGuard()
 await testEnterpriseStartupVisibleHistoryIsOnlyUsedAsBaselineWithoutPixelGuard()
 await testEnterpriseStartupUnreadCandidateIsIgnored()
