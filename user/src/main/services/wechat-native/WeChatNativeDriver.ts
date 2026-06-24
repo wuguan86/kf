@@ -6,6 +6,7 @@ import { recognizeUnreadConversationCandidate } from './conversationListRecogniz
 import { clickConversationCandidate, clickMarketingPoint, clickMomentsEntry, closeMomentsWindow, exitConversationToList, pasteAndSendAttachments, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
 import { captureWeChatWindow } from './screenReader'
 import { comparePngSnapshotRegion, comparePngSnapshots, type SnapshotRegion } from './snapshotDiff'
+import { buildFallbackCurrentChatRegion, detectCurrentChatSnapshotRegion } from './chatRegionDetector'
 import { findUnreadConversationCandidates } from './unreadDetector'
 import { parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } from './visionClient'
 import { findWeChatMomentsWindow, findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
@@ -51,9 +52,6 @@ const SHORT_TEXT_REPLY_CONTENT_MAX_LENGTH = 6
 const MESSAGE_BOUNDS_FINGERPRINT_BUCKET_PX = 16
 const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
 const CURRENT_CHAT_REGION_CHANGE_RATIO = 0.015
-const CURRENT_CHAT_REGION_LEFT_RATIO = 0.38
-const CURRENT_CHAT_REGION_TOP_RATIO = 0.1
-const CURRENT_CHAT_REGION_BOTTOM_RATIO = 0.82
 const LOCKED_UNREAD_CONTACT_TTL_MS = 30_000
 const IMAGE_MESSAGE_CACHE_TTL_MS = 2 * 60_000
 const IMAGE_CROP_PADDING_PX = 6
@@ -2338,15 +2336,23 @@ export class WeChatNativeDriver {
   }
 
   private buildCurrentChatSnapshotRegion(screenshot: WeChatScreenshot): SnapshotRegion {
-    const left = Math.floor(screenshot.width * CURRENT_CHAT_REGION_LEFT_RATIO)
-    const top = Math.floor(screenshot.height * CURRENT_CHAT_REGION_TOP_RATIO)
-    const bottom = Math.floor(screenshot.height * CURRENT_CHAT_REGION_BOTTOM_RATIO)
-    return {
-      x: left,
-      y: top,
-      width: Math.max(1, screenshot.width - left),
-      height: Math.max(1, bottom - top)
+    const detection = detectCurrentChatSnapshotRegion(screenshot)
+    if (detection.source === 'dynamic') {
+      console.info('新方式已动态识别当前聊天变化检测区域', {
+        region: detection.region,
+        confidence: detection.confidence,
+        screenshot: { width: screenshot.width, height: screenshot.height, scaleFactor: screenshot.scaleFactor }
+      })
+      return detection.region
     }
+    const fallback = buildFallbackCurrentChatRegion(screenshot)
+    console.info('新方式当前聊天变化检测区域动态识别失败，已回退固定比例区域', {
+      reason: detection.reason,
+      fallback,
+      confidence: detection.confidence,
+      screenshot: { width: screenshot.width, height: screenshot.height, scaleFactor: screenshot.scaleFactor }
+    })
+    return fallback
   }
 
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {

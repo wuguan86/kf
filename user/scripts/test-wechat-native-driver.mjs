@@ -53,6 +53,30 @@ function createDeferred() {
   return { promise, resolve: resolveValue, reject: rejectValue }
 }
 
+function paintWechatLayoutRect(bitmap, width, rect, color) {
+  for (let y = rect.y; y < rect.y + rect.height; y += 1) {
+    for (let x = rect.x; x < rect.x + rect.width; x += 1) {
+      const index = (y * width + x) * 4
+      bitmap[index] = color[0]
+      bitmap[index + 1] = color[1]
+      bitmap[index + 2] = color[2]
+      bitmap[index + 3] = 255
+    }
+  }
+}
+
+function createWechatLayoutBitmap(width, height, options = {}) {
+  const listWidth = options.listWidth ?? 342
+  const inputTop = options.inputTop ?? 574
+  const bitmap = Buffer.alloc(width * height * 4, 245)
+  paintWechatLayoutRect(bitmap, width, { x: 0, y: 0, width: listWidth, height }, [236, 236, 236])
+  paintWechatLayoutRect(bitmap, width, { x: listWidth, y: 0, width: 2, height }, [210, 210, 210])
+  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: 0, width: width - listWidth - 2, height: inputTop }, [248, 248, 248])
+  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: inputTop, width: width - listWidth - 2, height: 2 }, [214, 214, 214])
+  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: inputTop + 2, width: width - listWidth - 2, height: height - inputTop - 2 }, [250, 250, 250])
+  return bitmap
+}
+
 function loadNativeDriver(mocks = {}) {
   const sourcePath = resolve('src/main/services/wechat-native/WeChatNativeDriver.ts')
   const source = readFileSync(sourcePath, 'utf8')
@@ -109,6 +133,9 @@ function loadNativeDriver(mocks = {}) {
         comparePngSnapshots: mocks.comparePngSnapshots,
         comparePngSnapshotRegion: mocks.comparePngSnapshotRegion || mocks.comparePngSnapshots
       }
+    }
+    if (id === './chatRegionDetector') {
+      return loadTranspiledTsModule('chatRegionDetector.ts')
     }
     if (id === './visionClient') {
       return {
@@ -1572,6 +1599,53 @@ async function testCurrentChatRegionChangeStillTriggersVisionParsing() {
   assert.equal(parseCount, 1)
   assert.equal(result.messages.length, 1)
   assert.equal(result.messages[0].content, 'short new text')
+}
+
+async function testCurrentChatRegionUsesDynamicLayoutBoundaries() {
+  const capturedRegions = []
+  const width = 900
+  const height = 700
+  const layoutBitmap = createWechatLayoutBitmap(width, height, { listWidth: 456, inputTop: 548 })
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: {
+      createFromBuffer: () => ({
+        isEmpty: () => false,
+        getSize: () => ({ width, height }),
+        toBitmap: () => layoutBitmap
+      }),
+      createFromPath: () => ({
+        isEmpty: () => true,
+        toDataURL: () => ''
+      })
+    },
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=dynamic-layout',
+      png: Buffer.from('dynamic-layout'),
+      width,
+      height,
+      scaleFactor: 1
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-dynamic-layout', changedRatio: 0.004 }),
+    comparePngSnapshotRegion: (_previous, _current, region) => {
+      capturedRegions.push(region)
+      return { changed: false, digest: 'digest-dynamic-layout-region', changedRatio: 0 }
+    },
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('dynamic layout region test should not request vision parsing')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.deepEqual(result.messages, [])
+  assert.equal(capturedRegions.length, 1)
+  assert.ok(capturedRegions[0].x >= 450, `expected dynamic left boundary after wide contact list, got ${capturedRegions[0].x}`)
+  assert.ok(capturedRegions[0].y + capturedRegions[0].height <= 540, `expected region to end above raised input box, got ${capturedRegions[0].y + capturedRegions[0].height}`)
 }
 
 async function testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged() {
@@ -4433,6 +4507,7 @@ await testStartupCurrentChatShortHistoryIsNotReportedWhenNewMessageArrives()
 await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testLeftListOnlyChangeDoesNotTriggerVisionParsing()
 await testCurrentChatRegionChangeStillTriggersVisionParsing()
+await testCurrentChatRegionUsesDynamicLayoutBoundaries()
 await testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged()
 await testNativeSendReturnsSelfMessageForDisplay()
 await testNativeSendSendsTextThenAttachments()
