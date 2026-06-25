@@ -81,11 +81,12 @@ const isInsideSelectedConversationRow = (
   bitmap: Buffer,
   size: BitmapSize,
   cluster: RedPixelCluster,
-  scaleFactor: number
+  scaleFactor: number,
+  scanMinX: number
 ): boolean => {
   const centerX = Math.round((cluster.minX + cluster.maxX) / 2)
   const centerY = Math.round((cluster.minY + cluster.maxY) / 2)
-  const minX = Math.max(0, centerX - Math.round(SELECTED_ROW_SCAN_LEFT_PADDING_PX * scaleFactor))
+  const minX = Math.max(0, scanMinX, centerX - Math.round(SELECTED_ROW_SCAN_LEFT_PADDING_PX * scaleFactor))
   const maxX = Math.min(size.width - 1, centerX + Math.round(SELECTED_ROW_SCAN_RIGHT_PADDING_PX * scaleFactor))
   const minY = Math.max(0, centerY - Math.round(SELECTED_ROW_SCAN_VERTICAL_PADDING_PX * scaleFactor))
   const maxY = Math.min(size.height - 1, centerY + Math.round(SELECTED_ROW_SCAN_VERTICAL_PADDING_PX * scaleFactor))
@@ -177,7 +178,7 @@ export const findUnreadConversationCandidates = (
       if (channel === 'personal' && cluster.minX < avatarLeftX) {
         return null
       }
-      if (isInsideSelectedConversationRow(bitmap, size, cluster, sf)) {
+      if (isInsideSelectedConversationRow(bitmap, size, cluster, sf, channel === 'personal' ? avatarLeftX : minX)) {
         return null
       }
       return {

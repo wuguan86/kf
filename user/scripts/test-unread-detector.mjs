@@ -131,6 +131,25 @@ function testIgnoresSmallRedIconInsideAvatarArea() {
   assert.deepEqual(candidates, [])
 }
 
+function testKeepsUnreadRedDotWhenLeftSidebarHasGreenIcon() {
+  const width = 400
+  const height = 300
+  const image = createBitmap(width, height)
+  image.fillRect(8, 54, 18, 36, { red: 7, green: 193, blue: 96 })
+  image.drawRedSquare(53, 62, 10)
+  const { findUnreadConversationCandidates } = loadUnreadDetector(width, height, image.bitmap)
+
+  const candidates = findUnreadConversationCandidates(
+    { dataUrl: '', png: Buffer.from('mock'), width, height },
+    { hwnd: 1, title: '寰俊', className: 'Weixin', processName: 'Weixin', x: 10, y: 20, width: 800, height: 600 },
+    'personal'
+  )
+
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].centerX, 126)
+  assert.equal(candidates[0].centerY, 154)
+}
+
 function testIgnoresRedIconInsideSelectedConversationRow() {
   const width = 400
   const height = 300
@@ -152,4 +171,5 @@ testFindsUnreadRedDotInConversationList()
 testIgnoresRedDotOutsideConversationList()
 testIgnoresLargeRedAvatarBlockInConversationList()
 testIgnoresSmallRedIconInsideAvatarArea()
+testKeepsUnreadRedDotWhenLeftSidebarHasGreenIcon()
 testIgnoresRedIconInsideSelectedConversationRow()
