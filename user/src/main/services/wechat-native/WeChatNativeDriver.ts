@@ -12,6 +12,7 @@ import { parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } fr
 import { findWeChatMomentsWindow, findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
 import { applyMessageVisionGuard, type MessageVisionGuardContext } from './messageVisionGuard'
 import { getSpecialConversationRule } from './specialConversationGuard'
+import { configureVisionDebugRecorder, getVisionDebugRecorderStatus, saveVisionDebugImage } from './visionDebugRecorder'
 import type {
   ConversationListItemRecognition,
   MarketingMomentCandidate,
@@ -158,6 +159,7 @@ type CachedImageMessage = {
   uiId: string
   bounds: WeChatMessageBounds
   screenshot: WeChatScreenshot
+  screenshotWindow: WindowBounds
   expiresAt: number
 }
 
@@ -225,6 +227,20 @@ type MarketingCommentGenerationResult = {
   message?: string
 }
 
+type CachedChatRegion = {
+  region: SnapshotRegion
+  signature: string
+  source: 'dynamic' | 'fallback'
+  confidence: number
+  reason: string
+  splitterX?: number
+  inputTopY?: number
+}
+
+type CurrentChatRegionResult = CachedChatRegion & {
+  cacheStatus: 'created' | 'reused' | 'updated'
+}
+
 export class WeChatNativeDriver {
   private running = false
   private managedMode: ManagedMode = 'full'
@@ -262,6 +278,7 @@ export class WeChatNativeDriver {
   private marketingActionStoreLoaded = false
   private marketingActionRecords: MarketingActionRecord[] = []
   private lastWechatActivityAt = 0
+  private cachedChatRegion: CachedChatRegion | null = null
 
   configure(config: Partial<WeChatVisionRuntimeConfig>): NativeDriverResult {
     const nextChannel: WeChatChannel = config.channel === 'enterprise' ? 'enterprise' : 'personal'
@@ -274,7 +291,7 @@ export class WeChatNativeDriver {
     }
     this.lockedUnreadConversationContact = null
     this.reliableConversationContact = null
-    console.info('新方式视觉解析配置已更新', {
+    console.info('视觉解析配置已更新', {
       hasBackendBaseUrl: !!this.runtimeConfig.backendBaseUrl,
       hasToken: !!this.runtimeConfig.token,
       tenantId: this.runtimeConfig.tenantId,
@@ -287,7 +304,7 @@ export class WeChatNativeDriver {
     await this.loadRepliedCustomerFingerprints()
     const window = await findWeChatWindow(this.channel)
     if (!window) {
-      return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到微信窗口，请先打开并登录微信' }
+      return { ok: false, error: 'wechat_window_not_found', message: '未找到微信窗口，请先打开并登录微信' }
     }
     await focusWindow(window.hwnd)
     this.lastWindow = window
@@ -317,8 +334,9 @@ export class WeChatNativeDriver {
     this.cachedImageMessages.clear()
     this.marketingCommandRunning = false
     this.lastWechatActivityAt = 0
+    this.cachedChatRegion = null
     await this.captureStartupUnreadCandidateBaseline(window)
-    console.info('新方式微信视觉驱动已启动', {
+    console.info('微信视觉驱动已启动', {
       title: window.title,
       className: window.className,
       processName: window.processName,
@@ -352,7 +370,8 @@ export class WeChatNativeDriver {
     this.reliableConversationContact = null
     this.cachedImageMessages.clear()
     this.marketingCommandRunning = false
-    console.info('新方式微信视觉驱动已停止')
+    this.cachedChatRegion = null
+    console.info('微信视觉驱动已停止')
     return { ok: true, mode: 'native' }
   }
 
@@ -366,14 +385,14 @@ export class WeChatNativeDriver {
       return { ok: true, messages: [] }
     }
     if (this.visionRequestRunning) {
-      console.info('新方式上一轮视觉解析仍在执行，本轮跳过')
+      console.info('上一轮视觉解析仍在执行，本轮跳过')
       return { ok: true, messages: [] }
     }
     this.lastPollAt = nowMs
 
     const window = await findWeChatWindow(this.channel)
     if (!window) {
-      return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到微信窗口' }
+      return { ok: false, error: 'wechat_window_not_found', message: '未找到微信窗口' }
     }
     this.lastWindow = window
     this.cleanupExpiredSkippedCandidates(nowMs)
@@ -385,7 +404,7 @@ export class WeChatNativeDriver {
       return { ok: true, messages: [] }
     }
     if (!this.running || pollGeneration !== this.runGeneration) {
-      console.info('新方式本轮视觉解析跨过停止或重启，丢弃过期消息结果', {
+      console.info('本轮视觉解析跨过停止或重启，丢弃过期消息结果', {
         pollGeneration,
         currentGeneration: this.runGeneration,
         messageCount: snapshot.messages.length
@@ -440,7 +459,7 @@ export class WeChatNativeDriver {
       const customerReplyFingerprint = this.buildCustomerReplyFingerprint(snapshot.contact, parsedMessage)
       if (currentSnapshotLatestFingerprintByContent.get(contentFingerprint) !== fingerprint) {
         this.seenMessageFingerprints.add(fingerprint)
-        console.info('新方式识别到同一轮重复消息，已保留最新气泡并跳过较早重复项', {
+        console.info('识别到同一轮重复消息，已保留最新气泡并跳过较早重复项', {
           contact: snapshot.contact,
           content: parsedMessage.content.slice(0, 40),
           isSelf: parsedMessage.isSelf,
@@ -453,7 +472,7 @@ export class WeChatNativeDriver {
       }
       if (this.recentMessageContentFingerprints.has(contentFingerprint)) {
         this.seenMessageFingerprints.add(fingerprint)
-        console.info('新方式识别到疑似重复消息，已按内容指纹跳过', {
+        console.info('识别到疑似重复消息，已按内容指纹跳过', {
           contact: snapshot.contact,
           content: parsedMessage.content.slice(0, 40),
           isSelf: parsedMessage.isSelf,
@@ -484,7 +503,7 @@ export class WeChatNativeDriver {
         continue
       }
       if (!parsedMessage.isSelf && this.isRecentSentSelfReplyContent(snapshot.contact, parsedMessage.content)) {
-        console.info('新方式识别到视觉模型疑似把最近己方自动回复片段标成客户消息，已跳过触发', {
+        console.info('识别到视觉模型疑似把最近己方自动回复片段标成客户消息，已跳过触发', {
           contact: snapshot.contact,
           content: parsedMessage.content.slice(0, 40),
           uiId: parsedMessage.uiId
@@ -492,7 +511,7 @@ export class WeChatNativeDriver {
         continue
       }
       if (parsedMessage.isSelf) {
-        console.info('新方式轮询识别到己方消息，仅更新基线不追加显示', {
+        console.info('轮询识别到己方消息，仅更新基线不追加显示', {
           contact: snapshot.contact,
           content: parsedMessage.content.slice(0, 40),
           uiId: parsedMessage.uiId
@@ -541,7 +560,7 @@ export class WeChatNativeDriver {
         this.markStartupBaselineShortText(snapshot.contact, parsedMessage)
       }
       if (!shouldTriggerReply && !hadPreviousBaseline) {
-        console.info('新方式首次扫描跳过当前可见历史消息', {
+        console.info('首次扫描跳过当前可见历史消息', {
           contact: snapshot.contact,
           content: parsedMessage.content.slice(0, 40),
           isSelf: parsedMessage.isSelf
@@ -604,7 +623,7 @@ export class WeChatNativeDriver {
 
     if (messages.length > 0) {
       this.lastWechatActivityAt = Date.now()
-      console.info('新方式读取到微信消息', {
+      console.info('读取到微信消息', {
         contact: snapshot.contact,
         count: messages.length,
         hasNewReplyTrigger,
@@ -629,7 +648,7 @@ export class WeChatNativeDriver {
     }
     const window = await findWeChatWindow(this.channel)
     if (!window || !isPlausibleWeChatWindow(window, this.channel)) {
-      return { ok: false, error: 'wechat_window_not_found', message: '新方式未找到可信微信窗口，无法发送消息' }
+      return { ok: false, error: 'wechat_window_not_found', message: '未找到可信微信窗口，无法发送消息' }
     }
     window.scaleFactor = this.lastWindow?.scaleFactor || 1
     this.lastWindow = window
@@ -656,7 +675,7 @@ export class WeChatNativeDriver {
     if (success) {
       setTimeout(() => {
         this.refreshBaseline(window).catch((error) => {
-          console.warn('新方式发送后刷新消息基线失败', error)
+          console.warn('发送后刷新消息基线失败', error)
         })
       }, 800)
     }
@@ -668,7 +687,7 @@ export class WeChatNativeDriver {
         sentMessage: this.buildSentSelfMessage(targetContact, content || this.describeAttachments(preparedAttachments), preparedAttachments)
       }
     }
-    return { ok: false, success: false, error: 'send_failed', message: '新方式发送失败' }
+    return { ok: false, success: false, error: 'send_failed', message: '发送失败' }
   }
 
   private async prepareOutboundAttachments(attachments: WeChatOutboundAttachment[]): Promise<WeChatOutboundAttachment[]> {
@@ -732,6 +751,15 @@ export class WeChatNativeDriver {
     if (action === 'copy_image_message') {
       return this.copyImageMessage(payload)
     }
+    if (action === 'set_vision_debug_capture') {
+      return {
+        ok: true,
+        ...configureVisionDebugRecorder(payload?.enabled !== false, String(payload?.outputDir || '').trim())
+      }
+    }
+    if (action === 'get_vision_debug_capture') {
+      return { ok: true, ...getVisionDebugRecorderStatus() }
+    }
     if (action === 'reply_session_started') {
       return this.markReplySessionStarted(payload?.sessionKey)
     }
@@ -751,12 +779,12 @@ export class WeChatNativeDriver {
         attachments: Array.isArray(payload.attachments) ? payload.attachments : []
       })
     }
-    return { ok: false, error: 'native_command_unsupported', message: `新方式暂不支持该微信指令：${action || '未知指令'}` }
+    return { ok: false, error: 'native_command_unsupported', message: `暂不支持该微信指令：${action || '未知指令'}` }
   }
 
   async setManagedMode(mode: unknown): Promise<NativeDriverResult> {
     this.managedMode = mode === 'semi' ? 'semi' : 'full'
-    console.info('新方式托管模式已更新', { managedMode: this.managedMode })
+    console.info('托管模式已更新', { managedMode: this.managedMode })
     return { ok: true, mode: this.managedMode }
   }
 
@@ -786,7 +814,19 @@ export class WeChatNativeDriver {
       return { ok: false, error: 'native_image_crop_empty', message: '微信图片裁剪结果为空' }
     }
     const croppedSize = croppedImage.getSize()
-    console.info('新方式已从微信截图裁剪图片消息', {
+    await saveVisionDebugImage({
+      stage: 'image-message',
+      image: croppedImage,
+      window: cached.screenshotWindow,
+      metadata: {
+        contact: cached.contact,
+        uiId: cached.uiId,
+        cropRect,
+        sourceSize,
+        croppedSize
+      }
+    })
+    console.info('已从微信截图裁剪图片消息', {
       contact: cached.contact,
       uiId: cached.uiId,
       cropRect,
@@ -810,20 +850,20 @@ export class WeChatNativeDriver {
     }
     this.activeReplySessionKey = normalizedSessionKey
     this.pendingReplySessionKey = normalizedSessionKey
-    console.info('新方式已锁定当前回复会话', { sessionKey: normalizedSessionKey })
+    console.info('已锁定当前回复会话', { sessionKey: normalizedSessionKey })
     return { ok: true, sessionKey: normalizedSessionKey }
   }
 
   private async markReplySessionFinished(sessionKey: unknown): Promise<NativeDriverResult> {
     const normalizedSessionKey = String(sessionKey || '').trim()
     if (normalizedSessionKey && this.activeReplySessionKey && this.activeReplySessionKey !== normalizedSessionKey) {
-      console.info('新方式收到其他会话的结束通知，保留当前锁定会话', {
+      console.info('收到其他会话的结束通知，保留当前锁定会话', {
         sessionKey: normalizedSessionKey,
         activeReplySessionKey: this.activeReplySessionKey
       })
       return { ok: true, sessionKey: this.activeReplySessionKey, ignored: true }
     }
-    console.info('新方式已释放当前回复会话锁', {
+    console.info('已释放当前回复会话锁', {
       sessionKey: normalizedSessionKey || this.activeReplySessionKey || this.pendingReplySessionKey
     })
     this.activeReplySessionKey = ''
@@ -874,18 +914,15 @@ export class WeChatNativeDriver {
         return this.skipMarketingAction(selection.error || 'no_candidate', '没有可安全互动的朋友圈动态')
       }
       const candidate = selection.candidate
-      let menuPoint: MarketingMomentPoint | null = null
-      if (action === 'like' || action === 'comment') {
-        menuPoint = this.resolveMarketingLikeMenuPoint(screenshot, recognition.moments, selection.candidateIndex, candidate)
-        if (!menuPoint) {
-          return this.skipMarketingAction(
-            action === 'like' ? 'like_menu_point_not_found' : 'comment_menu_point_not_found',
-            action === 'like' ? '未在朋友圈截图内确认到可匹配的点赞菜单入口' : '未在朋友圈截图内确认到可匹配的评论菜单入口',
-            candidate.author
-          )
-        }
-        candidate.localVisualDigest = this.resolveMarketingLocalVisualDigest(localVisualDigests, menuPoint, screenshot.scaleFactor)
+      const menuPoint = this.resolveMarketingLikeMenuPoint(screenshot, recognition.moments, selection.candidateIndex, candidate)
+      if (!menuPoint) {
+        return this.skipMarketingAction(
+          action === 'like' ? 'like_menu_point_not_found' : 'comment_menu_point_not_found',
+          action === 'like' ? '未在朋友圈截图内确认到可匹配的点赞菜单入口' : '未在朋友圈截图内确认到可匹配的评论菜单入口',
+          candidate.author
+        )
       }
+      candidate.localVisualDigest = this.resolveMarketingLocalVisualDigest(localVisualDigests, menuPoint, screenshot.scaleFactor)
 
       const postFingerprint = this.buildMarketingPostFingerprint(candidate)
       const legacyPostFingerprint = this.buildMarketingLegacyPostBoundsFingerprint(candidate)
@@ -2258,9 +2295,9 @@ export class WeChatNativeDriver {
     try {
       const snapshot = await this.readSnapshot(window)
       this.markSnapshotAsBaseline(snapshot)
-      console.info('新方式已建立当前会话消息基线', { count: snapshot.messages.length })
+      console.info('已建立当前会话消息基线', { count: snapshot.messages.length })
     } catch (error) {
-      console.warn('新方式建立消息基线失败，后续轮询会继续尝试', error)
+      console.warn('建立消息基线失败，后续轮询会继续尝试', error)
     }
   }
 
@@ -2335,35 +2372,137 @@ export class WeChatNativeDriver {
     return !!fingerprints?.has(this.buildStartupBaselineCustomerTextFingerprint(contact, normalizedContent))
   }
 
-  private buildCurrentChatSnapshotRegion(screenshot: WeChatScreenshot): SnapshotRegion {
+  private buildCurrentChatSnapshotRegion(window: WindowBounds, screenshot: WeChatScreenshot): CurrentChatRegionResult {
     const detection = detectCurrentChatSnapshotRegion(screenshot)
-    if (detection.source === 'dynamic') {
-      console.info('新方式已动态识别当前聊天变化检测区域', {
-        region: detection.region,
+    const nextRegion = detection.region
+    const signature = [
+      window.hwnd,
+      screenshot.width,
+      screenshot.height,
+      screenshot.scaleFactor,
+      nextRegion.x,
+      nextRegion.y,
+      nextRegion.width,
+      nextRegion.height
+    ].join(':')
+    if (this.cachedChatRegion?.signature === signature) {
+      return {
+        ...this.cachedChatRegion,
+        cacheStatus: 'reused'
+      }
+    }
+
+    const previousRegion = this.cachedChatRegion
+    this.cachedChatRegion = {
+      region: nextRegion,
+      signature,
+      source: detection.source,
+      confidence: detection.confidence,
+      reason: detection.reason,
+      splitterX: detection.splitterX,
+      inputTopY: detection.inputTopY
+    }
+
+    if (previousRegion) {
+      console.info('微信当前聊天变化检测区域已更新', {
+        previousRegion: previousRegion.region,
+        region: nextRegion,
+        source: detection.source,
+        reason: detection.reason,
         confidence: detection.confidence,
+        splitterX: detection.splitterX,
+        inputTopY: detection.inputTopY,
         screenshot: { width: screenshot.width, height: screenshot.height, scaleFactor: screenshot.scaleFactor }
       })
-      return detection.region
+      return {
+        ...this.cachedChatRegion,
+        cacheStatus: 'updated'
+      }
     }
-    const fallback = buildFallbackCurrentChatRegion(screenshot)
-    console.info('新方式当前聊天变化检测区域动态识别失败，已回退固定比例区域', {
+
+    console.info('微信当前聊天变化检测区域已建立', {
+      region: nextRegion,
+      source: detection.source,
       reason: detection.reason,
-      fallback,
       confidence: detection.confidence,
+      splitterX: detection.splitterX,
+      inputTopY: detection.inputTopY,
       screenshot: { width: screenshot.width, height: screenshot.height, scaleFactor: screenshot.scaleFactor }
     })
-    return fallback
+    return {
+      ...this.cachedChatRegion,
+      cacheStatus: 'created'
+    }
+  }
+
+  private async saveCurrentChatRegionDebugImage(
+    screenshot: WeChatScreenshot,
+    window: WindowBounds,
+    region: SnapshotRegion,
+    metadata: Record<string, unknown>
+  ): Promise<void> {
+    const sourceImage = nativeImage.createFromBuffer(screenshot.png)
+    if (sourceImage.isEmpty()) {
+      return
+    }
+    const sourceSize = sourceImage.getSize()
+    const cropRect = {
+      x: Math.max(0, Math.min(sourceSize.width - 1, Math.round(region.x))),
+      y: Math.max(0, Math.min(sourceSize.height - 1, Math.round(region.y))),
+      width: Math.max(1, Math.min(sourceSize.width - Math.round(region.x), Math.round(region.width))),
+      height: Math.max(1, Math.min(sourceSize.height - Math.round(region.y), Math.round(region.height)))
+    }
+    const croppedImage = sourceImage.crop(cropRect)
+    if (croppedImage.isEmpty()) {
+      return
+    }
+    await saveVisionDebugImage({
+      stage: 'chat-region',
+      image: croppedImage,
+      window,
+      metadata: {
+        ...metadata,
+        region,
+        cropRect,
+        sourceSize,
+        screenshot: {
+          width: screenshot.width,
+          height: screenshot.height,
+          scaleFactor: screenshot.scaleFactor
+        }
+      }
+    })
   }
 
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {
     const previousScreenshotPng = this.lastScreenshotPng
     let screenshot = await captureWeChatWindow(window)
     window.scaleFactor = screenshot.scaleFactor
+    await saveVisionDebugImage({
+      stage: 'window',
+      image: screenshot,
+      window,
+      metadata: {
+        reason: 'poll_snapshot',
+        previousScreenshot: !!previousScreenshotPng
+      }
+    })
     let diff = comparePngSnapshots(previousScreenshotPng, screenshot.png)
+    let currentChatRegionResult = this.buildCurrentChatSnapshotRegion(window, screenshot)
+    await this.saveCurrentChatRegionDebugImage(screenshot, window, currentChatRegionResult.region, {
+      reason: 'poll_current_chat_diff',
+      previousScreenshot: !!previousScreenshotPng,
+      regionCacheStatus: currentChatRegionResult.cacheStatus,
+      regionSource: currentChatRegionResult.source,
+      regionReason: currentChatRegionResult.reason,
+      regionConfidence: currentChatRegionResult.confidence,
+      splitterX: currentChatRegionResult.splitterX,
+      inputTopY: currentChatRegionResult.inputTopY
+    })
     let currentChatDiff = comparePngSnapshotRegion(
       previousScreenshotPng,
       screenshot.png,
-      this.buildCurrentChatSnapshotRegion(screenshot),
+      currentChatRegionResult.region,
       CURRENT_CHAT_REGION_CHANGE_RATIO
     )
     this.lastScreenshotPng = screenshot.png
@@ -2375,7 +2514,7 @@ export class WeChatNativeDriver {
     const shouldParseCurrentChatChange = currentChatDiff.changed || shouldParseMinorCurrentChatChange
     let switchedUnreadConversation = false
     if (shouldParseMinorCurrentChatChange) {
-      console.info('新方式检测到当前聊天轻微变化，按短消息气泡处理并请求视觉解析', {
+      console.info('检测到当前聊天轻微变化，按短消息气泡处理并请求视觉解析', {
         digest: currentChatDiff.digest,
         changedRatio: currentChatDiff.changedRatio
       })
@@ -2396,14 +2535,14 @@ export class WeChatNativeDriver {
       })
       if (candidate) {
         if (this.activeReplySessionKey) {
-          console.info('新方式当前会话仍在回复中，本轮仅扫描未读但不点击', {
+          console.info('当前会话仍在回复中，本轮仅扫描未读但不点击', {
             activeReplySessionKey: this.activeReplySessionKey,
             candidateId: candidate.id
           })
         } else {
           const candidateCheck = await this.checkUnreadCandidateBeforeClick(screenshot, window, candidate)
           if (!candidateCheck.shouldSkip) {
-            console.info('新方式检测到未读会话红点，准备拟人化切换会话', {
+            console.info('检测到未读会话红点，准备拟人化切换会话', {
               candidateId: candidate.id,
               centerX: candidate.centerX,
               centerY: candidate.centerY,
@@ -2420,14 +2559,26 @@ export class WeChatNativeDriver {
               screenshot = await captureWeChatWindow(window)
               window.scaleFactor = screenshot.scaleFactor
               diff = comparePngSnapshots(previousPng, screenshot.png)
+              currentChatRegionResult = this.buildCurrentChatSnapshotRegion(window, screenshot)
+              await this.saveCurrentChatRegionDebugImage(screenshot, window, currentChatRegionResult.region, {
+                reason: 'unread_switch_current_chat_diff',
+                candidateId: candidate.id,
+                previousScreenshot: true,
+                regionCacheStatus: currentChatRegionResult.cacheStatus,
+                regionSource: currentChatRegionResult.source,
+                regionReason: currentChatRegionResult.reason,
+                regionConfidence: currentChatRegionResult.confidence,
+                splitterX: currentChatRegionResult.splitterX,
+                inputTopY: currentChatRegionResult.inputTopY
+              })
               currentChatDiff = comparePngSnapshotRegion(
                 previousPng,
                 screenshot.png,
-                this.buildCurrentChatSnapshotRegion(screenshot),
+                currentChatRegionResult.region,
                 CURRENT_CHAT_REGION_CHANGE_RATIO
               )
               this.lastScreenshotPng = screenshot.png
-              console.info('新方式已切换未读会话并重新截图', {
+              console.info('已切换未读会话并重新截图', {
                 candidateId: candidate.id,
                 settleMs,
                 changedRatio: diff.changedRatio,
@@ -2439,7 +2590,7 @@ export class WeChatNativeDriver {
       }
     }
     if (!shouldParseCurrentChatChange && !shouldRetryFailedVision && !switchedUnreadConversation) {
-      console.info('新方式截图无明显变化，本轮不请求视觉模型', {
+      console.info('截图无明显变化，本轮不请求视觉模型', {
         digest: diff.digest,
         changedRatio: diff.changedRatio,
         currentChatChangedRatio: currentChatDiff.changedRatio
@@ -2448,7 +2599,7 @@ export class WeChatNativeDriver {
       return null
     }
     if (!shouldParseCurrentChatChange && shouldRetryFailedVision && !switchedUnreadConversation && Date.now() < this.nextVisionRetryAt) {
-      console.info('新方式上次视觉解析失败且当前聊天区无变化，等待冷却后再重试', {
+      console.info('上次视觉解析失败且当前聊天区无变化，等待冷却后再重试', {
         digest: diff.digest,
         failureCount: this.consecutiveVisionFailures,
         nextVisionRetryAt: this.nextVisionRetryAt,
@@ -2458,7 +2609,7 @@ export class WeChatNativeDriver {
       return null
     }
     if (!shouldParseCurrentChatChange && shouldRetryFailedVision) {
-      console.info('新方式上次视觉解析失败，本轮复用当前截图继续重试', {
+      console.info('上次视觉解析失败，本轮复用当前截图继续重试', {
         digest: diff.digest,
         failureCount: this.consecutiveVisionFailures,
         currentChatChangedRatio: currentChatDiff.changedRatio
@@ -2487,9 +2638,9 @@ export class WeChatNativeDriver {
       this.nextVisionRetryAt = Date.now() + VISION_FAILURE_RETRY_COOLDOWN_MS
       const errorMessage = error?.message || String(error)
       this.lastVisionErrorMessage = this.consecutiveVisionFailures >= MAX_CONSECUTIVE_VISION_FAILURES
-        ? `新方式视觉解析连续失败，请检查后端 Qwen-VL 配置或网络连接：${errorMessage}`
+        ? `视觉解析连续失败，请检查后端 Qwen-VL 配置或网络连接：${errorMessage}`
         : errorMessage
-      console.warn('新方式视觉解析失败', {
+      console.warn('视觉解析失败', {
         failureCount: this.consecutiveVisionFailures,
         error: errorMessage
       })
@@ -2620,7 +2771,7 @@ export class WeChatNativeDriver {
     for (const message of snapshot.messages) {
       const result = applyMessageVisionGuard(message, guardContext)
       if (!result.message) {
-        console.info('新方式本地视觉守卫跳过疑似模型误报消息', {
+        console.info('本地视觉守卫跳过疑似模型误报消息', {
           contact: snapshot.contact,
           content: message.content.slice(0, 40),
           uiId: message.uiId,
@@ -2631,7 +2782,7 @@ export class WeChatNativeDriver {
         continue
       }
       if (result.correctedIsSelf) {
-        console.info('新方式本地视觉守卫已按气泡颜色和位置纠正消息归属', {
+        console.info('本地视觉守卫已按气泡颜色和位置纠正消息归属', {
           contact: snapshot.contact,
           content: message.content.slice(0, 40),
           uiId: message.uiId,
@@ -2681,7 +2832,7 @@ export class WeChatNativeDriver {
         imageHeight: size.height
       }
     } catch (error) {
-      console.warn('新方式本地视觉守卫读取截图像素失败，降级为仅使用模型结果', error)
+      console.warn('本地视觉守卫读取截图像素失败，降级为仅使用模型结果', error)
       return {
         imageWidth: screenshot.width,
         imageHeight: screenshot.height
@@ -2711,7 +2862,7 @@ export class WeChatNativeDriver {
         recognized.skipAutoReply = true
       }
       this.markCandidateSkipped(candidate, recognized)
-      console.info('新方式点击前命中特殊会话过滤规则，直接跳过', {
+      console.info('点击前命中特殊会话过滤规则，直接跳过', {
         candidateId: candidate.id,
         contact: recognized.contact,
         accountCategory: recognized.accountCategory,
@@ -2720,7 +2871,7 @@ export class WeChatNativeDriver {
       })
       return { shouldSkip: true, recognized }
     } catch (error) {
-      console.warn('新方式点击前会话预判失败，降级为继续原流程', {
+      console.warn('点击前会话预判失败，降级为继续原流程', {
         candidateId: candidate.id,
         error
       })
@@ -2729,7 +2880,7 @@ export class WeChatNativeDriver {
   }
 
   private async handleSkippedSnapshot(window: WindowBounds, snapshot: ParsedWeChatSnapshot): Promise<void> {
-    console.info('新方式在聊天窗口中识别到特殊会话，准备返回会话列表', {
+    console.info('在聊天窗口中识别到特殊会话，准备返回会话列表', {
       contact: snapshot.contact,
       accountCategory: snapshot.accountCategory,
       skipReason: snapshot.skipReason
@@ -2899,12 +3050,12 @@ export class WeChatNativeDriver {
           legacyCount: parsed.fingerprints.length
         })
       }
-      console.info('新方式已加载客户消息回复记录', {
+      console.info('已加载客户消息回复记录', {
         count: this.repliedCustomerFingerprints.size
       })
     } catch (error: any) {
       if (error?.code !== 'ENOENT') {
-        console.warn('新方式加载客户消息回复记录失败，将从空记录继续', error)
+        console.warn('加载客户消息回复记录失败，将从空记录继续', error)
       }
       this.repliedCustomerFingerprintOrder = []
       this.repliedCustomerFingerprints.clear()
@@ -2927,7 +3078,7 @@ export class WeChatNativeDriver {
       await mkdir(dirname(this.getRepliedStorePath()), { recursive: true })
       await writeFile(this.getRepliedStorePath(), `${JSON.stringify(store, null, 2)}\n`, 'utf-8')
     } catch (error) {
-      console.warn('新方式保存客户消息回复记录失败', error)
+      console.warn('保存客户消息回复记录失败', error)
     }
   }
 
@@ -3120,7 +3271,7 @@ export class WeChatNativeDriver {
 
   private cacheImageMessage(contact: string, message: ParsedWeChatMessage): void {
     if (!this.latestSnapshotScreenshot || !message.bounds) {
-      console.info('新方式识别到图片消息但缺少截图或气泡坐标，暂不缓存裁剪信息', {
+      console.info('识别到图片消息但缺少截图或气泡坐标，暂不缓存裁剪信息', {
         contact,
         uiId: message.uiId,
         hasSnapshot: !!this.latestSnapshotScreenshot,
@@ -3133,6 +3284,16 @@ export class WeChatNativeDriver {
       uiId: message.uiId,
       bounds: message.bounds,
       screenshot: this.latestSnapshotScreenshot,
+      screenshotWindow: this.lastWindow ? { ...this.lastWindow } : {
+        hwnd: 0,
+        title: contact,
+        className: '',
+        x: 0,
+        y: 0,
+        width: this.latestSnapshotScreenshot.width,
+        height: this.latestSnapshotScreenshot.height,
+        scaleFactor: this.latestSnapshotScreenshot.scaleFactor
+      },
       expiresAt: Date.now() + IMAGE_MESSAGE_CACHE_TTL_MS
     })
   }
@@ -3236,7 +3397,7 @@ export class WeChatNativeDriver {
       bitmap = sourceImage.toBitmap()
     } catch (error) {
       if (shouldLog) {
-        console.warn('新方式微信图片裁剪二次收紧失败，保留视觉模型原始区域', error)
+        console.warn('微信图片裁剪二次收紧失败，保留视觉模型原始区域', error)
       }
       return cropRect
     }
@@ -3273,7 +3434,7 @@ export class WeChatNativeDriver {
       return cropRect
     }
     if (shouldLog) {
-      console.info('新方式已二次收紧微信图片裁剪区域', {
+      console.info('已二次收紧微信图片裁剪区域', {
         originalCropRect: cropRect,
         refinedCropRect: refinedRect
       })

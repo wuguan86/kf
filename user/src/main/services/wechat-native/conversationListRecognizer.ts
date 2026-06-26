@@ -1,5 +1,6 @@
 import { nativeImage } from 'electron'
 import { recognizeConversationListItemWithVision } from './visionClient'
+import { saveVisionDebugImage } from './visionDebugRecorder'
 import type {
   ConversationListItemRecognition,
   UnreadConversationCandidate,
@@ -24,10 +25,21 @@ export const recognizeUnreadConversationCandidate = async (
   channel: WeChatChannel,
   config: WeChatVisionRuntimeConfig
 ): Promise<ConversationListItemRecognition | null> => {
-  const rowScreenshot = cropConversationRowScreenshot(screenshot, window, candidate, channel)
+  const cropResult = cropConversationRowScreenshot(screenshot, window, candidate, channel)
+  const rowScreenshot = cropResult?.screenshot
   if (!rowScreenshot) {
     return null
   }
+  await saveVisionDebugImage({
+    stage: 'conversation-row',
+    image: rowScreenshot,
+    window,
+    metadata: {
+      channel,
+      candidate,
+      cropRect: cropResult.cropRect
+    }
+  })
   return recognizeConversationListItemWithVision(rowScreenshot.dataUrl, window, config)
 }
 
@@ -36,7 +48,7 @@ const cropConversationRowScreenshot = (
   window: WindowBounds,
   candidate: UnreadConversationCandidate,
   channel: WeChatChannel
-): WeChatScreenshot | null => {
+): { screenshot: WeChatScreenshot; cropRect: { x: number; y: number; width: number; height: number } } | null => {
   const image = nativeImage.createFromBuffer(screenshot.png)
   if (image.isEmpty()) {
     return null
@@ -70,10 +82,18 @@ const cropConversationRowScreenshot = (
     height: cropHeight
   })
   return {
-    dataUrl: cropped.toDataURL(),
-    png: cropped.toPNG(),
-    width: cropped.getSize().width,
-    height: cropped.getSize().height,
-    scaleFactor: screenshot.scaleFactor
+    screenshot: {
+      dataUrl: cropped.toDataURL(),
+      png: cropped.toPNG(),
+      width: cropped.getSize().width,
+      height: cropped.getSize().height,
+      scaleFactor: screenshot.scaleFactor
+    },
+    cropRect: {
+      x: cropLeft,
+      y: cropTop,
+      width: cropWidth,
+      height: cropHeight
+    }
   }
 }

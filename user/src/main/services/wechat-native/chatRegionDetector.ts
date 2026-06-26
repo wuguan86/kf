@@ -12,11 +12,13 @@ const SPLITTER_SCAN_LEFT_RATIO = 0.22
 const SPLITTER_SCAN_RIGHT_RATIO = 0.62
 const SPLITTER_SCAN_TOP_RATIO = 0.08
 const SPLITTER_SCAN_BOTTOM_RATIO = 0.9
-const INPUT_SCAN_TOP_RATIO = 0.55
-const INPUT_SCAN_BOTTOM_RATIO = 0.92
+const INPUT_SCAN_TOP_RATIO = 0.62
+const INPUT_SCAN_BOTTOM_RATIO = 0.96
 const INPUT_BOTTOM_PADDING_PX = 8
 const MIN_SPLITTER_SCORE = 22
 const MIN_INPUT_TOP_SCORE = 18
+const INPUT_TOP_STRONG_EDGE_SCORE = 10
+const INPUT_TOP_MIN_COVERAGE = 0.5
 const SAMPLE_STEP = 8
 
 export type ChatRegionDetection = {
@@ -24,6 +26,8 @@ export type ChatRegionDetection = {
   source: 'dynamic' | 'fallback'
   confidence: number
   reason: string
+  splitterX?: number
+  inputTopY?: number
 }
 
 const clampNumber = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
@@ -64,7 +68,7 @@ export const detectCurrentChatSnapshotRegion = (screenshot: WeChatScreenshot): C
 
   const inputTop = detectInputTop(bitmap, size.width, size.height, splitter.x)
   if (!inputTop) {
-    return { region: fallback, source: 'fallback', confidence: splitter.confidence, reason: 'input_top_not_found' }
+    return { region: fallback, source: 'fallback', confidence: splitter.confidence, reason: 'input_top_not_found', splitterX: splitter.x }
   }
 
   const top = Math.floor(size.height * CHAT_TOP_RATIO)
@@ -83,7 +87,9 @@ export const detectCurrentChatSnapshotRegion = (screenshot: WeChatScreenshot): C
       region: fallback,
       source: 'fallback',
       confidence: Math.min(splitter.confidence, inputTop.confidence),
-      reason: 'dynamic_region_not_plausible'
+      reason: 'dynamic_region_not_plausible',
+      splitterX: splitter.x,
+      inputTopY: inputTop.y
     }
   }
 
@@ -91,7 +97,9 @@ export const detectCurrentChatSnapshotRegion = (screenshot: WeChatScreenshot): C
     region,
     source: 'dynamic',
     confidence: Math.min(splitter.confidence, inputTop.confidence),
-    reason: 'dynamic_region_detected'
+    reason: 'dynamic_region_detected',
+    splitterX: splitter.x,
+    inputTopY: inputTop.y
   }
 }
 
@@ -142,28 +150,40 @@ const detectInputTop = (
   const maxX = Math.min(width - 2, Math.max(minX, width - Math.round(width * 0.04)))
   let bestY = 0
   let bestScore = 0
+  let bestCoverage = 0
 
-  for (let y = minY; y <= maxY; y += 1) {
+  for (let y = maxY; y >= minY; y -= 1) {
     let score = 0
     let samples = 0
+    let strongEdges = 0
     for (let x = minX; x <= maxX; x += SAMPLE_STEP) {
       const current = getLuma(bitmap, width, x, y)
       const above = getLuma(bitmap, width, x, y - 2)
       const below = getLuma(bitmap, width, x, y + 2)
-      score += Math.abs(current - above) + Math.abs(current - below) + Math.abs(above - below)
+      const edgeScore = Math.abs(current - above) + Math.abs(current - below) + Math.abs(above - below)
+      score += edgeScore
+      if (edgeScore >= INPUT_TOP_STRONG_EDGE_SCORE) {
+        strongEdges += 1
+      }
       samples += 1
     }
     const averageScore = samples > 0 ? score / samples : 0
-    if (averageScore > bestScore) {
+    const coverage = samples > 0 ? strongEdges / samples : 0
+    // 输入框顶部应该是一条横向连续分割线；单个消息气泡边缘虽然局部很强，但横向覆盖不足，不能作为下边界。
+    if (coverage < INPUT_TOP_MIN_COVERAGE) {
+      continue
+    }
+    if (averageScore > bestScore || (averageScore >= bestScore * 0.9 && y > bestY)) {
       bestScore = averageScore
       bestY = y
+      bestCoverage = coverage
     }
   }
 
   if (bestScore < MIN_INPUT_TOP_SCORE) {
     return null
   }
-  return { y: bestY, confidence: clampNumber(bestScore / 70, 0.1, 1) }
+  return { y: bestY, confidence: clampNumber((bestScore / 70) * bestCoverage, 0.1, 1) }
 }
 
 const isPlausibleChatRegion = (region: SnapshotRegion, width: number, height: number): boolean => {

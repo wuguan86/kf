@@ -10,6 +10,7 @@
 *.sw?
 *.iml
 .trae/
+.claude/
 
 # 忽略 Maven 编译生成的目录（最重要）
 target/
