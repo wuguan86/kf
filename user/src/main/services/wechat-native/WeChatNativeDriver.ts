@@ -229,7 +229,7 @@ type MarketingCommentGenerationResult = {
 
 type CachedChatRegion = {
   region: SnapshotRegion
-  signature: string
+  windowSignature: string
   source: 'dynamic' | 'fallback'
   confidence: number
   reason: string
@@ -239,6 +239,26 @@ type CachedChatRegion = {
 
 type CurrentChatRegionResult = CachedChatRegion & {
   cacheStatus: 'created' | 'reused' | 'updated'
+}
+
+const CHAT_REGION_EDGE_TOLERANCE_PX = 8
+const CHAT_REGION_SIZE_TOLERANCE_PX = 12
+
+const buildChatRegionWindowSignature = (window: WindowBounds, screenshot: WeChatScreenshot): string => {
+  return [window.hwnd, screenshot.width, screenshot.height, screenshot.scaleFactor || 1].join(':')
+}
+
+const isChatRegionCloseEnough = (previousRegion: SnapshotRegion, nextRegion: SnapshotRegion): boolean => {
+  const previousRight = previousRegion.x + previousRegion.width
+  const previousBottom = previousRegion.y + previousRegion.height
+  const nextRight = nextRegion.x + nextRegion.width
+  const nextBottom = nextRegion.y + nextRegion.height
+  return Math.abs(previousRegion.x - nextRegion.x) <= CHAT_REGION_EDGE_TOLERANCE_PX &&
+    Math.abs(previousRegion.y - nextRegion.y) <= CHAT_REGION_EDGE_TOLERANCE_PX &&
+    Math.abs(previousRight - nextRight) <= CHAT_REGION_EDGE_TOLERANCE_PX &&
+    Math.abs(previousBottom - nextBottom) <= CHAT_REGION_EDGE_TOLERANCE_PX &&
+    Math.abs(previousRegion.width - nextRegion.width) <= CHAT_REGION_SIZE_TOLERANCE_PX &&
+    Math.abs(previousRegion.height - nextRegion.height) <= CHAT_REGION_SIZE_TOLERANCE_PX
 }
 
 export class WeChatNativeDriver {
@@ -2375,27 +2395,27 @@ export class WeChatNativeDriver {
   private buildCurrentChatSnapshotRegion(window: WindowBounds, screenshot: WeChatScreenshot): CurrentChatRegionResult {
     const detection = detectCurrentChatSnapshotRegion(screenshot)
     const nextRegion = detection.region
-    const signature = [
-      window.hwnd,
-      screenshot.width,
-      screenshot.height,
-      screenshot.scaleFactor,
-      nextRegion.x,
-      nextRegion.y,
-      nextRegion.width,
-      nextRegion.height
-    ].join(':')
-    if (this.cachedChatRegion?.signature === signature) {
+    const previousRegion = this.cachedChatRegion
+    const windowSignature = buildChatRegionWindowSignature(window, screenshot)
+    const hasCachedRegionForCurrentWindow = previousRegion?.windowSignature === windowSignature
+
+    if (hasCachedRegionForCurrentWindow && previousRegion && detection.source === 'fallback') {
       return {
-        ...this.cachedChatRegion,
+        ...previousRegion,
         cacheStatus: 'reused'
       }
     }
 
-    const previousRegion = this.cachedChatRegion
+    if (hasCachedRegionForCurrentWindow && previousRegion && isChatRegionCloseEnough(previousRegion.region, nextRegion)) {
+      return {
+        ...previousRegion,
+        cacheStatus: 'reused'
+      }
+    }
+
     this.cachedChatRegion = {
       region: nextRegion,
-      signature,
+      windowSignature,
       source: detection.source,
       confidence: detection.confidence,
       reason: detection.reason,
@@ -2403,7 +2423,7 @@ export class WeChatNativeDriver {
       inputTopY: detection.inputTopY
     }
 
-    if (previousRegion) {
+    if (hasCachedRegionForCurrentWindow && previousRegion) {
       console.info('微信当前聊天变化检测区域已更新', {
         previousRegion: previousRegion.region,
         region: nextRegion,

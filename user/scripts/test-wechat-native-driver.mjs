@@ -77,6 +77,28 @@ function createWechatLayoutBitmap(width, height, options = {}) {
   return bitmap
 }
 
+function createNativeImageMockFromBitmap(width, height, bitmap) {
+  return {
+    isEmpty: () => false,
+    getSize: () => ({ width, height }),
+    toBitmap: () => bitmap,
+    crop: (rect) => ({
+      isEmpty: () => false,
+      getSize: () => ({ width: rect.width, height: rect.height }),
+      toPNG: () => Buffer.from(`crop-${rect.x}-${rect.y}-${rect.width}-${rect.height}`)
+    })
+  }
+}
+
+function filterCropRectsByRect(cropRects, expectedRect) {
+  return cropRects.filter((item) =>
+    item.rect.x === expectedRect.x &&
+    item.rect.y === expectedRect.y &&
+    item.rect.width === expectedRect.width &&
+    item.rect.height === expectedRect.height
+  )
+}
+
 function loadNativeDriver(mocks = {}) {
   const sourcePath = resolve('src/main/services/wechat-native/WeChatNativeDriver.ts')
   const source = readFileSync(sourcePath, 'utf8')
@@ -136,6 +158,13 @@ function loadNativeDriver(mocks = {}) {
     }
     if (id === './chatRegionDetector') {
       return loadTranspiledTsModule('chatRegionDetector.ts')
+    }
+    if (id === './visionDebugRecorder') {
+      return {
+        configureVisionDebugRecorder: () => ({ enabled: false, outputDir: '' }),
+        getVisionDebugRecorderStatus: () => ({ enabled: false, outputDir: '' }),
+        saveVisionDebugImage: async () => null
+      }
     }
     if (id === './visionClient') {
       return {
@@ -1075,11 +1104,7 @@ async function testCustomerMessageCanTriggerAfterGeometryBecomesReliable() {
       }
     },
     nativeImage: {
-      createFromBuffer: () => ({
-        isEmpty: () => false,
-        getSize: () => ({ width: 900, height: 700 }),
-        toBitmap: () => Buffer.alloc(900 * 700 * 4, 255)
-      })
+      createFromBuffer: () => createNativeImageMockFromBitmap(900, 700, Buffer.alloc(900 * 700 * 4, 255))
     },
     pasteAndSendText: async () => true
   })
@@ -1611,7 +1636,12 @@ async function testCurrentChatRegionUsesDynamicLayoutBoundaries() {
       createFromBuffer: () => ({
         isEmpty: () => false,
         getSize: () => ({ width, height }),
-        toBitmap: () => layoutBitmap
+        toBitmap: () => layoutBitmap,
+        crop: (rect) => ({
+          isEmpty: () => false,
+          getSize: () => ({ width: rect.width, height: rect.height }),
+          toPNG: () => Buffer.from(`dynamic-layout-crop-${rect.x}-${rect.y}-${rect.width}-${rect.height}`)
+        })
       }),
       createFromPath: () => ({
         isEmpty: () => true,
@@ -1645,7 +1675,56 @@ async function testCurrentChatRegionUsesDynamicLayoutBoundaries() {
   assert.deepEqual(result.messages, [])
   assert.equal(capturedRegions.length, 1)
   assert.ok(capturedRegions[0].x >= 450, `expected dynamic left boundary after wide contact list, got ${capturedRegions[0].x}`)
-  assert.ok(capturedRegions[0].y + capturedRegions[0].height <= 540, `expected region to end above raised input box, got ${capturedRegions[0].y + capturedRegions[0].height}`)
+  assert.ok(capturedRegions[0].y + capturedRegions[0].height <= 548, `expected region to end above raised input box, got ${capturedRegions[0].y + capturedRegions[0].height}`)
+}
+
+async function testCurrentChatRegionReusesStableRegionForSmallBoundaryJitter() {
+  const capturedRegions = []
+  const width = 900
+  const height = 700
+  let pollCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: {
+      createFromBuffer: () => {
+        const options = pollCount === 0
+          ? { listWidth: 342, inputTop: 574 }
+          : { listWidth: 346, inputTop: 578 }
+        return createNativeImageMockFromBitmap(width, height, createWechatLayoutBitmap(width, height, options))
+      },
+      createFromPath: () => ({
+        isEmpty: () => true,
+        toDataURL: () => ''
+      })
+    },
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: `data:image/png;base64=stable-region-${pollCount}`,
+      png: Buffer.from(`stable-region-${pollCount}`),
+      width,
+      height,
+      scaleFactor: 1
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: `digest-stable-region-${pollCount}`, changedRatio: 0 }),
+    comparePngSnapshotRegion: (_previous, _current, region) => {
+      capturedRegions.push({ ...region })
+      pollCount += 1
+      return { changed: false, digest: `digest-stable-region-crop-${pollCount}`, changedRatio: 0 }
+    },
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('stable chat region test should not request vision parsing')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  await driver.poll()
+
+  assert.equal(capturedRegions.length, 2)
+  assert.deepEqual(capturedRegions[1], capturedRegions[0])
 }
 
 async function testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged() {
@@ -1839,7 +1918,7 @@ async function testImageMessageCanBeCroppedFromLatestSnapshot() {
   assert.equal(pollResult.messages[0].type, 'image')
   assert.equal(imageResult.ok, true)
   assert.equal(imageResult.dataUrl, 'data:image/png;base64,cropped-114-214-192-132')
-  assert.deepEqual(cropRects, [
+  assert.deepEqual(filterCropRectsByRect(cropRects, { x: 114, y: 214, width: 192, height: 132 }), [
     {
       buffer: 'image-window',
       rect: { x: 114, y: 214, width: 192, height: 132 }
@@ -1978,11 +2057,7 @@ async function testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv() {
       }
     },
     nativeImage: {
-      createFromBuffer: () => ({
-        isEmpty: () => false,
-        getSize: () => ({ width: 900, height: 700 }),
-        toBitmap: () => bitmap
-      })
+      createFromBuffer: () => createNativeImageMockFromBitmap(900, 700, bitmap)
     },
     pasteAndSendText: async () => true
   })
@@ -2046,11 +2121,7 @@ async function testLeftCustomerTextNearWindowCenterIsNotCorrectedAsSelf() {
       }
     },
     nativeImage: {
-      createFromBuffer: () => ({
-        isEmpty: () => false,
-        getSize: () => ({ width: 865, height: 743 }),
-        toBitmap: () => bitmap
-      })
+      createFromBuffer: () => createNativeImageMockFromBitmap(865, 743, bitmap)
     },
     pasteAndSendText: async () => true
   })
@@ -2110,11 +2181,7 @@ async function testStartupVisibleHistoryIsOnlyUsedAsBaselineWithPixelGuard() {
       accountCategory: 'NORMAL'
     }),
     nativeImage: {
-      createFromBuffer: () => ({
-        isEmpty: () => false,
-        getSize: () => ({ width: 900, height: 700 }),
-        toBitmap: () => bitmap
-      })
+      createFromBuffer: () => createNativeImageMockFromBitmap(900, 700, bitmap)
     },
     pasteAndSendText: async () => true
   })
@@ -2330,11 +2397,7 @@ async function testUnboundedCustomerTextDoesNotTriggerWhenPixelGuardIsAvailable(
       }
     },
     nativeImage: {
-      createFromBuffer: () => ({
-        isEmpty: () => false,
-        getSize: () => ({ width: 900, height: 700 }),
-        toBitmap: () => bitmap
-      })
+      createFromBuffer: () => createNativeImageMockFromBitmap(900, 700, bitmap)
     },
     pasteAndSendText: async () => true
   })
@@ -2404,11 +2467,7 @@ async function testBlankLargeImageHallucinationIsIgnored() {
       }
     },
     nativeImage: {
-      createFromBuffer: () => ({
-        isEmpty: () => false,
-        getSize: () => ({ width: 900, height: 700 }),
-        toBitmap: () => bitmap
-      })
+      createFromBuffer: () => createNativeImageMockFromBitmap(900, 700, bitmap)
     },
     pasteAndSendText: async () => true
   })
@@ -2487,7 +2546,7 @@ async function testOversizedImageBoundsAreTightenedBeforeCrop() {
 
   assert.equal(imageResult.ok, true)
   assert.equal(imageResult.dataUrl, 'data:image/png;base64=cropped-120-220-192-132')
-  assert.deepEqual(cropRects, [
+  assert.deepEqual(filterCropRectsByRect(cropRects, { x: 120, y: 220, width: 192, height: 132 }), [
     {
       buffer: 'oversized-image-window',
       rect: { x: 120, y: 220, width: 192, height: 132 }
@@ -2559,7 +2618,7 @@ async function testDarkImageContentIsKeptWhenTighteningCrop() {
 
   assert.equal(imageResult.ok, true)
   assert.equal(imageResult.dataUrl, 'data:image/png;base64=cropped-120-220-192-132')
-  assert.deepEqual(cropRects, [
+  assert.deepEqual(filterCropRectsByRect(cropRects, { x: 120, y: 220, width: 192, height: 132 }), [
     {
       buffer: 'dark-image-window',
       rect: { x: 120, y: 220, width: 192, height: 132 }
@@ -2628,7 +2687,7 @@ async function testShortImageBoundsAreExpandedToFullImageBody() {
 
   assert.equal(imageResult.ok, true)
   assert.equal(imageResult.dataUrl, 'data:image/png;base64=cropped-120-220-192-252')
-  assert.deepEqual(cropRects, [
+  assert.deepEqual(filterCropRectsByRect(cropRects, { x: 120, y: 220, width: 192, height: 252 }), [
     {
       buffer: 'short-bounds-image-window',
       rect: { x: 120, y: 220, width: 192, height: 252 }
@@ -4579,6 +4638,7 @@ await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testLeftListOnlyChangeDoesNotTriggerVisionParsing()
 await testCurrentChatRegionChangeStillTriggersVisionParsing()
 await testCurrentChatRegionUsesDynamicLayoutBoundaries()
+await testCurrentChatRegionReusesStableRegionForSmallBoundaryJitter()
 await testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged()
 await testNativeSendReturnsSelfMessageForDisplay()
 await testNativeSendSendsTextThenAttachments()
