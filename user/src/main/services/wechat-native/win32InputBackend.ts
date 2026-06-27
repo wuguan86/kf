@@ -23,6 +23,8 @@ const KEYEVENTF_KEYUP = 0x0002
 const VK_CONTROL = 0x11
 const VK_V = 0x56
 const VK_ENTER = 0x0d
+const WECHAT_TEXT_PASTE_SETTLE_MS = 420
+const WECHAT_TEXT_SEND_SETTLE_MS = 260
 
 let cachedApi: Win32Api | null = null
 
@@ -95,8 +97,11 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
         await clickAt(api, inputX, inputY)
         await wait(60)
         await pressCtrlV(api)
-        await wait(80)
+        // 微信输入框在高 DPI 或窗口刚抢焦点时会异步处理剪贴板，过早回车会导致实际未粘贴。
+        await wait(WECHAT_TEXT_PASTE_SETTLE_MS)
         await pressKey(api, VK_ENTER)
+        // 回车后再恢复剪贴板，避免微信尚未读取完内容时被还原为旧剪贴板文本。
+        await wait(WECHAT_TEXT_SEND_SETTLE_MS)
         console.info('原生输入后端已完成微信消息发送', {
           window: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, processName: bounds.processName },
           logicalInputPoint: inputPoint,

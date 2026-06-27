@@ -8,6 +8,9 @@ import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
 import { getMessageInputClickPoint, getMessageSendButtonPoint } from './messageInputPoint'
 import { toPhysicalScreenPoint } from './screenPoint'
 
+const WECHAT_TEXT_PASTE_SETTLE_MS = 520
+const WECHAT_TEXT_SEND_SETTLE_MS = 320
+
 const runPowerShell = async (script: string, timeoutMs = 10000): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
     const child = spawn('powershell', ['-Sta', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
@@ -92,11 +95,11 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 220 -Maximum 420)
 Click-HumanLike ${inputX} ${inputY}
 Start-Sleep -Milliseconds (Get-Random -Minimum 160 -Maximum 320)
 [System.Windows.Forms.SendKeys]::SendWait("^v")
-Start-Sleep -Milliseconds (Get-Random -Minimum 420 -Maximum 760)
+Start-Sleep -Milliseconds ${WECHAT_TEXT_PASTE_SETTLE_MS}
 Click-HumanLike ${sendX} ${sendY}
-Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+Start-Sleep -Milliseconds ${WECHAT_TEXT_SEND_SETTLE_MS}
 [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
+Start-Sleep -Milliseconds ${WECHAT_TEXT_SEND_SETTLE_MS}
 `
 
       try {

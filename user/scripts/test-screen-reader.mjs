@@ -28,12 +28,12 @@ function loadScreenReader(electronMock) {
   return module.exports
 }
 
-async function testCaptureUsesWindowDisplayScaleFactor() {
+async function testCaptureUsesDesktopCapturerCoordinateSpace() {
   const cropRects = []
   const electronMock = {
     screen: {
       getPrimaryDisplay: () => ({ scaleFactor: 1, size: { width: 1920, height: 1080 } }),
-      getDisplayMatching: () => ({ scaleFactor: 1.5, size: { width: 2560, height: 1440 } })
+      getDisplayMatching: () => ({ scaleFactor: 1.25, size: { width: 2560, height: 1440 } })
     },
     desktopCapturer: {
       getSources: async () => ([{
@@ -50,21 +50,31 @@ async function testCaptureUsesWindowDisplayScaleFactor() {
       }])
     }
   }
-  const { captureWeChatWindow } = loadScreenReader(electronMock)
+  const { captureWeChatWindow, getWindowScreenScaleFactor } = loadScreenReader(electronMock)
 
   const screenshot = await captureWeChatWindow({
     hwnd: 100,
     title: '微信',
     className: 'Weixin',
     processName: 'Weixin',
-    x: 100,
-    y: 200,
-    width: 900,
-    height: 700
+    x: 167,
+    y: 205,
+    width: 757,
+    height: 702
   })
 
-  assert.equal(screenshot.scaleFactor, 1.5)
-  assert.deepEqual(cropRects[0], { x: 150, y: 300, width: 1350, height: 1050 })
+  assert.equal(screenshot.scaleFactor, 1)
+  assert.deepEqual(cropRects[0], { x: 167, y: 205, width: 757, height: 702 })
+  assert.equal(getWindowScreenScaleFactor({
+    hwnd: 100,
+    title: '微信',
+    className: 'Weixin',
+    processName: 'Weixin',
+    x: 167,
+    y: 205,
+    width: 757,
+    height: 702
+  }), 1.25)
 }
 
-await testCaptureUsesWindowDisplayScaleFactor()
+await testCaptureUsesDesktopCapturerCoordinateSpace()

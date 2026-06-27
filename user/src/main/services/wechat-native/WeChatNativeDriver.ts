@@ -4,13 +4,14 @@ import { dirname, join } from 'path'
 import { createHash } from 'crypto'
 import { recognizeUnreadConversationCandidate } from './conversationListRecognizer'
 import { clickConversationCandidate, clickMarketingPoint, clickMomentsEntry, closeMomentsWindow, exitConversationToList, pasteAndSendAttachments, pasteAndSendText, pasteMarketingComment, returnFromNestedConversation } from './inputBackend'
-import { captureWeChatWindow } from './screenReader'
+import { captureWeChatWindow, getWindowScreenScaleFactor } from './screenReader'
 import { comparePngSnapshotRegion, comparePngSnapshots, type SnapshotRegion } from './snapshotDiff'
 import { buildFallbackCurrentChatRegion, detectCurrentChatSnapshotRegion } from './chatRegionDetector'
 import { findUnreadConversationCandidates } from './unreadDetector'
 import { parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } from './visionClient'
 import { findWeChatMomentsWindow, findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
 import { applyMessageVisionGuard, type MessageVisionGuardContext } from './messageVisionGuard'
+import { getMessageInputPointDebugInfo } from './messageInputPoint'
 import { getSpecialConversationRule } from './specialConversationGuard'
 import { configureVisionDebugRecorder, getVisionDebugRecorderStatus, saveVisionDebugImage } from './visionDebugRecorder'
 import type {
@@ -2307,17 +2308,20 @@ export class WeChatNativeDriver {
   private async refreshWindowInputGeometryBeforeSend(window: WindowBounds): Promise<void> {
     try {
       const screenshot = await captureWeChatWindow(window)
-      window.scaleFactor = screenshot.scaleFactor
       const detection = detectCurrentChatSnapshotRegion(screenshot)
+      window.scaleFactor = getWindowScreenScaleFactor(window)
       if (detection.source === 'dynamic' && detection.inputTopY) {
         window.messageInputTopY = detection.inputTopY
       } else {
         delete window.messageInputTopY
       }
+      const pointDebugInfo = getMessageInputPointDebugInfo(window)
       console.info('发送前已刷新微信输入框几何信息', {
         window: { x: window.x, y: window.y, width: window.width, height: window.height, processName: window.processName },
         scaleFactor: window.scaleFactor,
         inputTopY: window.messageInputTopY,
+        inputPoint: pointDebugInfo.inputPoint,
+        sendPoint: pointDebugInfo.sendPoint,
         source: detection.source,
         reason: detection.reason
       })

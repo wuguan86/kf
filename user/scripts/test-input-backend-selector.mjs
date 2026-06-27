@@ -268,7 +268,7 @@ function testMessageInputPointUsesDynamicInputTopAfterResize() {
     width: 1180,
     height: 860,
     scaleFactor: 1.5,
-    messageInputTopY: Math.round(logicalInputTopY * 1.5)
+    messageInputTopY: logicalInputTopY
   }
 
   const inputPoint = getMessageInputClickPoint(resizedWindow)
@@ -280,6 +280,41 @@ function testMessageInputPointUsesDynamicInputTopAfterResize() {
   assert.ok(inputPoint.y < resizedWindow.y + resizedWindow.height - 45)
   assert.ok(sendPoint.x > resizedWindow.x + resizedWindow.width - 100)
   assert.ok(sendPoint.y > inputPoint.y)
+}
+
+function testMessageInputPointIgnoresChatBubbleEdgeMisreadAsInputTop() {
+  const { getMessageInputClickPoint } = loadWechatNativeModule('messageInputPoint.ts')
+  const windowWithMisreadInputTop = {
+    ...testWindow,
+    x: 0,
+    y: 0,
+    width: 900,
+    height: 840,
+    scaleFactor: 1,
+    messageInputTopY: 470
+  }
+
+  const point = getMessageInputClickPoint(windowWithMisreadInputTop)
+
+  assert.equal(point.y, 768)
+}
+
+function testMessageInputPointUsesRealWechatDebugInputTop() {
+  const { getMessageInputClickPoint } = loadWechatNativeModule('messageInputPoint.ts')
+  const realDebugWindow = {
+    ...testWindow,
+    x: 160,
+    y: 122,
+    width: 757,
+    height: 702,
+    scaleFactor: 1,
+    messageInputTopY: 534
+  }
+
+  const point = getMessageInputClickPoint(realDebugWindow)
+
+  assert.equal(point.x, 660)
+  assert.equal(point.y, 684)
 }
 
 function testMessageInputPointFallsBackToScaledBottomOffset() {
@@ -296,7 +331,7 @@ function testMessageInputPointFallsBackToScaledBottomOffset() {
   const point = getMessageInputClickPoint(scaledWindow)
 
   assert.equal(point.x, 690)
-  assert.equal(point.y, 696)
+  assert.equal(point.y, 768)
 }
 
 function testMessageInputPointFollowsResizedWindowBounds() {
@@ -311,23 +346,39 @@ function testMessageInputPointFollowsResizedWindowBounds() {
   assert.equal(tallPoint.y - smallPoint.y, 160)
 }
 
-function testScreenPointConvertsLogicalPointForScaledDisplay() {
+function testScreenPointKeepsPointWhenDisplayScaleIsOne() {
   const { toPhysicalScreenPoint } = loadWechatNativeModule('screenPoint.ts')
-  const scaledWindow = {
+  const normalWindow = {
     ...testWindow,
     x: 136,
     y: 137,
     width: 757,
     height: 702,
+    scaleFactor: 1
+  }
+
+  const point = toPhysicalScreenPoint(normalWindow, { x: 636, y: 781 })
+
+  assert.deepEqual(point, { x: 636, y: 781 })
+}
+
+function testScreenPointConvertsWindowPointToPhysicalPointForScaledDisplay() {
+  const { toPhysicalScreenPoint } = loadWechatNativeModule('screenPoint.ts')
+  const scaledWindow = {
+    ...testWindow,
+    x: 160,
+    y: 122,
+    width: 757,
+    height: 702,
     scaleFactor: 1.25
   }
 
-  const point = toPhysicalScreenPoint(scaledWindow, { x: 636, y: 781 })
+  const point = toPhysicalScreenPoint(scaledWindow, { x: 660, y: 684 })
 
-  assert.deepEqual(point, { x: 795, y: 976 })
+  assert.deepEqual(point, { x: 785, y: 825 })
 }
 
-function testMessageInputBackendsConvertClickPointToPhysicalScreenPoint() {
+function testMessageInputBackendsNormalizeClickPointBeforeNativeInput() {
   const win32Source = readFileSync(resolve('src/main/services/wechat-native/win32InputBackend.ts'), 'utf8')
   const powerShellSource = readFileSync(resolve('src/main/services/wechat-native/powerShellInputBackend.ts'), 'utf8')
   const win32PasteSource = win32Source.slice(win32Source.indexOf('async pasteAndSendText'), win32Source.indexOf('async pasteAndSendAttachments'))
@@ -336,6 +387,18 @@ function testMessageInputBackendsConvertClickPointToPhysicalScreenPoint() {
   assert.match(win32PasteSource, /toPhysicalScreenPoint\(bounds,\s*inputPoint\)/)
   assert.match(powerShellPasteSource, /toPhysicalScreenPoint\(bounds,\s*inputPoint\)/)
   assert.match(powerShellPasteSource, /toPhysicalScreenPoint\(bounds,\s*sendPoint\)/)
+}
+
+function testTextInputBackendsKeepClipboardLongEnoughForWechatPaste() {
+  const win32Source = readFileSync(resolve('src/main/services/wechat-native/win32InputBackend.ts'), 'utf8')
+  const powerShellSource = readFileSync(resolve('src/main/services/wechat-native/powerShellInputBackend.ts'), 'utf8')
+  const win32PasteSource = win32Source.slice(win32Source.indexOf('async pasteAndSendText'), win32Source.indexOf('async pasteAndSendAttachments'))
+  const powerShellPasteSource = powerShellSource.slice(powerShellSource.indexOf('async pasteAndSendText'), powerShellSource.indexOf('async pasteAndSendAttachments'))
+
+  assert.match(win32PasteSource, /WECHAT_TEXT_PASTE_SETTLE_MS/)
+  assert.match(powerShellPasteSource, /WECHAT_TEXT_PASTE_SETTLE_MS/)
+  assert.match(win32PasteSource, /WECHAT_TEXT_SEND_SETTLE_MS/)
+  assert.match(powerShellPasteSource, /WECHAT_TEXT_SEND_SETTLE_MS/)
 }
 
 await testUsesNativeBackendFirstOnWindows()
@@ -350,7 +413,11 @@ testExitBackendsDoNotSendEscBecauseWechatMinimizesToTray()
 testMarketingCommentSendPointTargetsMomentsSendButton()
 testMarketingCommentInputBackendsClickSendButton()
 testMessageInputPointUsesDynamicInputTopAfterResize()
+testMessageInputPointIgnoresChatBubbleEdgeMisreadAsInputTop()
+testMessageInputPointUsesRealWechatDebugInputTop()
 testMessageInputPointFallsBackToScaledBottomOffset()
 testMessageInputPointFollowsResizedWindowBounds()
-testScreenPointConvertsLogicalPointForScaledDisplay()
-testMessageInputBackendsConvertClickPointToPhysicalScreenPoint()
+testScreenPointKeepsPointWhenDisplayScaleIsOne()
+testScreenPointConvertsWindowPointToPhysicalPointForScaledDisplay()
+testMessageInputBackendsNormalizeClickPointBeforeNativeInput()
+testTextInputBackendsKeepClipboardLongEnoughForWechatPaste()

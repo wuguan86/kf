@@ -148,7 +148,10 @@ function loadNativeDriver(mocks = {}) {
       }
     }
     if (id === './screenReader') {
-      return { captureWeChatWindow: mocks.captureWeChatWindow }
+      return {
+        captureWeChatWindow: mocks.captureWeChatWindow,
+        getWindowScreenScaleFactor: mocks.getWindowScreenScaleFactor || (() => 1)
+      }
     }
     if (id === './snapshotDiff') {
       return {
@@ -175,6 +178,9 @@ function loadNativeDriver(mocks = {}) {
     }
     if (id === './messageVisionGuard') {
       return loadTranspiledTsModule('messageVisionGuard.ts')
+    }
+    if (id === './messageInputPoint') {
+      return loadTranspiledTsModule('messageInputPoint.ts')
     }
     if (id === './specialConversationGuard') {
       return loadTranspiledTsModule('specialConversationGuard.ts')
@@ -1839,6 +1845,7 @@ async function testNativeSendRefreshesInputGeometryBeforePasting() {
       height,
       scaleFactor: 1.5
     }),
+    getWindowScreenScaleFactor: () => 1.25,
     comparePngSnapshots: () => ({ changed: false, digest: 'digest-1', changedRatio: 0 }),
     parseWeChatSnapshotWithVision: async () => ({ contact: '客户A', messages: [], snapshotDigest: 'digest-1', conversationType: 'SINGLE', accountCategory: 'NORMAL' }),
     pasteAndSendText: async (window) => {
@@ -1852,7 +1859,7 @@ async function testNativeSendRefreshesInputGeometryBeforePasting() {
 
   assert.equal(result.ok, true)
   assert.equal(sentWindows.length, 1)
-  assert.equal(sentWindows[0].scaleFactor, 1.5)
+  assert.equal(sentWindows[0].scaleFactor, 1.25)
   assert.ok(sentWindows[0].messageInputTopY >= 895)
   assert.ok(sentWindows[0].messageInputTopY <= 905)
 }
