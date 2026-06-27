@@ -670,7 +670,7 @@ export class WeChatNativeDriver {
     if (!window || !isPlausibleWeChatWindow(window, this.channel)) {
       return { ok: false, error: 'wechat_window_not_found', message: '未找到可信微信窗口，无法发送消息' }
     }
-    window.scaleFactor = this.lastWindow?.scaleFactor || 1
+    await this.refreshWindowInputGeometryBeforeSend(window)
     this.lastWindow = window
     this.lastWechatActivityAt = Date.now()
     await focusWindow(window.hwnd)
@@ -2276,6 +2276,33 @@ export class WeChatNativeDriver {
     } catch (error) {
       this.startupUnreadCandidateIds.clear()
       console.warn('企业微信启动未读会话基线建立失败，后续将继续依赖可见消息基线和本地视觉守卫', error)
+    }
+  }
+
+  private async refreshWindowInputGeometryBeforeSend(window: WindowBounds): Promise<void> {
+    try {
+      const screenshot = await captureWeChatWindow(window)
+      window.scaleFactor = screenshot.scaleFactor
+      const detection = detectCurrentChatSnapshotRegion(screenshot)
+      if (detection.source === 'dynamic' && detection.inputTopY) {
+        window.messageInputTopY = detection.inputTopY
+      } else {
+        delete window.messageInputTopY
+      }
+      console.info('发送前已刷新微信输入框几何信息', {
+        window: { x: window.x, y: window.y, width: window.width, height: window.height, processName: window.processName },
+        scaleFactor: window.scaleFactor,
+        inputTopY: window.messageInputTopY,
+        source: detection.source,
+        reason: detection.reason
+      })
+    } catch (error) {
+      window.scaleFactor = this.lastWindow?.scaleFactor || window.scaleFactor || 1
+      delete window.messageInputTopY
+      console.warn('发送前刷新微信输入框几何信息失败，已回退到窗口底部偏移点位', {
+        scaleFactor: window.scaleFactor,
+        error
+      })
     }
   }
 

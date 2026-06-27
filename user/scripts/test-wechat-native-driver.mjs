@@ -1793,6 +1793,41 @@ async function testNativeSendReturnsSelfMessageForDisplay() {
   assert.equal(result.sentMessage.trigger_reply, false)
 }
 
+async function testNativeSendRefreshesInputGeometryBeforePasting() {
+  const width = 1350
+  const height = 1050
+  const bitmap = createWechatLayoutBitmap(width, height, { listWidth: 510, inputTop: 900 })
+  const sentWindows = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: {
+      createFromBuffer: () => createNativeImageMockFromBitmap(width, height, bitmap)
+    },
+    findWeChatWindow: async () => ({ ...testWindow, width: 900, height: 700, scaleFactor: 1 }),
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64,current',
+      png: Buffer.from('current'),
+      width,
+      height,
+      scaleFactor: 1.5
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-1', changedRatio: 0 }),
+    parseWeChatSnapshotWithVision: async () => ({ contact: '客户A', messages: [], snapshotDigest: 'digest-1', conversationType: 'SINGLE', accountCategory: 'NORMAL' }),
+    pasteAndSendText: async (window) => {
+      sentWindows.push({ ...window })
+      return true
+    }
+  })
+  const driver = new WeChatNativeDriver()
+
+  const result = await driver.send({ target: '客户A', content: '稍等，我看一下' })
+
+  assert.equal(result.ok, true)
+  assert.equal(sentWindows.length, 1)
+  assert.equal(sentWindows[0].scaleFactor, 1.5)
+  assert.ok(sentWindows[0].messageInputTopY >= 895)
+  assert.ok(sentWindows[0].messageInputTopY <= 905)
+}
+
 async function testNativeSendSendsTextThenAttachments() {
   const textCalls = []
   const attachmentCalls = []
@@ -4641,6 +4676,7 @@ await testCurrentChatRegionUsesDynamicLayoutBoundaries()
 await testCurrentChatRegionReusesStableRegionForSmallBoundaryJitter()
 await testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged()
 await testNativeSendReturnsSelfMessageForDisplay()
+await testNativeSendRefreshesInputGeometryBeforePasting()
 await testNativeSendSendsTextThenAttachments()
 await testNativeSendAttachmentOnlyDoesNotRecordEmptyReply()
 await testImageMessageCanBeCroppedFromLatestSnapshot()

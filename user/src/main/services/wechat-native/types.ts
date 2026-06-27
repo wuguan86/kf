@@ -121,6 +121,8 @@ export type WindowBounds = {
   height: number
   /** DPI 缩放因子（可选，通常由截图时填充） */
   scaleFactor?: number
+  /** 最近一次截图识别到的输入框顶部 Y 坐标，单位为窗口截图像素；发送前用于避免固定底部偏移在 resize/DPI 下点偏。 */
+  messageInputTopY?: number
 }
 
 export type WeChatScreenshot = {

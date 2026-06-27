@@ -250,12 +250,65 @@ function testMarketingCommentInputBackendsClickSendButton() {
   const win32CommentSource = win32Source.slice(win32Source.indexOf('async pasteMarketingComment'))
   const powerShellCommentSource = powerShellSource.slice(powerShellSource.indexOf('async pasteMarketingComment'))
 
-  assert.match(win32CommentSource, /getMarketingCommentSendPoint\(bounds\)/)
+  assert.match(win32CommentSource, /getMarketingCommentSendPoint\(bounds(?:,\s*bounds\.scaleFactor)?\)/)
   assert.match(win32CommentSource, /clickAt\(api,\s*sendPoint\.x,\s*sendPoint\.y\)/)
   assert.equal(win32CommentSource.includes('pressKey(api, VK_ENTER)'), false)
-  assert.match(powerShellCommentSource, /getMarketingCommentSendPoint\(bounds\)/)
+  assert.match(powerShellCommentSource, /getMarketingCommentSendPoint\(bounds(?:,\s*bounds\.scaleFactor)?\)/)
   assert.match(powerShellCommentSource, /Click-HumanLike \$\{sendX\} \$\{sendY\}/)
   assert.equal(powerShellCommentSource.includes('SendWait("{ENTER}")'), false)
+}
+
+function testMessageInputPointUsesDynamicInputTopAfterResize() {
+  const { getMessageInputClickPoint, getMessageSendButtonPoint } = loadWechatNativeModule('messageInputPoint.ts')
+  const logicalInputTopY = 610
+  const resizedWindow = {
+    ...testWindow,
+    x: 120,
+    y: 80,
+    width: 1180,
+    height: 860,
+    scaleFactor: 1.5,
+    messageInputTopY: Math.round(logicalInputTopY * 1.5)
+  }
+
+  const inputPoint = getMessageInputClickPoint(resizedWindow)
+  const sendPoint = getMessageSendButtonPoint(resizedWindow)
+
+  assert.ok(inputPoint.x > resizedWindow.x + resizedWindow.width * 0.55)
+  assert.ok(inputPoint.x < resizedWindow.x + resizedWindow.width * 0.75)
+  assert.ok(inputPoint.y > resizedWindow.y + logicalInputTopY + 20)
+  assert.ok(inputPoint.y < resizedWindow.y + resizedWindow.height - 45)
+  assert.ok(sendPoint.x > resizedWindow.x + resizedWindow.width - 100)
+  assert.ok(sendPoint.y > inputPoint.y)
+}
+
+function testMessageInputPointFallsBackToScaledBottomOffset() {
+  const { getMessageInputClickPoint } = loadWechatNativeModule('messageInputPoint.ts')
+  const scaledWindow = {
+    ...testWindow,
+    x: 30,
+    y: 40,
+    width: 1000,
+    height: 800,
+    scaleFactor: 2
+  }
+
+  const point = getMessageInputClickPoint(scaledWindow)
+
+  assert.equal(point.x, 690)
+  assert.equal(point.y, 696)
+}
+
+function testMessageInputPointFollowsResizedWindowBounds() {
+  const { getMessageInputClickPoint } = loadWechatNativeModule('messageInputPoint.ts')
+  const smallWindow = { ...testWindow, width: 900, height: 700, scaleFactor: 1 }
+  const tallWindow = { ...testWindow, width: 900, height: 860, scaleFactor: 1 }
+
+  const smallPoint = getMessageInputClickPoint(smallWindow)
+  const tallPoint = getMessageInputClickPoint(tallWindow)
+
+  assert.equal(smallPoint.x, tallPoint.x)
+  assert.equal(tallPoint.y - smallPoint.y, 160)
 }
 
 await testUsesNativeBackendFirstOnWindows()
@@ -269,3 +322,6 @@ testNestedReturnPointTargetsTopLeftBackButton()
 testExitBackendsDoNotSendEscBecauseWechatMinimizesToTray()
 testMarketingCommentSendPointTargetsMomentsSendButton()
 testMarketingCommentInputBackendsClickSendButton()
+testMessageInputPointUsesDynamicInputTopAfterResize()
+testMessageInputPointFallsBackToScaledBottomOffset()
+testMessageInputPointFollowsResizedWindowBounds()

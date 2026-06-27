@@ -5,6 +5,7 @@ import type { WeChatInputBackend } from './inputBackendTypes'
 import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
 import { getMomentsEntryPoint } from './momentsEntryPoint'
 import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
+import { getMessageInputClickPoint, getMessageSendButtonPoint } from './messageInputPoint'
 
 const runPowerShell = async (script: string, timeoutMs = 10000): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -42,12 +43,13 @@ export const createPowerShellInputBackend = (): WeChatInputBackend => {
     async pasteAndSendText(bounds: WindowBounds, content: string): Promise<boolean> {
       const originalClipboardText = clipboard.readText()
       clipboard.writeText(content)
-      const sf = bounds.scaleFactor || 1
 
-      const inputX = Math.round(bounds.x + bounds.width * 0.66 + Math.random() * 12 - 6)
-      const inputY = Math.round(bounds.y + bounds.height - Math.round(72 * sf) + Math.random() * 8 - 4)
-      const sendX = Math.round(bounds.x + bounds.width - Math.round(54 * sf) + Math.random() * 10 - 5)
-      const sendY = Math.round(bounds.y + bounds.height - Math.round(32 * sf) + Math.random() * 8 - 4)
+      const inputPoint = getMessageInputClickPoint(bounds)
+      const sendPoint = getMessageSendButtonPoint(bounds)
+      const inputX = Math.round(inputPoint.x + Math.random() * 12 - 6)
+      const inputY = Math.round(inputPoint.y + Math.random() * 8 - 4)
+      const sendX = Math.round(sendPoint.x + Math.random() * 10 - 5)
+      const sendY = Math.round(sendPoint.y + Math.random() * 8 - 4)
 
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -125,9 +127,9 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
         return false
       }
       clipboard.writeImage(image)
-      const sf = bounds.scaleFactor || 1
-      const inputX = Math.round(bounds.x + bounds.width * 0.66 + Math.random() * 12 - 6)
-      const inputY = Math.round(bounds.y + bounds.height - Math.round(72 * sf) + Math.random() * 8 - 4)
+      const inputPoint = getMessageInputClickPoint(bounds)
+      const inputX = Math.round(inputPoint.x + Math.random() * 12 - 6)
+      const inputY = Math.round(inputPoint.y + Math.random() * 8 - 4)
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms

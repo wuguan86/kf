@@ -5,6 +5,7 @@ import type { WeChatInputBackend } from './inputBackendTypes'
 import { getConversationListExitPoint, getNestedConversationBackPoint } from './conversationExitPoint'
 import { getMomentsEntryPoint } from './momentsEntryPoint'
 import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
+import { getMessageInputClickPoint } from './messageInputPoint'
 
 type Win32Api = {
   setForegroundWindow: (hwnd: number) => boolean
@@ -83,9 +84,9 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
     async pasteAndSendText(bounds: WindowBounds, content: string): Promise<boolean> {
       const api = loadWin32Api()
       const originalClipboardText = clipboard.readText()
-      const sf = bounds.scaleFactor || 1
-      const inputX = Math.round(bounds.x + bounds.width * 0.66)
-      const inputY = Math.round(bounds.y + bounds.height - Math.round(72 * sf))
+      const inputPoint = getMessageInputClickPoint(bounds)
+      const inputX = inputPoint.x
+      const inputY = inputPoint.y
       try {
         clipboard.writeText(content)
         await focusWindow(api, bounds.hwnd)
@@ -121,9 +122,9 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
         return false
       }
       const api = loadWin32Api()
-      const sf = bounds.scaleFactor || 1
-      const inputX = Math.round(bounds.x + bounds.width * 0.66)
-      const inputY = Math.round(bounds.y + bounds.height - Math.round(72 * sf))
+      const inputPoint = getMessageInputClickPoint(bounds)
+      const inputX = inputPoint.x
+      const inputY = inputPoint.y
       clipboard.writeImage(image)
       await focusWindow(api, bounds.hwnd)
       await clickAt(api, inputX, inputY)

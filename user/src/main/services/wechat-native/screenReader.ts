@@ -2,9 +2,14 @@ import { desktopCapturer, screen } from 'electron'
 import type { WeChatScreenshot, WindowBounds } from './types'
 
 export const captureWeChatWindow = async (bounds: WindowBounds): Promise<WeChatScreenshot> => {
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const scaleFactor = primaryDisplay.scaleFactor || 1
-  const { width, height } = primaryDisplay.size
+  const matchedDisplay = screen.getDisplayMatching?.({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height
+  }) || screen.getPrimaryDisplay()
+  const scaleFactor = matchedDisplay.scaleFactor || 1
+  const { width, height } = matchedDisplay.size
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width, height }
