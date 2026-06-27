@@ -33,6 +33,10 @@ const RED_CLUSTER_MAX_SIZE = 42
 const RED_CLUSTER_MIN_SIZE = 4
 const RED_BADGE_MAX_HEIGHT = 24
 const RED_BADGE_MAX_AREA = 620
+const PERSONAL_RED_BADGE_MIN_HEIGHT = 8
+const PERSONAL_RED_BADGE_MAX_ASPECT_RATIO = 1.8
+const PERSONAL_RED_BADGE_WEAK_ASPECT_RATIO = 2.2
+const PERSONAL_RED_BADGE_MIN_LIGHT_PIXELS = 2
 
 const isUnreadRedPixel = (red: number, green: number, blue: number): boolean => {
   return red >= 170 && green <= 105 && blue <= 105 && red - Math.max(green, blue) >= 70
@@ -44,6 +48,10 @@ const isSelectedConversationGreenPixel = (red: number, green: number, blue: numb
     blue <= 140 &&
     green - red >= 70 &&
     green - blue >= 35
+}
+
+const isUnreadBadgeLightPixel = (red: number, green: number, blue: number): boolean => {
+  return red >= 220 && green >= 220 && blue >= 220 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 35
 }
 
 const toBitmap = (screenshot: WeChatScreenshot): { bitmap: Buffer; size: BitmapSize } | null => {
@@ -107,6 +115,57 @@ const isInsideSelectedConversationRow = (
     }
   }
   return false
+}
+
+const hasUnreadBadgeLightText = (
+  bitmap: Buffer,
+  size: BitmapSize,
+  cluster: RedPixelCluster,
+  scaleFactor: number
+): boolean => {
+  const inset = Math.max(1, Math.round(2 * scaleFactor))
+  const minX = Math.max(0, cluster.minX + inset)
+  const maxX = Math.min(size.width - 1, cluster.maxX - inset)
+  const minY = Math.max(0, cluster.minY + inset)
+  const maxY = Math.min(size.height - 1, cluster.maxY - inset)
+  if (minX > maxX || minY > maxY) {
+    return false
+  }
+
+  let lightPixels = 0
+  const minLightPixels = Math.max(1, Math.round(PERSONAL_RED_BADGE_MIN_LIGHT_PIXELS * scaleFactor * scaleFactor))
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const index = (y * size.width + x) * 4
+      const blue = bitmap[index]
+      const green = bitmap[index + 1]
+      const red = bitmap[index + 2]
+      if (isUnreadBadgeLightPixel(red, green, blue)) {
+        lightPixels += 1
+        if (lightPixels >= minLightPixels) {
+          return true
+        }
+      }
+    }
+  }
+  return false
+}
+
+const isPersonalUnreadBadgeShape = (
+  bitmap: Buffer,
+  size: BitmapSize,
+  cluster: RedPixelCluster,
+  width: number,
+  height: number,
+  scaleFactor: number
+): boolean => {
+  // 个人微信未读数字红点应接近圆形；头像图标里的红色装饰常是扁条，不能继续送后端误判。
+  const minBadgeHeight = Math.round(PERSONAL_RED_BADGE_MIN_HEIGHT * scaleFactor)
+  const aspectRatio = width / Math.max(1, height)
+  if (height < minBadgeHeight) {
+    return hasUnreadBadgeLightText(bitmap, size, cluster, scaleFactor) && aspectRatio <= PERSONAL_RED_BADGE_WEAK_ASPECT_RATIO
+  }
+  return aspectRatio <= PERSONAL_RED_BADGE_MAX_ASPECT_RATIO
 }
 
 export const findUnreadConversationCandidates = (
@@ -176,6 +235,9 @@ export const findUnreadConversationCandidates = (
         return null
       }
       if (channel === 'personal' && cluster.minX < avatarLeftX) {
+        return null
+      }
+      if (channel === 'personal' && !isPersonalUnreadBadgeShape(bitmap, size, cluster, width, height, sf)) {
         return null
       }
       if (isInsideSelectedConversationRow(bitmap, size, cluster, sf, channel === 'personal' ? avatarLeftX : minX)) {

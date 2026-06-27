@@ -21,6 +21,17 @@ function createBitmap(width, height) {
         }
       }
     },
+    drawRedRect(left, top, rectWidth, rectHeight) {
+      for (let y = top; y < top + rectHeight; y += 1) {
+        for (let x = left; x < left + rectWidth; x += 1) {
+          const index = (y * width + x) * 4
+          bitmap[index] = 85
+          bitmap[index + 1] = 0
+          bitmap[index + 2] = 255
+          bitmap[index + 3] = 255
+        }
+      }
+    },
     drawRedSquare(left, top, size) {
       for (let y = top; y < top + size; y += 1) {
         for (let x = left; x < left + size; x += 1) {
@@ -131,6 +142,22 @@ function testIgnoresSmallRedIconInsideAvatarArea() {
   assert.deepEqual(candidates, [])
 }
 
+function testIgnoresFlatRedIconInsideConversationAvatar() {
+  const width = 400
+  const height = 300
+  const image = createBitmap(width, height)
+  image.drawRedRect(60, 72, 15, 7)
+  const { findUnreadConversationCandidates } = loadUnreadDetector(width, height, image.bitmap)
+
+  const candidates = findUnreadConversationCandidates(
+    { dataUrl: '', png: Buffer.from('mock'), width, height },
+    { hwnd: 1, title: '寰俊', className: 'Weixin', processName: 'Weixin', x: 10, y: 20, width: 800, height: 600 },
+    'personal'
+  )
+
+  assert.deepEqual(candidates, [])
+}
+
 function testKeepsUnreadRedDotWhenLeftSidebarHasGreenIcon() {
   const width = 400
   const height = 300
@@ -171,5 +198,6 @@ testFindsUnreadRedDotInConversationList()
 testIgnoresRedDotOutsideConversationList()
 testIgnoresLargeRedAvatarBlockInConversationList()
 testIgnoresSmallRedIconInsideAvatarArea()
+testIgnoresFlatRedIconInsideConversationAvatar()
 testKeepsUnreadRedDotWhenLeftSidebarHasGreenIcon()
 testIgnoresRedIconInsideSelectedConversationRow()
