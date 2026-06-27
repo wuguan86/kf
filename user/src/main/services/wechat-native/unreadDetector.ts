@@ -21,7 +21,7 @@ const LIST_TOP_RATIO = 0.075
 const LIST_BOTTOM_RATIO = 0.92
 const PERSONAL_AVATAR_LEFT_RATIO = 0.085
 const PERSONAL_BADGE_MIN_X_RATIO = 0.12
-const PERSONAL_BADGE_MAX_X_RATIO = 0.18
+const PERSONAL_BADGE_MAX_X_RATIO = 0.19
 const ENTERPRISE_BADGE_MIN_X_RATIO = 0.1
 const ENTERPRISE_BADGE_MAX_X_RATIO = 0.22
 const SELECTED_ROW_SCAN_LEFT_PADDING_PX = 88
@@ -35,7 +35,6 @@ const RED_BADGE_MAX_HEIGHT = 24
 const RED_BADGE_MAX_AREA = 620
 const PERSONAL_RED_BADGE_MIN_HEIGHT = 8
 const PERSONAL_RED_BADGE_MAX_ASPECT_RATIO = 1.8
-const PERSONAL_RED_BADGE_WEAK_ASPECT_RATIO = 2.2
 const PERSONAL_RED_BADGE_MIN_LIGHT_PIXELS = 2
 
 const isUnreadRedPixel = (red: number, green: number, blue: number): boolean => {
@@ -163,7 +162,7 @@ const isPersonalUnreadBadgeShape = (
   const minBadgeHeight = Math.round(PERSONAL_RED_BADGE_MIN_HEIGHT * scaleFactor)
   const aspectRatio = width / Math.max(1, height)
   if (height < minBadgeHeight) {
-    return hasUnreadBadgeLightText(bitmap, size, cluster, scaleFactor) && aspectRatio <= PERSONAL_RED_BADGE_WEAK_ASPECT_RATIO
+    return false
   }
   return aspectRatio <= PERSONAL_RED_BADGE_MAX_ASPECT_RATIO
 }

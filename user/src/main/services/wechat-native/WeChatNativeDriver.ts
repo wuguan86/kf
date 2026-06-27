@@ -355,6 +355,7 @@ export class WeChatNativeDriver {
     this.marketingCommandRunning = false
     this.lastWechatActivityAt = 0
     this.cachedChatRegion = null
+    await this.saveStartupWindowDebugImage(window)
     await this.captureStartupUnreadCandidateBaseline(window)
     console.info('微信视觉驱动已启动', {
       title: window.title,
@@ -364,6 +365,30 @@ export class WeChatNativeDriver {
       bounds: { x: window.x, y: window.y, width: window.width, height: window.height }
     })
     return { ok: true, mode: 'native' }
+  }
+
+  private async saveStartupWindowDebugImage(window: WindowBounds): Promise<void> {
+    if (!getVisionDebugRecorderStatus().enabled) {
+      return
+    }
+    try {
+      const screenshot = await captureWeChatWindow(window)
+      window.scaleFactor = screenshot.scaleFactor
+      await saveVisionDebugImage({
+        stage: 'window',
+        image: screenshot,
+        window,
+        metadata: {
+          // 启动阶段先保存一张整窗截图，便于确认调试目录和微信窗口定位是否正确。
+          reason: 'startup_window'
+        }
+      })
+    } catch (error) {
+      console.warn('微信视觉调试启动截图保存失败', {
+        title: window.title,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
   }
 
   async stop(): Promise<NativeDriverResult> {

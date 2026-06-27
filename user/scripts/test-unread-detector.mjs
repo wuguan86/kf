@@ -94,6 +94,24 @@ function testFindsUnreadRedDotInConversationList() {
   assert.equal(candidates[0].centerY, 154)
 }
 
+function testFindsUnreadRedDotNearRightEdgeWhenWindowIsNarrow() {
+  const width = 638
+  const height = 580
+  const image = createBitmap(width, height)
+  image.drawRedSquare(108, 87, 15)
+  const { findUnreadConversationCandidates } = loadUnreadDetector(width, height, image.bitmap)
+
+  const candidates = findUnreadConversationCandidates(
+    { dataUrl: '', png: Buffer.from('mock'), width, height },
+    { hwnd: 1, title: '寰俊', className: 'Weixin', processName: 'Weixin', x: 308, y: 355, width, height },
+    'personal'
+  )
+
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].centerX, 424)
+  assert.equal(candidates[0].centerY, 450)
+}
+
 function testIgnoresRedDotOutsideConversationList() {
   const width = 400
   const height = 300
@@ -147,6 +165,7 @@ function testIgnoresFlatRedIconInsideConversationAvatar() {
   const height = 300
   const image = createBitmap(width, height)
   image.drawRedRect(60, 72, 15, 7)
+  image.fillRect(66, 75, 2, 1, { red: 255, green: 255, blue: 255 })
   const { findUnreadConversationCandidates } = loadUnreadDetector(width, height, image.bitmap)
 
   const candidates = findUnreadConversationCandidates(
@@ -195,6 +214,7 @@ function testIgnoresRedIconInsideSelectedConversationRow() {
 }
 
 testFindsUnreadRedDotInConversationList()
+testFindsUnreadRedDotNearRightEdgeWhenWindowIsNarrow()
 testIgnoresRedDotOutsideConversationList()
 testIgnoresLargeRedAvatarBlockInConversationList()
 testIgnoresSmallRedIconInsideAvatarArea()

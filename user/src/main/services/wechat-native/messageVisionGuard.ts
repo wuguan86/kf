@@ -15,8 +15,6 @@ export type MessageVisionGuardResult = {
 const MIN_CUSTOMER_IMAGE_BOUNDS_WIDTH_PX = 72
 const MIN_CUSTOMER_IMAGE_BOUNDS_HEIGHT_PX = 72
 const SELF_GREEN_RATIO_THRESHOLD = 0.12
-const SELF_SIDE_LEFT_RATIO_THRESHOLD = 0.5
-const SELF_SIDE_CENTER_RATIO_THRESHOLD = 0.62
 const BLANK_IMAGE_CONTENT_RATIO_THRESHOLD = 0.015
 const BLANK_IMAGE_LIGHT_RATIO_THRESHOLD = 0.95
 const SAMPLE_STEP_PX = 3
@@ -61,11 +59,7 @@ const isLikelySelfOwnedBubble = (
   if (stats.total > 0 && stats.selfGreenRatio >= SELF_GREEN_RATIO_THRESHOLD) {
     return true
   }
-  if (message.type === 'text') {
-    return false
-  }
-  return bounds.x >= context.imageWidth * SELF_SIDE_LEFT_RATIO_THRESHOLD ||
-    centerX >= context.imageWidth * SELF_SIDE_CENTER_RATIO_THRESHOLD
+  return false
 }
 
 const isPlausibleCustomerImageMessage = (

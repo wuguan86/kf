@@ -6,6 +6,7 @@ import { getConversationListExitPoint, getNestedConversationBackPoint } from './
 import { getMomentsEntryPoint } from './momentsEntryPoint'
 import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
 import { getMessageInputClickPoint } from './messageInputPoint'
+import { toPhysicalScreenPoint } from './screenPoint'
 
 type Win32Api = {
   setForegroundWindow: (hwnd: number) => boolean
@@ -85,8 +86,9 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
       const api = loadWin32Api()
       const originalClipboardText = clipboard.readText()
       const inputPoint = getMessageInputClickPoint(bounds)
-      const inputX = inputPoint.x
-      const inputY = inputPoint.y
+      const physicalInputPoint = toPhysicalScreenPoint(bounds, inputPoint)
+      const inputX = physicalInputPoint.x
+      const inputY = physicalInputPoint.y
       try {
         clipboard.writeText(content)
         await focusWindow(api, bounds.hwnd)
@@ -97,6 +99,7 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
         await pressKey(api, VK_ENTER)
         console.info('原生输入后端已完成微信消息发送', {
           window: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, processName: bounds.processName },
+          logicalInputPoint: inputPoint,
           inputX,
           inputY
         })
@@ -123,8 +126,9 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
       }
       const api = loadWin32Api()
       const inputPoint = getMessageInputClickPoint(bounds)
-      const inputX = inputPoint.x
-      const inputY = inputPoint.y
+      const physicalInputPoint = toPhysicalScreenPoint(bounds, inputPoint)
+      const inputX = physicalInputPoint.x
+      const inputY = physicalInputPoint.y
       clipboard.writeImage(image)
       await focusWindow(api, bounds.hwnd)
       await clickAt(api, inputX, inputY)
@@ -135,6 +139,7 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
       console.info('原生输入后端已完成外发图片粘贴发送', {
         materialId: imageAttachment.materialId,
         name: imageAttachment.name,
+        logicalInputPoint: inputPoint,
         inputX,
         inputY
       })

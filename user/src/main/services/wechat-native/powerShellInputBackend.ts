@@ -6,6 +6,7 @@ import { getConversationListExitPoint, getNestedConversationBackPoint } from './
 import { getMomentsEntryPoint } from './momentsEntryPoint'
 import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
 import { getMessageInputClickPoint, getMessageSendButtonPoint } from './messageInputPoint'
+import { toPhysicalScreenPoint } from './screenPoint'
 
 const runPowerShell = async (script: string, timeoutMs = 10000): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -46,10 +47,12 @@ export const createPowerShellInputBackend = (): WeChatInputBackend => {
 
       const inputPoint = getMessageInputClickPoint(bounds)
       const sendPoint = getMessageSendButtonPoint(bounds)
-      const inputX = Math.round(inputPoint.x + Math.random() * 12 - 6)
-      const inputY = Math.round(inputPoint.y + Math.random() * 8 - 4)
-      const sendX = Math.round(sendPoint.x + Math.random() * 10 - 5)
-      const sendY = Math.round(sendPoint.y + Math.random() * 8 - 4)
+      const physicalInputPoint = toPhysicalScreenPoint(bounds, inputPoint)
+      const physicalSendPoint = toPhysicalScreenPoint(bounds, sendPoint)
+      const inputX = Math.round(physicalInputPoint.x + Math.random() * 12 - 6)
+      const inputY = Math.round(physicalInputPoint.y + Math.random() * 8 - 4)
+      const sendX = Math.round(physicalSendPoint.x + Math.random() * 10 - 5)
+      const sendY = Math.round(physicalSendPoint.y + Math.random() * 8 - 4)
 
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -100,6 +103,8 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
         await runPowerShell(script, 15000)
         console.info('PowerShell 输入后端已完成剪贴板粘贴并点击发送', {
           window: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, processName: bounds.processName },
+          logicalInputPoint: inputPoint,
+          logicalSendPoint: sendPoint,
           inputX,
           inputY,
           sendX,
@@ -128,8 +133,9 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 180 -Maximum 320)
       }
       clipboard.writeImage(image)
       const inputPoint = getMessageInputClickPoint(bounds)
-      const inputX = Math.round(inputPoint.x + Math.random() * 12 - 6)
-      const inputY = Math.round(inputPoint.y + Math.random() * 8 - 4)
+      const physicalInputPoint = toPhysicalScreenPoint(bounds, inputPoint)
+      const inputX = Math.round(physicalInputPoint.x + Math.random() * 12 - 6)
+      const inputY = Math.round(physicalInputPoint.y + Math.random() * 8 - 4)
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
@@ -159,6 +165,7 @@ Start-Sleep -Milliseconds 160
       console.info('PowerShell 输入后端已完成外发图片粘贴发送', {
         materialId: imageAttachment.materialId,
         name: imageAttachment.name,
+        logicalInputPoint: inputPoint,
         inputX,
         inputY
       })

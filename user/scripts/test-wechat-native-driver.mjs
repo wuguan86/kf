@@ -161,9 +161,9 @@ function loadNativeDriver(mocks = {}) {
     }
     if (id === './visionDebugRecorder') {
       return {
-        configureVisionDebugRecorder: () => ({ enabled: false, outputDir: '' }),
-        getVisionDebugRecorderStatus: () => ({ enabled: false, outputDir: '' }),
-        saveVisionDebugImage: async () => null
+        configureVisionDebugRecorder: mocks.configureVisionDebugRecorder || (() => ({ enabled: false, outputDir: '' })),
+        getVisionDebugRecorderStatus: mocks.getVisionDebugRecorderStatus || (() => ({ enabled: false, outputDir: '' })),
+        saveVisionDebugImage: mocks.saveVisionDebugImage || (async () => null)
       }
     }
     if (id === './visionClient') {
@@ -1678,6 +1678,35 @@ async function testCurrentChatRegionUsesDynamicLayoutBoundaries() {
   assert.ok(capturedRegions[0].y + capturedRegions[0].height <= 548, `expected region to end above raised input box, got ${capturedRegions[0].y + capturedRegions[0].height}`)
 }
 
+async function testStartSavesWindowSnapshotWhenVisionDebugCaptureIsEnabled() {
+  const savedImages = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=start-window-debug',
+      png: Buffer.from('start-window-debug'),
+      width: 900,
+      height: 700,
+      scaleFactor: 1
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'start-window-debug', changedRatio: 0 }),
+    getVisionDebugRecorderStatus: () => ({ enabled: true, outputDir: 'E:\\project\\kf\\tmp\\wechat-vision-debug' }),
+    saveVisionDebugImage: async (options) => {
+      savedImages.push(options)
+      return 'E:\\project\\kf\\tmp\\wechat-vision-debug\\start-window-debug.png'
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  const result = await driver.start()
+
+  assert.equal(result.ok, true)
+  assert.equal(savedImages.length, 1)
+  assert.equal(savedImages[0].stage, 'window')
+  assert.equal(savedImages[0].metadata.reason, 'startup_window')
+}
+
 async function testCurrentChatRegionReusesStableRegionForSmallBoundaryJitter() {
   const capturedRegions = []
   const width = 900
@@ -2170,6 +2199,73 @@ async function testLeftCustomerTextNearWindowCenterIsNotCorrectedAsSelf() {
   assert.equal(result.ok, true)
   assert.equal(result.messages.length, 1)
   assert.equal(result.messages[0].content, '我都工作三小时了，哈哈')
+  assert.equal(result.messages[0].is_self, false)
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
+async function testNarrowWindowLeftCustomerImageNearCenterIsNotCorrectedAsSelf() {
+  let parseCount = 0
+  const bitmap = createBitmap(
+    590,
+    610,
+    { red: 242, green: 242, blue: 242 },
+    [
+      { x: 375, y: 350, width: 80, height: 80, color: { red: 132, green: 142, blue: 210 } }
+    ]
+  )
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=narrow-left-customer-image',
+      png: Buffer.from(`narrow-left-customer-image-${parseCount}`),
+      width: 590,
+      height: 610,
+      scaleFactor: 1
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: `digest-narrow-left-customer-image-${parseCount}`, changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      parseCount += 1
+      return {
+        contact: '夏天',
+        messages: parseCount === 1
+          ? [
+              {
+                content: '启动基线',
+                isSelf: false,
+                uiId: 'narrow-left-image-baseline',
+                type: 'text',
+                bounds: { x: 375, y: 240, w: 80, h: 36 }
+              }
+            ]
+          : [
+              {
+                content: '[图片]',
+                isSelf: false,
+                uiId: 'narrow-left-customer-image',
+                type: 'image',
+                bounds: { x: 375, y: 350, w: 80, h: 80 }
+              }
+            ],
+        snapshotDigest: `digest-narrow-left-customer-image-after-${parseCount}`,
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL'
+      }
+    },
+    nativeImage: {
+      createFromBuffer: () => createNativeImageMockFromBitmap(590, 610, bitmap)
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].type, 'image')
   assert.equal(result.messages[0].is_self, false)
   assert.equal(result.messages[0].trigger_reply, true)
 }
@@ -4648,6 +4744,7 @@ async function testMarketingCommentSkipsUnsafeGeneratedContent() {
   }
 }
 
+await testStartSavesWindowSnapshotWhenVisionDebugCaptureIsEnabled()
 await testStopDiscardsInFlightPollMessages()
 await testSpecialConversationGetsSkippedBeforeClick()
 await testSpecialConversationNameFallbackSkipsBeforeClick()
@@ -4683,6 +4780,7 @@ await testImageMessageCanBeCroppedFromLatestSnapshot()
 await testSmallAvatarMisreadAsImageMessageIsIgnored()
 await testRightGreenBubbleMisreadAsCustomerIsCorrectedByCv()
 await testLeftCustomerTextNearWindowCenterIsNotCorrectedAsSelf()
+await testNarrowWindowLeftCustomerImageNearCenterIsNotCorrectedAsSelf()
 await testStartupVisibleHistoryIsOnlyUsedAsBaselineWithPixelGuard()
 await testEnterpriseStartupVisibleHistoryIsOnlyUsedAsBaselineWithoutPixelGuard()
 await testEnterpriseStartupUnreadCandidateIsIgnored()

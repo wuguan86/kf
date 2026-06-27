@@ -311,6 +311,33 @@ function testMessageInputPointFollowsResizedWindowBounds() {
   assert.equal(tallPoint.y - smallPoint.y, 160)
 }
 
+function testScreenPointConvertsLogicalPointForScaledDisplay() {
+  const { toPhysicalScreenPoint } = loadWechatNativeModule('screenPoint.ts')
+  const scaledWindow = {
+    ...testWindow,
+    x: 136,
+    y: 137,
+    width: 757,
+    height: 702,
+    scaleFactor: 1.25
+  }
+
+  const point = toPhysicalScreenPoint(scaledWindow, { x: 636, y: 781 })
+
+  assert.deepEqual(point, { x: 795, y: 976 })
+}
+
+function testMessageInputBackendsConvertClickPointToPhysicalScreenPoint() {
+  const win32Source = readFileSync(resolve('src/main/services/wechat-native/win32InputBackend.ts'), 'utf8')
+  const powerShellSource = readFileSync(resolve('src/main/services/wechat-native/powerShellInputBackend.ts'), 'utf8')
+  const win32PasteSource = win32Source.slice(win32Source.indexOf('async pasteAndSendText'), win32Source.indexOf('async pasteAndSendAttachments'))
+  const powerShellPasteSource = powerShellSource.slice(powerShellSource.indexOf('async pasteAndSendText'), powerShellSource.indexOf('async pasteAndSendAttachments'))
+
+  assert.match(win32PasteSource, /toPhysicalScreenPoint\(bounds,\s*inputPoint\)/)
+  assert.match(powerShellPasteSource, /toPhysicalScreenPoint\(bounds,\s*inputPoint\)/)
+  assert.match(powerShellPasteSource, /toPhysicalScreenPoint\(bounds,\s*sendPoint\)/)
+}
+
 await testUsesNativeBackendFirstOnWindows()
 await testFallsBackWhenNativeBackendThrows()
 await testUsesFallbackOutsideWindows()
@@ -325,3 +352,5 @@ testMarketingCommentInputBackendsClickSendButton()
 testMessageInputPointUsesDynamicInputTopAfterResize()
 testMessageInputPointFallsBackToScaledBottomOffset()
 testMessageInputPointFollowsResizedWindowBounds()
+testScreenPointConvertsLogicalPointForScaledDisplay()
+testMessageInputBackendsConvertClickPointToPhysicalScreenPoint()
