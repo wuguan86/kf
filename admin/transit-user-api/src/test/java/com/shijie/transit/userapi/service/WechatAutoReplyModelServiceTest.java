@@ -10,6 +10,9 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shijie.transit.common.web.TransitException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -34,6 +37,10 @@ class WechatAutoReplyModelServiceTest {
         .andExpect(content().string(Matchers.containsString("客服角色：简洁专业")))
         .andExpect(content().string(Matchers.containsString("用户: 之前问过价格")))
         .andExpect(content().string(Matchers.containsString("图片内容摘要：客户截图里有报价表")))
+        .andExpect(content().string(Matchers.containsString("当前时间：2026年06月26日 星期五 20:30，晚上")))
+        .andExpect(content().string(Matchers.containsString("消息类型判断：智能客服")))
+        .andExpect(content().string(Matchers.containsString("闲聊/寒暄/确认类")))
+        .andExpect(content().string(Matchers.containsString("不要说“我是 AI”")))
         .andRespond(withSuccess("""
             {
               "choices": [
@@ -62,6 +69,46 @@ class WechatAutoReplyModelServiceTest {
   }
 
   @Test
+  void generateReplyAddsSalesIntentRulesAndTimeContext() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(Matchers.containsString("消息类型判断：智能销售")))
+        .andExpect(content().string(Matchers.containsString("闲聊寒暄类")))
+        .andExpect(content().string(Matchers.containsString("咨询项目/产品/方案类")))
+        .andExpect(content().string(Matchers.containsString("价格/费用/优惠/购买意向类")))
+        .andExpect(content().string(Matchers.containsString("销售阶段：已报价")))
+        .andExpect(content().string(Matchers.containsString("客户画像：")))
+        .andExpect(content().string(Matchers.containsString("当前时间：2026年06月26日 星期五 20:30，晚上")))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "可以的，我晚点再联系你。"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatAutoReplyModelService service = createService(builder, "sk-test", "qwen-plus");
+
+    String reply = service.generateReply(new WechatAutoReplyModelService.AutoReplyRequest(
+        "晚上再联系",
+        "",
+        "",
+        "销售角色：自然跟进，不要催促",
+        "用户: 最近问过价格\n回复: 已经介绍过基础方案",
+        "已报价",
+        "客户关注价格，偏谨慎",
+        "sales"));
+
+    assertEquals("可以的，我晚点再联系你。", reply);
+    server.verify();
+  }
+
+  @Test
   void generateReplyRejectsMissingDashScopeKeyWithChineseMessage() {
     WechatAutoReplyModelService service = createService(RestClient.builder(), "", "qwen-plus");
 
@@ -75,6 +122,7 @@ class WechatAutoReplyModelServiceTest {
     return new WechatAutoReplyModelService(
         objectMapper,
         builder,
+        Clock.fixed(Instant.parse("2026-06-26T12:30:00Z"), ZoneId.of("Asia/Shanghai")),
         apiKey,
         "https://dashscope.aliyuncs.com",
         model);

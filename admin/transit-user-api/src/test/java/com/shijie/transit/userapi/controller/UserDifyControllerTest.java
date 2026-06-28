@@ -539,7 +539,7 @@ class UserDifyControllerTest {
     AutoReplyRequest request;
 
     RecordingWechatAutoReplyModelService(ObjectMapper objectMapper) {
-      super(objectMapper, RestClient.builder(), "sk-test", "https://dashscope.aliyuncs.com", "qwen-plus");
+      super(objectMapper, RestClient.builder(), Clock.systemDefaultZone(), "sk-test", "https://dashscope.aliyuncs.com", "qwen-plus");
     }
 
     @Override

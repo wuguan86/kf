@@ -1133,12 +1133,14 @@ function AssistantPage(props: Props): JSX.Element {
         const streamStartAt = Date.now()
         let chunkCount = 0
         let pendingAttachments: ProcessAttachment[] = []
+        let lastLogicContent = ''
 
         const handleSsePayload = async (jsonStr: string) => {
           if (!jsonStr) return
           try {
             const data = JSON.parse(jsonStr)
             const { step, content } = data
+            const eventContent = String(content || '').trim()
             console.log('[流式回复] 收到 SSE 事件', {
               streamTraceId,
               step,
@@ -1191,13 +1193,27 @@ function AssistantPage(props: Props): JSX.Element {
                 })
               }
             } else if (step === 'LOGIC') {
+              lastLogicContent = eventContent
+              localItems.forEach((processItem) => {
+                if (processItem.status === 'running' && processItem.step !== 'OUTPUT') {
+                  processItem.status = 'completed'
+                }
+              })
               const item = localItems.find(i => i.step === 'LOGIC')
               if (item) {
-                item.status = content.includes('积分不足') ? 'error' : 'completed'
-                item.content = content
+                item.status = eventContent.includes('积分不足') ? 'error' : 'completed'
+                item.content = eventContent
+              } else {
+                localItems.push({
+                  id: `step-logic-${Date.now()}`,
+                  step: 'LOGIC',
+                  status: eventContent.includes('积分不足') ? 'error' : 'completed',
+                  content: eventContent || '已完成回复策略判断。',
+                  timestamp: new Date().toLocaleTimeString()
+                })
               }
 
-              if (content.includes('积分不足')) {
+              if (eventContent.includes('积分不足')) {
                 setShowRechargeDialog(true)
                 setIsRunning(false)
                 try {
@@ -1208,7 +1224,10 @@ function AssistantPage(props: Props): JSX.Element {
                 } catch (e) {
                   console.error('Failed to stop after points exhausted', e)
                 }
-              } else if (!localItems.find(i => i.step === 'OUTPUT')) {
+              } else if (
+                (eventContent.includes('模型正在') || eventContent.includes('生成答案') || eventContent.includes('组织回复')) &&
+                !localItems.find(i => i.step === 'OUTPUT')
+              ) {
                 localItems.push({
                   id: `step-output-${Date.now()}`,
                   step: 'OUTPUT',
@@ -1247,7 +1266,17 @@ function AssistantPage(props: Props): JSX.Element {
             } else if (step === 'OUTPUT') {
               hasOutput = true
               const cleanOutput = dedupeRepeatedOutput(content)
-              const item = localItems.find(i => i.step === 'OUTPUT')
+              let item = localItems.find(i => i.step === 'OUTPUT')
+              if (!item) {
+                item = {
+                  id: `step-output-${Date.now()}`,
+                  step: 'OUTPUT',
+                  status: 'running',
+                  content: '',
+                  timestamp: new Date().toLocaleTimeString()
+                }
+                localItems.push(item)
+              }
               if (item) {
                 item.status = 'completed'
                 item.content = cleanOutput
@@ -1374,8 +1403,12 @@ function AssistantPage(props: Props): JSX.Element {
         if (!hasOutput) {
           console.warn('[流式回复] 本次流结束但未收到 OUTPUT', { streamTraceId, chunkCount })
           setProcessItems((prev) => prev.map((item) => {
-            if (item.step === 'OUTPUT' && item.status === 'running') {
-              return { ...item, status: 'completed', content: '本次未收到模型输出，请稍后重试。' }
+            if (item.status === 'running') {
+              return {
+                ...item,
+                status: 'completed',
+                content: lastLogicContent || (item.step === 'OUTPUT' ? '本次未收到模型输出，请稍后重试。' : item.content)
+              }
             }
             return item
           }))
