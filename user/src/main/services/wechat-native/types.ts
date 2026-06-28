@@ -58,9 +58,12 @@ export type NativeDriverMessage = {
   ui_id?: string
   bounds?: WeChatMessageBounds
   image_data_url?: string
+  screenshot_data_url?: string
   source?: WeChatChannel
   conversation_type?: WeChatConversationType
   account_category?: WeChatAccountCategory
+  latest_customer_message?: string
+  image_summary?: string
   skip_auto_reply?: boolean
   skip_reason?: string
 }
@@ -100,6 +103,7 @@ export type ParsedWeChatMessage = {
 export type ParsedWeChatSnapshot = {
   contact: string
   messages: ParsedWeChatMessage[]
+  replyTrigger?: ReplyTriggerRecognition
   moments?: MarketingMomentCandidate[]
   snapshotDigest?: string
   changed?: boolean
@@ -108,6 +112,17 @@ export type ParsedWeChatSnapshot = {
   skipAutoReply?: boolean
   skipReason?: string
   confidence?: number | null
+}
+
+export type ReplyTriggerRecognition = {
+  shouldReply: boolean
+  contact: string
+  latestCustomerMessage: string
+  imageSummary: string
+  conversationType?: WeChatConversationType
+  accountCategory?: WeChatAccountCategory
+  confidence?: number | null
+  skipReason?: string
 }
 
 export type WindowBounds = {

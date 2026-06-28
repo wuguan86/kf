@@ -21,10 +21,14 @@ public class WechatVisionController {
   }
 
   @PostMapping(value = "/parse", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-  public Result<WechatVisionParseResponse> parse(@RequestBody WechatVisionParseRequest request) {
-    log.info("收到微信视觉解析请求 driverMode={} windowTitle={}",
+  public Result<Object> parse(@RequestBody WechatVisionParseRequest request) {
+    log.info("收到微信视觉解析请求 driverMode={} windowTitle={} sceneHint={}",
         request == null ? null : request.driverMode(),
-        request == null ? null : request.windowTitle());
+        request == null ? null : request.windowTitle(),
+        request == null ? null : request.sceneHint());
+    if (request != null && "CHAT_REPLY_TRIGGER".equalsIgnoreCase(String.valueOf(request.sceneHint()).trim())) {
+      return Result.success(wechatVisionService.parseReplyTrigger(request));
+    }
     return Result.success(wechatVisionService.parse(request));
   }
 }

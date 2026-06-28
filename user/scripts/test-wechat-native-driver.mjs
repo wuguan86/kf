@@ -172,6 +172,7 @@ function loadNativeDriver(mocks = {}) {
     if (id === './visionClient') {
       return {
         parseWeChatSnapshotWithVision: mocks.parseWeChatSnapshotWithVision,
+        parseWeChatReplyTriggerWithVision: mocks.parseWeChatReplyTriggerWithVision,
         recognizeConversationListItemWithVision: mocks.recognizeConversationListItemWithVision,
         recognizeMarketingMomentsWithVision: mocks.recognizeMarketingMomentsWithVision
       }
@@ -1682,6 +1683,87 @@ async function testCurrentChatRegionUsesDynamicLayoutBoundaries() {
   assert.equal(capturedRegions.length, 1)
   assert.ok(capturedRegions[0].x >= 450, `expected dynamic left boundary after wide contact list, got ${capturedRegions[0].x}`)
   assert.ok(capturedRegions[0].y + capturedRegions[0].height <= 548, `expected region to end above raised input box, got ${capturedRegions[0].y + capturedRegions[0].height}`)
+}
+
+async function testPersonalChannelEmitsScreenshotCandidateWithoutMainVisionReplyParse() {
+  let triggerParseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=reply-trigger',
+      png: Buffer.from('reply-trigger-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-reply-trigger', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('full chat parse should not run for personal screenshot candidates')
+    },
+    parseWeChatReplyTriggerWithVision: async () => {
+      triggerParseCount += 1
+      throw new Error('personal reply trigger parse should be handled by backend unified stream')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  driver.configure({ backendBaseUrl: 'http://127.0.0.1:18080', token: 'token', tenantId: '1', channel: 'personal' })
+  await driver.start()
+  disableStartupBaselineForTest(driver)
+  driver.seenMessageFingerprints.add('existing-baseline')
+  const result = await driver.poll()
+
+  assert.equal(triggerParseCount, 0)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content, '微信截图已变化，等待后端识别最新客户消息')
+  assert.equal(result.messages[0].latest_customer_message, '')
+  assert.equal(result.messages[0].image_summary, '')
+  assert.equal(result.messages[0].screenshot_data_url, 'data:image/png;base64=reply-trigger')
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
+async function testReplyTriggerRecognitionCreatesSingleAutoReplyMessage() {
+  let triggerParseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=reply-trigger',
+      png: Buffer.from(`reply-trigger-window-${triggerParseCount}`),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: true, digest: 'digest-reply-trigger', changedRatio: 1 }),
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('旧完整聊天解析不应被自动回复轮询调用')
+    },
+    parseWeChatReplyTriggerWithVision: async () => {
+      triggerParseCount += 1
+      return {
+        shouldReply: true,
+        contact: '客户A',
+        latestCustomerMessage: '这个多少钱',
+        imageSummary: '',
+        conversationType: 'SINGLE',
+        accountCategory: 'NORMAL',
+        confidence: 0.92,
+        skipReason: ''
+      }
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  disableStartupBaselineForTest(driver)
+  driver.seenMessageFingerprints.add('existing-baseline')
+  const result = await driver.poll()
+
+  assert.equal(triggerParseCount, 1)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content, '这个多少钱')
+  assert.equal(result.messages[0].latest_customer_message, '这个多少钱')
+  assert.equal(result.messages[0].image_summary, '')
+  assert.equal(result.messages[0].trigger_reply, true)
 }
 
 async function testStartSavesWindowSnapshotWhenVisionDebugCaptureIsEnabled() {
@@ -4766,6 +4848,8 @@ await testCustomerServiceConversationNameFallbackExitsAfterOpen()
 await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testCustomerMessageCanTriggerAfterGeometryBecomesReliable()
+await testPersonalChannelEmitsScreenshotCandidateWithoutMainVisionReplyParse()
+await testReplyTriggerRecognitionCreatesSingleAutoReplyMessage()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
 await testRepliedTextCustomerMessageDoesNotTriggerAfterShortTtlExpired()

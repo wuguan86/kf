@@ -8,7 +8,7 @@ import { captureWeChatWindow, getWindowScreenScaleFactor } from './screenReader'
 import { comparePngSnapshotRegion, comparePngSnapshots, type SnapshotRegion } from './snapshotDiff'
 import { buildFallbackCurrentChatRegion, detectCurrentChatSnapshotRegion } from './chatRegionDetector'
 import { findUnreadConversationCandidates } from './unreadDetector'
-import { parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } from './visionClient'
+import { parseWeChatReplyTriggerWithVision, parseWeChatSnapshotWithVision, recognizeMarketingMomentsWithVision } from './visionClient'
 import { findWeChatMomentsWindow, findWeChatWindow, focusWindow, isPlausibleWeChatWindow } from './windowLocator'
 import { applyMessageVisionGuard, type MessageVisionGuardContext } from './messageVisionGuard'
 import { getMessageInputPointDebugInfo } from './messageInputPoint'
@@ -467,6 +467,12 @@ export class WeChatNativeDriver {
       await this.handleSkippedSnapshot(window, snapshot)
       return { ok: true, messages: [] }
     }
+    if (snapshot.replyTrigger) {
+      return this.handleReplyTriggerSnapshot(snapshot)
+    }
+    if (this.isPersonalScreenshotReplyCandidate(snapshot)) {
+      return this.handleScreenshotReplyCandidateSnapshot(snapshot)
+    }
     if (snapshot.messages.length === 0) {
       this.startupBaselinePending = false
       return { ok: true, messages: [] }
@@ -684,6 +690,190 @@ export class WeChatNativeDriver {
       })
     }
     return { ok: true, messages }
+  }
+
+  private async handleReplyTriggerSnapshot(snapshot: ParsedWeChatSnapshot): Promise<NativeDriverResult> {
+    const trigger = snapshot.replyTrigger
+    if (!trigger) {
+      return { ok: true, messages: [] }
+    }
+    const skipReason = String(trigger.skipReason || snapshot.skipReason || '').trim()
+    if (!trigger.shouldReply) {
+      if (skipReason) {
+        console.info('微信轻量自动回复识别结果已跳过', {
+          contact: snapshot.contact,
+          conversationType: snapshot.conversationType,
+          accountCategory: snapshot.accountCategory,
+          confidence: trigger.confidence,
+          skipReason
+        })
+      }
+      this.startupBaselinePending = false
+      return { ok: true, messages: [], skip_reason: skipReason }
+    }
+
+    const parsedMessage = this.buildReplyTriggerParsedMessage(snapshot)
+    if (!parsedMessage) {
+      console.info('微信轻量自动回复识别结果缺少可回复内容，已跳过', {
+        contact: snapshot.contact,
+        confidence: trigger.confidence
+      })
+      this.startupBaselinePending = false
+      return { ok: true, messages: [] }
+    }
+
+    if (this.startupBaselinePending && this.shouldUseSnapshotAsStartupBaseline()) {
+      this.markSnapshotAsBaseline(snapshot)
+      this.startupBaselinePending = false
+      console.info('微信轻量自动回复启动基线已建立，当前可见消息不触发回复', {
+        contact: snapshot.contact,
+        content: parsedMessage.content.slice(0, 40),
+        confidence: trigger.confidence
+      })
+      return { ok: true, messages: [] }
+    }
+    this.startupBaselinePending = false
+
+    this.cleanupRecentSentSelfReplyContents(Date.now())
+    this.cleanupExpiredRecentMessageContentFingerprints(Date.now())
+    const fingerprint = this.buildFingerprint(snapshot.contact, parsedMessage.content, false, parsedMessage.uiId)
+    const contentFingerprint = this.buildParsedMessageContentFingerprint(snapshot.contact, parsedMessage)
+    const customerReplyFingerprint = this.buildCustomerReplyFingerprint(snapshot.contact, parsedMessage)
+    if (this.seenMessageFingerprints.has(fingerprint) || this.recentMessageContentFingerprints.has(contentFingerprint)) {
+      console.info('微信轻量自动回复识别到重复客户消息，已跳过', {
+        contact: snapshot.contact,
+        content: parsedMessage.content.slice(0, 40),
+        uiId: parsedMessage.uiId
+      })
+      this.seenMessageFingerprints.add(fingerprint)
+      return { ok: true, messages: [] }
+    }
+    this.seenMessageFingerprints.add(fingerprint)
+    if (this.isRecentSentSelfReplyContent(snapshot.contact, parsedMessage.content)) {
+      console.info('微信轻量自动回复识别到疑似己方刚发送内容，已跳过触发', {
+        contact: snapshot.contact,
+        content: parsedMessage.content.slice(0, 40)
+      })
+      return { ok: true, messages: [] }
+    }
+    if (this.hasRepliedCustomerFingerprint(customerReplyFingerprint)) {
+      console.info('微信轻量自动回复识别到已回复客户消息，已跳过触发', {
+        contact: snapshot.contact,
+        content: parsedMessage.content.slice(0, 40)
+      })
+      this.markRecentMessageContentFingerprint(contentFingerprint)
+      return { ok: true, messages: [] }
+    }
+
+    const now = Date.now()
+    const shouldTriggerReply = this.managedMode === 'full'
+    if (shouldTriggerReply) {
+      this.pendingReplySessionKey = this.buildSessionKey(snapshot.contact)
+      await this.markCustomerMessageReplied(customerReplyFingerprint)
+      this.markStartupBaselineShortText(snapshot.contact, parsedMessage)
+    }
+    this.markRecentMessageContentFingerprint(contentFingerprint)
+    const message: NativeDriverMessage = {
+      id: `${parsedMessage.uiId}-${now}`,
+      contact: snapshot.contact,
+      content: parsedMessage.content,
+      timestamp: now,
+      type: parsedMessage.type,
+      is_self: false,
+      trigger_reply: shouldTriggerReply,
+      ui_id: parsedMessage.uiId,
+      source: this.channel,
+      conversation_type: snapshot.conversationType,
+      account_category: snapshot.accountCategory,
+      latest_customer_message: String(trigger.latestCustomerMessage || '').trim(),
+      image_summary: String(trigger.imageSummary || '').trim(),
+      skip_auto_reply: false,
+      skip_reason: ''
+    }
+    this.lastWechatActivityAt = now
+    console.info('读取到微信轻量自动回复触发消息', {
+      contact: snapshot.contact,
+      content: message.content.slice(0, 40),
+      type: message.type,
+      triggerReply: message.trigger_reply,
+      confidence: trigger.confidence,
+      hasImageSummary: !!message.image_summary
+    })
+    return { ok: true, messages: [message] }
+  }
+
+  private isPersonalScreenshotReplyCandidate(snapshot: ParsedWeChatSnapshot): boolean {
+    return this.channel === 'personal' &&
+      snapshot.messages.length === 0 &&
+      String(snapshot.snapshotDigest || '').startsWith('screenshot-trigger-') &&
+      !!this.latestSnapshotScreenshot?.dataUrl
+  }
+
+  private shouldUseBackendScreenshotReplyStream(): boolean {
+    return this.channel === 'personal' &&
+      !!String(this.runtimeConfig.backendBaseUrl || '').trim() &&
+      !!String(this.runtimeConfig.token || '').trim()
+  }
+
+  private async handleScreenshotReplyCandidateSnapshot(snapshot: ParsedWeChatSnapshot): Promise<NativeDriverResult> {
+    const screenshotDataUrl = String(this.latestSnapshotScreenshot?.dataUrl || '').trim()
+    if (!screenshotDataUrl) {
+      console.info('个人微信截图候选缺少截图数据，已跳过自动回复触发', {
+        contact: snapshot.contact,
+        snapshotDigest: snapshot.snapshotDigest
+      })
+      return { ok: true, messages: [] }
+    }
+
+    if (this.startupBaselinePending && this.shouldUseSnapshotAsStartupBaseline()) {
+      this.startupBaselinePending = false
+      this.lastSnapshotDigest = snapshot.snapshotDigest || this.lastSnapshotDigest
+      console.info('个人微信截图自动回复启动基线已建立，当前可见截图不触发回复', {
+        contact: snapshot.contact,
+        snapshotDigest: snapshot.snapshotDigest
+      })
+      return { ok: true, messages: [] }
+    }
+    this.startupBaselinePending = false
+
+    const now = Date.now()
+    const contact = String(snapshot.contact || this.lastWindow?.title || '微信').trim() || '微信'
+    const candidateFingerprint = this.buildContentFingerprint(contact, String(snapshot.snapshotDigest || screenshotDataUrl.slice(0, 64)), false)
+    if (this.recentMessageContentFingerprints.has(candidateFingerprint)) {
+      console.info('个人微信截图候选与近期触发重复，已跳过', {
+        contact,
+        snapshotDigest: snapshot.snapshotDigest
+      })
+      return { ok: true, messages: [] }
+    }
+    this.markRecentMessageContentFingerprint(candidateFingerprint)
+    this.pendingReplySessionKey = this.buildSessionKey(contact)
+    const message: NativeDriverMessage = {
+      id: `screenshot-trigger-${now}`,
+      contact,
+      content: '微信截图已变化，等待后端识别最新客户消息',
+      timestamp: now,
+      type: 'text',
+      is_self: false,
+      trigger_reply: true,
+      ui_id: `screenshot-trigger-${now}`,
+      screenshot_data_url: screenshotDataUrl,
+      source: this.channel,
+      conversation_type: snapshot.conversationType,
+      account_category: snapshot.accountCategory,
+      latest_customer_message: '',
+      image_summary: '',
+      skip_auto_reply: false,
+      skip_reason: ''
+    }
+    this.lastWechatActivityAt = now
+    console.info('读取到个人微信截图自动回复候选，交由后端统一识别和生成回复', {
+      contact,
+      snapshotDigest: snapshot.snapshotDigest,
+      triggerReply: message.trigger_reply,
+      screenshotLength: screenshotDataUrl.length
+    })
+    return { ok: true, messages: [message] }
   }
 
   async send(payload: { target?: string; content?: string; attachments?: WeChatOutboundAttachment[] }): Promise<NativeDriverResult> {
@@ -2378,6 +2568,13 @@ export class WeChatNativeDriver {
   }
 
   private markSnapshotAsBaseline(snapshot: ParsedWeChatSnapshot): void {
+    const replyTriggerMessage = this.buildReplyTriggerParsedMessage(snapshot)
+    if (replyTriggerMessage) {
+      this.seenMessageFingerprints.add(this.buildFingerprint(snapshot.contact, replyTriggerMessage.content, false, replyTriggerMessage.uiId))
+      this.markRecentMessageContentFingerprint(this.buildParsedMessageContentFingerprint(snapshot.contact, replyTriggerMessage))
+      this.markStartupBaselineShortText(snapshot.contact, replyTriggerMessage)
+      this.markStartupBaselineCustomerText(snapshot.contact, replyTriggerMessage)
+    }
     for (const message of snapshot.messages) {
       this.seenMessageFingerprints.add(this.buildFingerprint(snapshot.contact, message.content, message.isSelf, message.uiId))
       this.markRecentMessageContentFingerprint(this.buildParsedMessageContentFingerprint(snapshot.contact, message))
@@ -2694,15 +2891,53 @@ export class WeChatNativeDriver {
 
     this.visionRequestRunning = true
     try {
-      const snapshot = await parseWeChatSnapshotWithVision(
-        screenshot.dataUrl,
-        window,
-        this.lastSnapshotDigest,
-        this.runtimeConfig
-      )
+      let snapshot: ParsedWeChatSnapshot
+      if (this.shouldUseBackendScreenshotReplyStream()) {
+        // 个人微信只在本地完成截图变化、未读切换和特殊会话守卫；具体读消息与回复由后端统一接口完成。
+        const reliableContact = this.getActiveLockedUnreadConversationContact() || this.reliableConversationContact
+        snapshot = {
+          contact: reliableContact?.contact || window.title || '微信',
+          messages: [],
+          snapshotDigest: `screenshot-trigger-${diff.digest}`,
+          changed: true,
+          conversationType: reliableContact?.conversationType || 'SINGLE',
+          accountCategory: reliableContact?.accountCategory || 'UNKNOWN',
+          skipAutoReply: false,
+          skipReason: '',
+          confidence: null
+        }
+      } else if (this.channel === 'personal' && typeof parseWeChatReplyTriggerWithVision === 'function') {
+        const trigger = await parseWeChatReplyTriggerWithVision(
+          screenshot.dataUrl,
+          window,
+          this.lastSnapshotDigest,
+          this.runtimeConfig
+        )
+        snapshot = {
+          contact: trigger.contact,
+          messages: [],
+          replyTrigger: trigger,
+          snapshotDigest: diff.digest,
+          changed: true,
+          conversationType: trigger.conversationType || 'SINGLE',
+          accountCategory: trigger.accountCategory || 'UNKNOWN',
+          skipAutoReply: false,
+          skipReason: trigger.skipReason || '',
+          confidence: typeof trigger.confidence === 'number' ? trigger.confidence : null
+        }
+      } else {
+        snapshot = await parseWeChatSnapshotWithVision(
+          screenshot.dataUrl,
+          window,
+          this.lastSnapshotDigest,
+          this.runtimeConfig
+        )
+      }
       this.latestSnapshotScreenshot = screenshot
       const contactGuardedSnapshot = this.applySnapshotContactGuard(snapshot)
-      const guardedSnapshot = this.applySnapshotVisionGuard(contactGuardedSnapshot, screenshot)
+      const guardedSnapshot = contactGuardedSnapshot.replyTrigger
+        ? contactGuardedSnapshot
+        : this.applySnapshotVisionGuard(contactGuardedSnapshot, screenshot)
       this.latestSnapshotFromUnreadSwitch = switchedUnreadConversation
       this.lastSnapshotDigest = snapshot.snapshotDigest || diff.digest
       this.consecutiveVisionFailures = 0
@@ -2883,6 +3118,30 @@ export class WeChatNativeDriver {
       return false
     }
     return !this.latestSnapshotHasPixelGuard
+  }
+
+  private buildReplyTriggerParsedMessage(snapshot: ParsedWeChatSnapshot): ParsedWeChatMessage | null {
+    const trigger = snapshot.replyTrigger
+    if (!trigger) {
+      return null
+    }
+    const latestCustomerMessage = String(trigger.latestCustomerMessage || '').trim()
+    const imageSummary = String(trigger.imageSummary || '').trim()
+    const content = latestCustomerMessage || (imageSummary ? '[图片]' : '')
+    if (!content) {
+      return null
+    }
+    const normalizedContent = content.toLowerCase()
+    const type: ParsedWeChatMessage['type'] = imageSummary && (content === '[图片]' || normalizedContent.includes('图片'))
+      ? 'image'
+      : (imageSummary && (content === '[表情包]' || normalizedContent.includes('表情')) ? 'sticker' : 'text')
+    const digestPart = String(snapshot.snapshotDigest || '').trim() || this.normalizeFingerprintContent(`${content}-${imageSummary}`).slice(0, 32)
+    return {
+      content,
+      isSelf: false,
+      uiId: `reply-trigger-${digestPart}`,
+      type
+    }
   }
 
   private buildMessageVisionGuardContext(screenshot: WeChatScreenshot): MessageVisionGuardContext | null {

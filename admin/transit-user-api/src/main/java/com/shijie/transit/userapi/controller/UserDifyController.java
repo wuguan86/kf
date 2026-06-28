@@ -25,6 +25,10 @@ import com.shijie.transit.userapi.service.MembershipEntitlementService;
 import com.shijie.transit.userapi.service.MembershipQueryService;
 import com.shijie.transit.userapi.service.OutboundMaterialDecisionService;
 import com.shijie.transit.userapi.service.SmartSalesDifyContextService;
+import com.shijie.transit.userapi.service.WechatAutoReplyModelService;
+import com.shijie.transit.userapi.wechatvision.WechatReplyTriggerResult;
+import com.shijie.transit.userapi.wechatvision.WechatVisionParseRequest;
+import com.shijie.transit.userapi.wechatvision.WechatVisionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -77,6 +81,8 @@ public class UserDifyController {
     private final MembershipQueryService membershipQueryService;
     private final OutboundMaterialDecisionService outboundMaterialDecisionService;
     private final SmartSalesDifyContextService smartSalesDifyContextService;
+    private final WechatAutoReplyModelService wechatAutoReplyModelService;
+    private final WechatVisionService wechatVisionService;
     private final DifyProperties difyProperties;
     private final ObjectMapper objectMapper;
 
@@ -92,6 +98,8 @@ public class UserDifyController {
             MembershipQueryService membershipQueryService,
             OutboundMaterialDecisionService outboundMaterialDecisionService,
             SmartSalesDifyContextService smartSalesDifyContextService,
+            WechatAutoReplyModelService wechatAutoReplyModelService,
+            WechatVisionService wechatVisionService,
             DifyProperties difyProperties,
             ObjectMapper objectMapper) {
         this.difyClient = difyClient;
@@ -105,6 +113,8 @@ public class UserDifyController {
         this.membershipQueryService = membershipQueryService;
         this.outboundMaterialDecisionService = outboundMaterialDecisionService;
         this.smartSalesDifyContextService = smartSalesDifyContextService;
+        this.wechatAutoReplyModelService = wechatAutoReplyModelService;
+        this.wechatVisionService = wechatVisionService;
         this.difyProperties = difyProperties;
         this.objectMapper = objectMapper;
     }
@@ -202,12 +212,13 @@ public class UserDifyController {
         CompletableFuture.runAsync(() -> {
             try {
                 TenantContext.setTenantId(tenantId);
-                log.info("monitorChatStream 开始 traceId={} roleId={} contact={} hasImage={}",
+                log.info("monitorChatStream 开始 traceId={} roleId={} contact={} hasImageSummary={}",
                         streamTraceId,
                         request == null ? null : request.roleId(),
                         request == null ? null : request.wechatContact(),
-                        request != null && StringUtils.hasText(request.imageDataUrl()));
-                if (request == null || !StringUtils.hasText(request.message()) || request.roleId() == null) {
+                        request != null && StringUtils.hasText(request.imageSummary()));
+                String effectiveMessage = request == null ? "" : resolveLatestCustomerMessage(request);
+                if (request == null || !StringUtils.hasText(effectiveMessage) || request.roleId() == null) {
                     log.warn("monitorChatStream 非法请求 traceId={}", streamTraceId);
                     emitter.completeWithError(new IllegalArgumentException("Invalid request"));
                     return;
@@ -227,7 +238,7 @@ public class UserDifyController {
                 RoleEntity role = roleService.getById(principal.subjectId(), request.roleId());
                 String assistantMode = resolveAssistantMode(request);
                 validateRoleMatchesAssistantMode(role, assistantMode);
-                String question = request.message().length() > 20 ? request.message().substring(0, 20) + "..." : request.message();
+                String question = effectiveMessage.length() > 20 ? effectiveMessage.substring(0, 20) + "..." : effectiveMessage;
                 String contactName = resolveContactDisplayName(request);
                 emitter.send(SseEmitter.event().data(new StepMsg("INTENT",
                         "正在分析微信聊天记录... 识别到客户 “" + contactName + "” 的消息： “" + question + "”，正在按【" + role.getName() + "】角色逻辑进行思考和回复。")));
@@ -271,7 +282,7 @@ public class UserDifyController {
 
                          // 1. Keyword Trigger
                          List<String> triggerKeywords = configView.groupTriggerKeywords();
-                         String content = request.message();
+                         String content = effectiveMessage;
                          boolean matched = false;
                          if (triggerKeywords != null && StringUtils.hasText(content)) {
                              for (String keyword : triggerKeywords) {
@@ -305,7 +316,7 @@ public class UserDifyController {
                 } else {
                     // 单聊逻辑
                     if (configView != null && configView.replyStrategy() != null) {
-                        String content = request.message();
+                        String content = effectiveMessage;
 
                         // 优先检查人工介入 (优先级高于 AI 停止回复)
                         // 如果关键词同时存在于两个配置中，优先执行人工介入逻辑
@@ -342,7 +353,7 @@ public class UserDifyController {
                 }
 
                 List<String> datasetIds = resolveRoleDatasetIds(principal.subjectId(), role);
-                List<String> retrieveResults = retrieveFromDatasets(datasetIds, request.message());
+                List<String> retrieveResults = retrieveFromDatasets(datasetIds, effectiveMessage);
                 log.info("monitorChatStream 检索完成 traceId={} datasetCount={} retrieveCount={}",
                         streamTraceId, datasetIds.size(), retrieveResults.size());
                 String docTitles = extractDocTitles(retrieveResults);
@@ -354,61 +365,42 @@ public class UserDifyController {
                 boolean hasRoleContent = StringUtils.hasText(role.getContent());
                 String roleContent = hasRoleContent ? role.getContent() : request.role();
 
-                ObjectNode payload = objectMapper.createObjectNode();
-                payload.put("query", request.message());
-                payload.put("response_mode", "streaming");
-                ObjectNode inputs = payload.putObject("inputs");
-                inputs.put("context", context == null ? "" : context);
-                if (StringUtils.hasText(roleContent)) {
-                    inputs.put("user_custom_role", roleContent);
-                }
                 int memoryRounds = resolveMemoryRounds(principal.subjectId(), sceneType);
-                addSalesContextToInputs(inputs, principal.subjectId(), sessionKey, assistantMode);
-                addHistoryToInputs(inputs, principal.subjectId(), request.roleId(), sceneType, sessionKey, memoryRounds);
+                String history = buildHistoryInput(principal.subjectId(), request.roleId(), sceneType, sessionKey, memoryRounds);
+                SmartSalesDifyContextService.SalesDifyContext salesContext = buildSalesContext(principal.subjectId(), sessionKey, assistantMode);
                 sessionHistoryService.appendMessage(
-                        principal.subjectId(), request.roleId(), sceneType, sessionKey, "USER", request.message());
-                payload.put("user", "user-" + principal.subjectId());
-                String conversationId = request.conversationId();
-                if (StringUtils.hasText(request.wechatContact())) {
-                    String mappedId = contactConversationMappingService.getConversationId(
-                            principal.subjectId(), request.roleId(), request.wechatContact());
-                    if (StringUtils.hasText(mappedId)) {
-                        conversationId = mappedId;
-                    }
-                }
-                if (StringUtils.hasText(conversationId)) {
-                    payload.put("conversation_id", conversationId);
-                }
+                        principal.subjectId(), request.roleId(), sceneType, sessionKey, "USER", effectiveMessage);
 
-                log.info("monitorChatStream 调用Dify前 traceId={} queryLength={} hasConversationId={} hasImage={}",
+                log.info("monitorChatStream 调用自动回复模型前 traceId={} queryLength={} hasImageSummary={}",
                         streamTraceId,
-                        request.message().length(),
-                        StringUtils.hasText(conversationId),
-                        StringUtils.hasText(request.imageDataUrl()));
-                DifyClient.DifyChatResult result = waitForChatResultWithHeartbeat(
-                        emitter, payload, principal.subjectId(), request.imageDataUrl(), true, streamTraceId, assistantMode);
+                        effectiveMessage.length(),
+                        StringUtils.hasText(request.imageSummary()));
+                String rawAnswer = wechatAutoReplyModelService.generateReply(new WechatAutoReplyModelService.AutoReplyRequest(
+                        effectiveMessage,
+                        request.imageSummary(),
+                        context,
+                        roleContent,
+                        history,
+                        salesContext.salesStage(),
+                        salesContext.customerProfile(),
+                        assistantMode));
                 String channel = resolveWechatChannel(request);
-                ReplyPlan replyPlan = resolveReplyPlan(result.answer(), principal.subjectId(), channel);
+                ReplyPlan replyPlan = resolveReplyPlan(rawAnswer, principal.subjectId(), channel);
                 if (replyPlan.attachments().isEmpty() && outboundMaterialDecisionService != null) {
                     List<OutboundMaterialEntity> decisionAttachments = outboundMaterialDecisionService.selectAutoSendMaterials(
-                            principal.subjectId(), request.message(), replyPlan.replyText(), channel);
+                            principal.subjectId(), effectiveMessage, replyPlan.replyText(), channel);
                     if (!decisionAttachments.isEmpty()) {
                         replyPlan = new ReplyPlan(buildAttachmentReplyText(decisionAttachments), decisionAttachments);
                     }
                 }
                 String answer = normalizeStreamingAnswer(replyPlan.replyText());
-                log.info("monitorChatStream 调用Dify后 traceId={} conversationId={} answerLength={}",
+                log.info("monitorChatStream 调用自动回复模型后 traceId={} answerLength={}",
                         streamTraceId,
-                        result.conversationId(),
                         answer == null ? 0 : answer.length());
-                if (StringUtils.hasText(result.conversationId()) && StringUtils.hasText(request.wechatContact())) {
-                    contactConversationMappingService.upsertConversationId(
-                            principal.subjectId(), request.roleId(), request.wechatContact(), result.conversationId());
-                }
                 if (StringUtils.hasText(answer)) {
                     sessionHistoryService.appendMessage(
                             principal.subjectId(), request.roleId(), sceneType, sessionKey, "AI", answer);
-                    boolean deductSuccess = membershipEntitlementService.deductPoints(principal.subjectId(), 1, "chat_reply", result.conversationId());
+                    boolean deductSuccess = membershipEntitlementService.deductPoints(principal.subjectId(), 1, "chat_reply", sessionKey);
                     if (!deductSuccess) {
                         log.warn("monitorChatStream 扣点失败 traceId={} userId={}", streamTraceId, principal.subjectId());
                         emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "积分不足，无法完成本次回复。请前往“我的”页面充值或升级会员。")));
@@ -430,6 +422,261 @@ public class UserDifyController {
             }
         });
         return emitter;
+    }
+
+    @PostMapping(value = "/monitor-chat/screenshot-stream")
+    public SseEmitter monitorChatScreenshotStream(@RequestBody MonitorChatScreenshotRequest request) {
+        SseEmitter emitter = new SseEmitter(Duration.ofMinutes(5).toMillis());
+        TransitPrincipal principal = currentPrincipal();
+        Long tenantId = TenantContext.getTenantId();
+        String streamTraceId = "screenshot-stream-" + principal.subjectId() + "-" + System.currentTimeMillis();
+        emitter.onTimeout(() -> {
+            log.warn("monitorChatScreenshotStream 超时结束 traceId={}", streamTraceId);
+            emitter.complete();
+        });
+        emitter.onCompletion(() -> log.info("monitorChatScreenshotStream 连接结束 traceId={}", streamTraceId));
+        emitter.onError(ex -> log.error("monitorChatScreenshotStream 连接异常 traceId={}", streamTraceId, ex));
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                TenantContext.setTenantId(tenantId);
+                if (request == null || request.roleId() == null || !StringUtils.hasText(request.imageDataUrl())) {
+                    log.warn("monitorChatScreenshotStream 非法请求 traceId={}", streamTraceId);
+                    emitter.completeWithError(new IllegalArgumentException("Invalid request"));
+                    return;
+                }
+                emitter.send(SseEmitter.event().data(new StepMsg("VISION", "正在识别微信截图里的最新客户消息。")));
+                WechatReplyTriggerResult trigger = wechatVisionService.parseReplyTrigger(new WechatVisionParseRequest(
+                        request.imageDataUrl(),
+                        request.windowTitle(),
+                        "",
+                        "native-personal",
+                        "CHAT_REPLY_TRIGGER"));
+                if (!trigger.shouldReply()) {
+                    String skipReason = StringUtils.hasText(trigger.skipReason()) ? trigger.skipReason() : "未识别到需要回复的最新客户消息。";
+                    emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", skipReason)));
+                    emitter.complete();
+                    return;
+                }
+                String latestMessage = StringUtils.hasText(trigger.latestCustomerMessage())
+                        ? trigger.latestCustomerMessage()
+                        : (StringUtils.hasText(trigger.imageSummary()) ? "[图片]" : "");
+                if (!StringUtils.hasText(latestMessage)) {
+                    emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "视觉识别没有返回可回复内容，已跳过。")));
+                    emitter.complete();
+                    return;
+                }
+                MonitorChatRequest monitorRequest = new MonitorChatRequest(
+                        request.roleId(),
+                        latestMessage,
+                        request.role(),
+                        "",
+                        StringUtils.hasText(request.wechatContact()) ? request.wechatContact() : trigger.contact(),
+                        StringUtils.hasText(request.wechatContactDisplayName()) ? request.wechatContactDisplayName() : trigger.contact(),
+                        StringUtils.hasText(request.roomType()) ? request.roomType() : trigger.conversationType(),
+                        "",
+                        request.assistantMode(),
+                        latestMessage,
+                        trigger.imageSummary());
+                runMonitorChatStream(emitter, monitorRequest, principal, tenantId, streamTraceId);
+            } catch (Exception e) {
+                log.error("Monitor chat screenshot stream error traceId={}", streamTraceId, e);
+                emitter.completeWithError(e);
+            } finally {
+                TenantContext.clear();
+            }
+        });
+        return emitter;
+    }
+
+    private void runMonitorChatStream(
+            SseEmitter emitter,
+            MonitorChatRequest request,
+            TransitPrincipal principal,
+            Long tenantId,
+            String streamTraceId) throws Exception {
+        TenantContext.setTenantId(tenantId);
+        log.info("monitorChatStream 编排开始 traceId={} roleId={} contact={} hasImageSummary={}",
+                streamTraceId,
+                request == null ? null : request.roleId(),
+                request == null ? null : request.wechatContact(),
+                request != null && StringUtils.hasText(request.imageSummary()));
+        String effectiveMessage = request == null ? "" : resolveLatestCustomerMessage(request);
+        if (request == null || !StringUtils.hasText(effectiveMessage) || request.roleId() == null) {
+            log.warn("monitorChatStream 非法请求 traceId={}", streamTraceId);
+            emitter.completeWithError(new IllegalArgumentException("Invalid request"));
+            return;
+        }
+
+        MembershipQueryService.MyMembershipSnapshot snapshot = membershipQueryService.queryMyMembership(principal.subjectId());
+        int totalPoints = Math.max(0, snapshot.subscriptionPoints() != null ? snapshot.subscriptionPoints() : 0)
+                + Math.max(0, snapshot.packagePoints() != null ? snapshot.packagePoints() : 0);
+        if (totalPoints <= 0) {
+            log.info("monitorChatStream 积分不足 traceId={} userId={}", streamTraceId, principal.subjectId());
+            emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "积分不足，无法发起对话。请前往“我的”页面充值或升级会员。")));
+            emitter.complete();
+            return;
+        }
+
+        RoleEntity role = roleService.getById(principal.subjectId(), request.roleId());
+        String assistantMode = resolveAssistantMode(request);
+        validateRoleMatchesAssistantMode(role, assistantMode);
+        String question = effectiveMessage.length() > 20 ? effectiveMessage.substring(0, 20) + "..." : effectiveMessage;
+        String contactName = resolveContactDisplayName(request);
+        emitter.send(SseEmitter.event().data(new StepMsg("INTENT",
+                "正在分析微信截图... 识别到客户 “" + contactName + "” 的消息： “" + question + "”，正在按【" + role.getName() + "】角色逻辑进行思考和回复。")));
+
+        String sceneType = "SINGLE";
+        if ("GROUP".equalsIgnoreCase(request.roomType())) {
+            sceneType = "GROUP";
+        } else if (StringUtils.hasText(request.wechatContact()) && request.wechatContact().matches(".*\\(\\d+\\)$")) {
+            sceneType = "GROUP";
+        }
+        String sessionKey = resolveSessionKey(request.roleId(), request.wechatContact());
+
+        SessionConfigService.SessionConfigView configView = sessionConfigService.getConfig(principal.subjectId(), sceneType);
+        if (configView != null && configView.sceneConfig() != null && configView.sceneConfig().enabled() != null && configView.sceneConfig().enabled() == 0) {
+            emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "会话配置已禁用 (sceneType=" + sceneType + ")，停止回复。")));
+            emitter.complete();
+            return;
+        }
+
+        if ("GROUP".equals(sceneType)) {
+            if (configView != null) {
+                String startTimeStr = configView.sceneConfig().groupReplyStartTime();
+                String endTimeStr = configView.sceneConfig().groupReplyEndTime();
+                if (StringUtils.hasText(startTimeStr) && StringUtils.hasText(endTimeStr)) {
+                    try {
+                        LocalTime now = LocalTime.now();
+                        LocalTime start = LocalTime.parse(startTimeStr, DateTimeFormatter.ofPattern("HH:mm"));
+                        LocalTime end = LocalTime.parse(endTimeStr, DateTimeFormatter.ofPattern("HH:mm"));
+                        if (now.isBefore(start) || now.isAfter(end)) {
+                            emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "当前时间 " + now + " 不在群回复时间段 " + start + "-" + end + " 内，停止回复。")));
+                            emitter.complete();
+                            return;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                List<String> triggerKeywords = configView.groupTriggerKeywords();
+                boolean matched = false;
+                if (triggerKeywords != null && StringUtils.hasText(effectiveMessage)) {
+                    for (String keyword : triggerKeywords) {
+                        if (StringUtils.hasText(keyword) && effectiveMessage.contains(keyword)) {
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+                if (!matched) {
+                    emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "未触发群消息关键词，停止回复。")));
+                    emitter.complete();
+                    return;
+                }
+
+                Integer cooldownConfig = configView.sceneConfig().groupCooldownSec();
+                int cooldownSec = cooldownConfig == null ? 0 : Math.max(cooldownConfig, 0);
+                if (cooldownSec > 0) {
+                    LocalDateTime lastAiReplyTime = sessionHistoryService.getLastAiReplyTime(
+                            principal.subjectId(), request.roleId(), sceneType, sessionKey);
+                    if (lastAiReplyTime != null) {
+                        long elapsedSeconds = Duration.between(lastAiReplyTime, LocalDateTime.now()).getSeconds();
+                        if (elapsedSeconds >= 0 && elapsedSeconds < cooldownSec) {
+                            emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "群聊回复频率控制生效，冷却中，停止回复。")));
+                            emitter.complete();
+                            return;
+                        }
+                    }
+                }
+            }
+        } else if (configView != null && configView.replyStrategy() != null) {
+            Integer manualHandoffEnabled = configView.replyStrategy().manualHandoffEnabled();
+            List<String> manualHandoffKeywords = configView.manualHandoffKeywords();
+            if (manualHandoffEnabled != null && manualHandoffEnabled == 1 && manualHandoffKeywords != null && StringUtils.hasText(effectiveMessage)) {
+                for (String keyword : manualHandoffKeywords) {
+                    if (StringUtils.hasText(keyword) && effectiveMessage.contains(keyword)) {
+                        emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "触发人工介入关键词: " + keyword + "，停止 AI 回复并发送转接提示。")));
+                        String handoffMsg = configView.replyStrategy().manualHandoffMessage();
+                        if (StringUtils.hasText(handoffMsg)) {
+                            emitter.send(SseEmitter.event().data(new StepMsg("OUTPUT", handoffMsg)));
+                        }
+                        emitter.complete();
+                        return;
+                    }
+                }
+            }
+
+            Integer stopReplyEnabled = configView.replyStrategy().aiStopReplyEnabled();
+            List<String> stopKeywords = configView.aiStopReplyKeywords();
+            if (stopReplyEnabled != null && stopReplyEnabled == 1 && stopKeywords != null && StringUtils.hasText(effectiveMessage)) {
+                for (String keyword : stopKeywords) {
+                    if (StringUtils.hasText(keyword) && effectiveMessage.contains(keyword)) {
+                        emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "触发 AI 停止回复关键词: " + keyword + "，停止回复。")));
+                        emitter.complete();
+                        return;
+                    }
+                }
+            }
+        }
+
+        List<String> datasetIds = resolveRoleDatasetIds(principal.subjectId(), role);
+        List<String> retrieveResults = retrieveFromDatasets(datasetIds, effectiveMessage);
+        log.info("monitorChatStream 检索完成 traceId={} datasetCount={} retrieveCount={}",
+                streamTraceId, datasetIds.size(), retrieveResults.size());
+        String docTitles = extractDocTitles(retrieveResults);
+        String knowledgeMsg = StringUtils.hasText(docTitles) ? "检索知识库... 匹配到 " + docTitles + " 。" : "检索知识库... 未匹配到相关文档。";
+        emitter.send(SseEmitter.event().data(new StepMsg("KNOWLEDGE", knowledgeMsg)));
+
+        emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "模型正在组织回复逻辑并生成答案。")));
+        String context = buildContextFromRetrieve(retrieveResults);
+        String roleContent = StringUtils.hasText(role.getContent()) ? role.getContent() : request.role();
+        int memoryRounds = resolveMemoryRounds(principal.subjectId(), sceneType);
+        String history = buildHistoryInput(principal.subjectId(), request.roleId(), sceneType, sessionKey, memoryRounds);
+        SmartSalesDifyContextService.SalesDifyContext salesContext = buildSalesContext(principal.subjectId(), sessionKey, assistantMode);
+        sessionHistoryService.appendMessage(
+                principal.subjectId(), request.roleId(), sceneType, sessionKey, "USER", effectiveMessage);
+
+        log.info("monitorChatStream 调用自动回复模型前 traceId={} queryLength={} hasImageSummary={}",
+                streamTraceId,
+                effectiveMessage.length(),
+                StringUtils.hasText(request.imageSummary()));
+        String rawAnswer = wechatAutoReplyModelService.generateReply(new WechatAutoReplyModelService.AutoReplyRequest(
+                effectiveMessage,
+                request.imageSummary(),
+                context,
+                roleContent,
+                history,
+                salesContext.salesStage(),
+                salesContext.customerProfile(),
+                assistantMode));
+        String channel = resolveWechatChannel(request);
+        ReplyPlan replyPlan = resolveReplyPlan(rawAnswer, principal.subjectId(), channel);
+        if (replyPlan.attachments().isEmpty() && outboundMaterialDecisionService != null) {
+            List<OutboundMaterialEntity> decisionAttachments = outboundMaterialDecisionService.selectAutoSendMaterials(
+                    principal.subjectId(), effectiveMessage, replyPlan.replyText(), channel);
+            if (!decisionAttachments.isEmpty()) {
+                replyPlan = new ReplyPlan(buildAttachmentReplyText(decisionAttachments), decisionAttachments);
+            }
+        }
+        String answer = normalizeStreamingAnswer(replyPlan.replyText());
+        if (StringUtils.hasText(answer)) {
+            sessionHistoryService.appendMessage(
+                    principal.subjectId(), request.roleId(), sceneType, sessionKey, "AI", answer);
+            boolean deductSuccess = membershipEntitlementService.deductPoints(principal.subjectId(), 1, "chat_reply", sessionKey);
+            if (!deductSuccess) {
+                log.warn("monitorChatStream 扣点失败 traceId={} userId={}", streamTraceId, principal.subjectId());
+                emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "积分不足，无法完成本次回复。请前往“我的”页面充值或升级会员。")));
+                emitter.complete();
+                return;
+            }
+        }
+        if (!replyPlan.attachments().isEmpty()) {
+            emitter.send(SseEmitter.event().data(new StepMsg("ATTACHMENTS", objectMapper.writeValueAsString(buildAttachmentResponse(replyPlan.attachments())))));
+        }
+        emitter.send(SseEmitter.event().data(new StepMsg("OUTPUT", answer)));
+        log.info("monitorChatStream 编排完成 traceId={}", streamTraceId);
+        emitter.complete();
     }
 
     @GetMapping(value = "/datasets/{datasetId}/documents/{documentId}", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -690,6 +937,10 @@ public class UserDifyController {
 
     private void addHistoryToInputs(
             ObjectNode inputs, Long userId, Long roleId, String sceneType, String sessionKey, int memoryRounds) {
+        inputs.put("history", buildHistoryInput(userId, roleId, sceneType, sessionKey, memoryRounds));
+    }
+
+    private String buildHistoryInput(Long userId, Long roleId, String sceneType, String sessionKey, int memoryRounds) {
         List<SessionHistoryService.HistoryInputItem> history = sessionHistoryService.buildDifyHistory(
                 userId, roleId, sceneType, sessionKey, memoryRounds);
         StringBuilder sb = new StringBuilder();
@@ -700,17 +951,23 @@ public class UserDifyController {
                 sb.append("回复: ").append(item.content()).append("\n");
             }
         }
-        inputs.put("history", sb.toString());
+        return sb.toString();
     }
 
     private void addSalesContextToInputs(ObjectNode inputs, Long userId, String sessionKey, String assistantMode) {
-        if (!DifyClient.ASSISTANT_MODE_SALES.equals(assistantMode) || smartSalesDifyContextService == null) {
+        SmartSalesDifyContextService.SalesDifyContext salesContext = buildSalesContext(userId, sessionKey, assistantMode);
+        if (!StringUtils.hasText(salesContext.salesStage()) && !StringUtils.hasText(salesContext.customerProfile())) {
             return;
         }
-        SmartSalesDifyContextService.SalesDifyContext salesContext =
-                smartSalesDifyContextService.buildContext(userId, sessionKey);
         inputs.put("sales_stage", salesContext.salesStage() == null ? "" : salesContext.salesStage());
         inputs.put("customer_profile", salesContext.customerProfile() == null ? "" : salesContext.customerProfile());
+    }
+
+    private SmartSalesDifyContextService.SalesDifyContext buildSalesContext(Long userId, String sessionKey, String assistantMode) {
+        if (!DifyClient.ASSISTANT_MODE_SALES.equals(assistantMode) || smartSalesDifyContextService == null) {
+            return new SmartSalesDifyContextService.SalesDifyContext("", "");
+        }
+        return smartSalesDifyContextService.buildContext(userId, sessionKey);
     }
 
     private int resolveMemoryRounds(Long userId, String sceneType) {
@@ -736,6 +993,13 @@ public class UserDifyController {
             return request.wechatContact().trim();
         }
         return "未知客户";
+    }
+
+    static String resolveLatestCustomerMessage(MonitorChatRequest request) {
+        if (request != null && StringUtils.hasText(request.latestCustomerMessage())) {
+            return request.latestCustomerMessage().trim();
+        }
+        return request == null || request.message() == null ? "" : request.message().trim();
     }
 
     private String normalizeStreamingAnswer(String raw) {
@@ -1141,7 +1405,9 @@ public class UserDifyController {
             String wechatContactDisplayName,
             String roomType,
             String imageDataUrl,
-            String assistantMode) {
+            String assistantMode,
+            String latestCustomerMessage,
+            String imageSummary) {
         public MonitorChatRequest(
                 Long roleId,
                 String message,
@@ -1151,8 +1417,32 @@ public class UserDifyController {
                 String wechatContactDisplayName,
                 String roomType,
                 String imageDataUrl) {
-            this(roleId, message, role, conversationId, wechatContact, wechatContactDisplayName, roomType, imageDataUrl, null);
+            this(roleId, message, role, conversationId, wechatContact, wechatContactDisplayName, roomType, imageDataUrl, null, null, null);
         }
+
+        public MonitorChatRequest(
+                Long roleId,
+                String message,
+                String role,
+                String conversationId,
+                String wechatContact,
+                String wechatContactDisplayName,
+                String roomType,
+                String imageDataUrl,
+                String assistantMode) {
+            this(roleId, message, role, conversationId, wechatContact, wechatContactDisplayName, roomType, imageDataUrl, assistantMode, null, null);
+        }
+    }
+
+    public record MonitorChatScreenshotRequest(
+            Long roleId,
+            String role,
+            String wechatContact,
+            String wechatContactDisplayName,
+            String roomType,
+            String assistantMode,
+            String imageDataUrl,
+            String windowTitle) {
     }
 
     public record StepMsg(String step, String content) {

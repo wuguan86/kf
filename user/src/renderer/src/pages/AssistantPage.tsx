@@ -10,7 +10,6 @@ import { Toast, useToast } from '../components/Toast'
 import { eventBus } from '../utils/eventBus'
 import { calculateHumanReplyDelayMs } from '../utils/replyTiming'
 import {
-  buildMessageDisplayPayload,
   normalizeIncomingMessageType,
   normalizeMessage,
   shouldExtractImageForIncomingMessage,
@@ -54,7 +53,9 @@ type ChatMessage = {
   messageType: IncomingMessageType
   timestamp: number
   imageDataUrl?: string
+  screenshotDataUrl?: string
   imageNotice?: string
+  imageSummary?: string
   source?: 'personal' | 'enterprise'
   messageId?: string
   customerId?: string
@@ -81,8 +82,6 @@ const CHANGE_RATIO_THRESHOLD = 0.015
 const SAMPLE_STEP = 4
 const STREAM_CHUNK_TIMEOUT_MS = 45000
 const STREAM_TOTAL_TIMEOUT_MS = 180000
-const IMAGE_STREAM_CHUNK_TIMEOUT_MS = 90000
-const IMAGE_STREAM_TOTAL_TIMEOUT_MS = 240000
 type WeChatChannel = 'personal' | 'enterprise'
 
 const defaultWechatChannelConfig: WeChatChannelConfig = {
@@ -817,6 +816,8 @@ function AssistantPage(props: Props): JSX.Element {
     const messageTimestamp = resolveMessageTimestamp(msg?.timestamp)
     const messageUiId = msg?.ui_id || msg?.uiId
     const inlineImageDataUrl = String(msg?.image_data_url || msg?.imageDataUrl || '').trim()
+    const screenshotDataUrl = String(msg?.screenshot_data_url || msg?.screenshotDataUrl || '').trim()
+    const inlineImageSummary = String(msg?.image_summary || msg?.imageSummary || '').trim()
     const source: 'personal' | 'enterprise' = msg?.source === 'enterprise' ? 'enterprise' : 'personal'
     const messageId = String(msg?.messageId || msg?.id || '').trim()
     const customerId = String(msg?.customerId || '').trim()
@@ -832,7 +833,7 @@ function AssistantPage(props: Props): JSX.Element {
       }
       seenBridgeMessageIdsRef.current.add(bridgeMessageKey)
     }
-    const shouldWaitForImage = shouldExtractImageForIncomingMessage({
+    const shouldWaitForImage = !inlineImageSummary && shouldExtractImageForIncomingMessage({
       content: text,
       type: messageType,
       isSelf
@@ -848,10 +849,12 @@ function AssistantPage(props: Props): JSX.Element {
       skipAutoReply,
       messageUiId,
       shouldWaitForImage,
+      hasImageSummary: !!inlineImageSummary,
+      hasScreenshotData: !!screenshotDataUrl,
       source
     })
-    const imageTask: Promise<{ imageDataUrl: string; imageNotice: string }> = inlineImageDataUrl
-      ? Promise.resolve({ imageDataUrl: inlineImageDataUrl, imageNotice: '' })
+    const imageTask: Promise<{ imageDataUrl: string; imageNotice: string; imageSummary: string }> = inlineImageDataUrl
+      ? Promise.resolve({ imageDataUrl: inlineImageDataUrl, imageNotice: '', imageSummary: inlineImageSummary })
       : shouldWaitForImage
       ? (async () => {
           console.log('图片链路：识别到图片占位消息，开始等待图片文件', { contact, messageTimestamp })
@@ -868,23 +871,23 @@ function AssistantPage(props: Props): JSX.Element {
               const imageDataUrl = String(imageResult.dataUrl)
               console.log('[图片链路-DEBUG] 图片匹配成功', { contact, dataUrlLength: imageDataUrl.length })
               showToast('图片提取成功', 'success')
-              return { imageDataUrl, imageNotice: '' }
+              return { imageDataUrl, imageNotice: '', imageSummary: inlineImageSummary }
             }
 
             console.warn('图片链路：图片匹配失败，降级为文本处理', imageResult)
             showToast('图片获取失败，已降级为文本', 'error')
-            return { imageDataUrl: '', imageNotice: '' }
+            return { imageDataUrl: '', imageNotice: '', imageSummary: inlineImageSummary }
           } catch (error: any) {
             console.error('图片链路：图片等待异常', { contact, messageTimestamp, error: error?.message || String(error) })
             showToast('图片提取异常', 'error')
-            return { imageDataUrl: '', imageNotice: '' }
+            return { imageDataUrl: '', imageNotice: '', imageSummary: inlineImageSummary }
           }
         })()
-      : Promise.resolve({ imageDataUrl: '', imageNotice: '' })
+      : Promise.resolve({ imageDataUrl: '', imageNotice: '', imageSummary: inlineImageSummary })
     const prev = contactQueueRef.current.get(sessionKey) || Promise.resolve()
     const next = prev
       .then(async () => {
-        const { imageDataUrl, imageNotice } = await imageTask
+        const { imageDataUrl, imageNotice, imageSummary } = await imageTask
         await handleIncoming(
           sessionKey,
           contact,
@@ -893,7 +896,9 @@ function AssistantPage(props: Props): JSX.Element {
           isSelf,
           triggerReply,
           imageDataUrl,
+          screenshotDataUrl,
           imageNotice,
+          imageSummary,
           source,
           messageId,
           customerId,
@@ -921,7 +926,9 @@ function AssistantPage(props: Props): JSX.Element {
     isSelf: boolean,
     triggerReply: boolean,
     imageDataUrl?: string,
+    screenshotDataUrl?: string,
     imageNotice?: string,
+    imageSummary?: string,
     source: 'personal' | 'enterprise' = 'personal',
     messageId?: string,
     customerId?: string,
@@ -945,7 +952,9 @@ function AssistantPage(props: Props): JSX.Element {
       messageType,
       timestamp: now,
       imageDataUrl: imageDataUrl || undefined,
+      screenshotDataUrl: screenshotDataUrl || undefined,
       imageNotice: imageNotice || undefined,
+      imageSummary: imageSummary || undefined,
       source,
       messageId,
       customerId,
@@ -998,14 +1007,14 @@ function AssistantPage(props: Props): JSX.Element {
     }
 
     const last = lastProcessedByContactRef.current.get(sessionKey)
-    const isImageMessage = !!imageDataUrl
-    if (!isImageMessage && last && last.text === normalizedText && now - last.at < 120000) {
+    const hasImageContext = !!imageSummary || !!imageDataUrl || messageType === 'image' || messageType === 'sticker'
+    if (!hasImageContext && last && last.text === normalizedText && now - last.at < 120000) {
       return
     }
-    if (!isImageMessage && last && now - last.at < 8000) {
+    if (!hasImageContext && last && now - last.at < 8000) {
       return
     }
-    lastProcessedByContactRef.current.set(sessionKey, { text: isImageMessage ? `${normalizedText}-${now}` : normalizedText, at: now })
+    lastProcessedByContactRef.current.set(sessionKey, { text: hasImageContext ? `${normalizedText}-${imageSummary || now}` : normalizedText, at: now })
 
     setIsSending(true)
     setDifyResponse('')
@@ -1031,52 +1040,71 @@ function AssistantPage(props: Props): JSX.Element {
       const baseURL = (storedBaseUrl || AppConfig.apiBaseUrl).replace(/\/api\/?$/, '').replace(/\/$/, '')
 
       const createInitialProcessItems = (): ProcessItem[] => [{
-        id: `step-intent-${Date.now()}`,
-        step: 'INTENT',
+        id: `step-${screenshotDataUrl ? 'vision' : 'intent'}-${Date.now()}`,
+        step: screenshotDataUrl ? 'VISION' : 'INTENT',
         status: 'running',
-        content: '正在分析用户意图...',
+        content: screenshotDataUrl ? '正在识别微信截图里的最新客户消息...' : '正在分析用户意图...',
         timestamp: new Date().toLocaleTimeString()
       }]
 
-      const runMonitorChatStream = async (requestImageDataUrl?: string) => {
+      const runMonitorChatStream = async () => {
         streamAbortControllersRef.current.get(sessionKey)?.abort()
         const currentAbortController = new AbortController()
         streamAbortControllersRef.current.set(sessionKey, currentAbortController)
 
         const localItems = createInitialProcessItems()
         setProcessItems(localItems)
-        const requestMessage = requestImageDataUrl ? '请识别这张图片并结合上下文回复。' : normalizedText
-        const effectiveChunkTimeoutMs = requestImageDataUrl ? IMAGE_STREAM_CHUNK_TIMEOUT_MS : STREAM_CHUNK_TIMEOUT_MS
-        const effectiveTotalTimeoutMs = requestImageDataUrl ? IMAGE_STREAM_TOTAL_TIMEOUT_MS : STREAM_TOTAL_TIMEOUT_MS
-        const streamTraceId = `${sessionKey}-${now}-${requestImageDataUrl ? 'image' : 'text'}`
+        const requestMessage = normalizedText
+        const useScreenshotStream = !!screenshotDataUrl && source === 'personal'
+        const effectiveChunkTimeoutMs = STREAM_CHUNK_TIMEOUT_MS
+        const effectiveTotalTimeoutMs = STREAM_TOTAL_TIMEOUT_MS
+        const streamTraceId = `${sessionKey}-${now}-${useScreenshotStream ? 'screenshot' : (hasImageContext ? 'image-summary' : 'text')}`
 
         console.log('流式回复开始请求', {
           streamTraceId,
           contact,
-          isImageMessage: !!requestImageDataUrl,
+          isImageMessage: hasImageContext,
           messageLength: requestMessage.length,
-          hasImageData: !!requestImageDataUrl,
+          hasImageData: false,
+          hasScreenshotData: useScreenshotStream,
+          hasImageSummary: !!imageSummary,
           chunkTimeoutMs: effectiveChunkTimeoutMs,
           totalTimeoutMs: effectiveTotalTimeoutMs
         })
 
-        const response = await fetch(`${baseURL}/api/user/dify/monitor-chat/stream`, {
+        const streamUrl = useScreenshotStream
+          ? `${baseURL}/api/user/dify/monitor-chat/screenshot-stream`
+          : `${baseURL}/api/user/dify/monitor-chat/stream`
+        const requestBody = useScreenshotStream
+          ? {
+              roleId: role.id,
+              role: role.content || '',
+              wechatContact: sessionKey,
+              wechatContactDisplayName: contact,
+              roomType,
+              assistantMode: assistantModeRef.current,
+              imageDataUrl: screenshotDataUrl,
+              windowTitle: contact
+            }
+          : {
+              roleId: role.id,
+              message: requestMessage,
+              role: role.content || '',
+              wechatContact: sessionKey,
+              wechatContactDisplayName: contact,
+              roomType,
+              assistantMode: assistantModeRef.current,
+              latestCustomerMessage: requestMessage,
+              imageSummary: imageSummary || ''
+            }
+        const response = await fetch(streamUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': token ? `Bearer ${token}` : '',
             'X-Tenant-Id': tenantId || ''
           },
-          body: JSON.stringify({
-            roleId: role.id,
-            message: requestMessage,
-            role: role.content || '',
-            wechatContact: sessionKey,
-            wechatContactDisplayName: contact,
-            roomType,
-            assistantMode: assistantModeRef.current,
-            ...(requestImageDataUrl ? { imageDataUrl: requestImageDataUrl } : {})
-          }),
+          body: JSON.stringify(requestBody),
           signal: currentAbortController.signal
         })
 
@@ -1119,7 +1147,22 @@ function AssistantPage(props: Props): JSX.Element {
               contentLength: String(content || '').length
             })
 
-            if (step === 'INTENT') {
+            if (step === 'VISION') {
+              const item = localItems.find(i => i.step === 'VISION')
+              if (item) {
+                item.status = 'completed'
+                item.content = content
+              }
+              if (!localItems.find(i => i.step === 'INTENT')) {
+                localItems.push({
+                  id: `step-intent-${Date.now()}`,
+                  step: 'INTENT',
+                  status: 'running',
+                  content: '正在分析客户消息和角色上下文...',
+                  timestamp: new Date().toLocaleTimeString()
+                })
+              }
+            } else if (step === 'INTENT') {
               const item = localItems.find(i => i.step === 'INTENT')
               if (item) {
                 item.status = 'completed'

@@ -4,6 +4,7 @@ import type {
   MarketingMomentsRecognition,
   ParsedWeChatMessage,
   ParsedWeChatSnapshot,
+  ReplyTriggerRecognition,
   WeChatAccountCategory,
   WeChatConversationType,
   WeChatMessageBounds,
@@ -24,6 +25,9 @@ type VisionMessage = {
 type VisionResponse = {
   contact?: unknown
   messages?: VisionMessage[]
+  shouldReply?: unknown
+  latestCustomerMessage?: unknown
+  imageSummary?: unknown
   moments?: unknown
   snapshotDigest?: unknown
   changed?: unknown
@@ -43,6 +47,16 @@ export const parseWeChatSnapshotWithVision = async (
   config: WeChatVisionRuntimeConfig
 ): Promise<ParsedWeChatSnapshot> => {
   return requestVisionRecognition(imageDataUrl, window, previousDigest, config, 'CHAT')
+}
+
+export const parseWeChatReplyTriggerWithVision = async (
+  imageDataUrl: string,
+  window: WindowBounds,
+  previousDigest: string,
+  config: WeChatVisionRuntimeConfig
+): Promise<ReplyTriggerRecognition> => {
+  const parsed = await requestVisionRecognition(imageDataUrl, window, previousDigest, config, 'CHAT_REPLY_TRIGGER')
+  return normalizeReplyTrigger(parsed)
 }
 
 export const recognizeConversationListItemWithVision = async (
@@ -81,7 +95,7 @@ const requestVisionRecognition = async (
   window: WindowBounds,
   previousDigest: string,
   config: WeChatVisionRuntimeConfig,
-  sceneHint: 'CHAT' | 'CONVERSATION_LIST' | 'MARKETING_MOMENTS'
+  sceneHint: 'CHAT' | 'CONVERSATION_LIST' | 'MARKETING_MOMENTS' | 'CHAT_REPLY_TRIGGER'
 ): Promise<ParsedWeChatSnapshot> => {
   if (!config.backendBaseUrl || !config.token) {
     throw new Error('新方式缺少后端地址或登录凭证，请重新登录后再启动')
@@ -124,6 +138,24 @@ const requestVisionRecognition = async (
   }
 }
 
+const normalizeReplyTrigger = (data: ParsedWeChatSnapshot): ReplyTriggerRecognition => {
+  const latestCustomerMessage = String(data.replyTrigger?.latestCustomerMessage || (data as any)?.latestCustomerMessage || '').trim()
+  const imageSummary = String(data.replyTrigger?.imageSummary || (data as any)?.imageSummary || '').trim()
+  const contact = String(data.replyTrigger?.contact || data.contact || '微信').trim() || '微信'
+  return {
+    shouldReply: data.replyTrigger?.shouldReply === true || (data as any)?.shouldReply === true,
+    contact,
+    latestCustomerMessage,
+    imageSummary,
+    conversationType: data.replyTrigger?.conversationType || data.conversationType || 'SINGLE',
+    accountCategory: data.replyTrigger?.accountCategory || data.accountCategory || 'UNKNOWN',
+    confidence: typeof data.replyTrigger?.confidence === 'number'
+      ? data.replyTrigger.confidence
+      : (typeof data.confidence === 'number' ? data.confidence : null),
+    skipReason: String(data.replyTrigger?.skipReason || data.skipReason || '').trim()
+  }
+}
+
 const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => {
   const contact = String(data?.contact || '微信').trim() || '微信'
   const messages = Array.isArray(data?.messages) ? data.messages : []
@@ -136,6 +168,7 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
     skipAutoReply: data?.skipAutoReply === true,
     skipReason: String(data?.skipReason || '').trim(),
     confidence: typeof data?.confidence === 'number' ? data.confidence : null,
+    replyTrigger: normalizeReplyTriggerFromVisionResponse(data),
     moments: normalizeMarketingMoments(data?.moments),
     messages: messages
       .map((message, index): ParsedWeChatMessage | null => {
@@ -160,6 +193,24 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
         }
       })
       .filter((message): message is ParsedWeChatMessage => !!message)
+  }
+}
+
+const normalizeReplyTriggerFromVisionResponse = (data: VisionResponse): ReplyTriggerRecognition | undefined => {
+  if (!data || typeof data.shouldReply !== 'boolean') {
+    return undefined
+  }
+  const latestCustomerMessage = String(data.latestCustomerMessage || '').trim()
+  const imageSummary = String(data.imageSummary || '').trim()
+  return {
+    shouldReply: data.shouldReply === true,
+    contact: String(data.contact || '微信').trim() || '微信',
+    latestCustomerMessage,
+    imageSummary,
+    conversationType: normalizeConversationType(data.conversationType),
+    accountCategory: normalizeAccountCategory(data.accountCategory),
+    confidence: typeof data.confidence === 'number' ? data.confidence : null,
+    skipReason: String(data.skipReason || '').trim()
   }
 }
 

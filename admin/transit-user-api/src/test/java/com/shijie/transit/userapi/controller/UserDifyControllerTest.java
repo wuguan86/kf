@@ -16,6 +16,8 @@ import com.shijie.transit.userapi.dify.DifyClient;
 import com.shijie.transit.userapi.dify.DifyProperties;
 import com.shijie.transit.userapi.service.DifyContactConversationMappingService;
 import com.shijie.transit.userapi.service.KnowledgeBaseService;
+import com.shijie.transit.userapi.service.MembershipEntitlementService;
+import com.shijie.transit.userapi.service.MembershipQueryService;
 import com.shijie.transit.userapi.service.OutboundMaterialDecisionService;
 import com.shijie.transit.userapi.service.OutboundMaterialService;
 import com.shijie.transit.userapi.service.RoleKnowledgeBaseService;
@@ -23,6 +25,10 @@ import com.shijie.transit.userapi.service.RoleService;
 import com.shijie.transit.userapi.service.SessionConfigService;
 import com.shijie.transit.userapi.service.SessionHistoryService;
 import com.shijie.transit.userapi.service.SmartSalesDifyContextService;
+import com.shijie.transit.userapi.service.WechatAutoReplyModelService;
+import com.shijie.transit.userapi.wechatvision.WechatReplyTriggerResult;
+import com.shijie.transit.userapi.wechatvision.WechatVisionParseRequest;
+import com.shijie.transit.userapi.wechatvision.WechatVisionService;
 import java.time.Clock;
 import java.util.HashMap;
 import java.util.List;
@@ -30,6 +36,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.client.RestClient;
 
 class UserDifyControllerTest {
 
@@ -46,6 +53,95 @@ class UserDifyControllerTest {
         "");
 
     assertEquals("customer-name", UserDifyController.resolveContactDisplayName(request));
+  }
+
+  @Test
+  void monitorChatStreamUsesLatestCustomerMessageAndDoesNotCallDifyChatflow() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    RoleEntity role = role("");
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+    RecordingWechatAutoReplyModelService autoReplyModelService = new RecordingWechatAutoReplyModelService(objectMapper);
+    UserDifyController controller = controller(
+        objectMapper,
+        difyClient,
+        role,
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        null,
+        null,
+        autoReplyModelService);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      controller.monitorChatStream(new UserDifyController.MonitorChatRequest(
+          10L,
+          "旧消息不应作为模型输入",
+          "",
+          "",
+          "客户A",
+          "客户A",
+          "SINGLE",
+          "",
+          DifyClient.ASSISTANT_MODE_CUSTOMER_SERVICE,
+          "[图片]",
+          "图片里是一张报价单"));
+
+      for (int i = 0; i < 50 && autoReplyModelService.request == null; i++) {
+        Thread.sleep(20);
+      }
+
+      assertEquals(0, difyClient.chatCount);
+      assertEquals("[图片]", autoReplyModelService.request.customerMessage());
+      assertEquals("图片里是一张报价单", autoReplyModelService.request.imageSummary());
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
+  void monitorChatScreenshotStreamParsesVisionThenGeneratesReplyWithoutDifyChatflow() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    RoleEntity role = role("");
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+    RecordingWechatAutoReplyModelService autoReplyModelService = new RecordingWechatAutoReplyModelService(objectMapper);
+    FakeWechatVisionService visionService = new FakeWechatVisionService(objectMapper,
+        new WechatReplyTriggerResult(true, "客户A", "刚吃完", "", "SINGLE", "NORMAL", 0.96D, ""));
+    UserDifyController controller = controller(
+        objectMapper,
+        difyClient,
+        role,
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        null,
+        null,
+        autoReplyModelService,
+        visionService);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      controller.monitorChatScreenshotStream(new UserDifyController.MonitorChatScreenshotRequest(
+          10L,
+          "",
+          "客户A",
+          "客户A",
+          "SINGLE",
+          DifyClient.ASSISTANT_MODE_CUSTOMER_SERVICE,
+          "data:image/png;base64,AAAA",
+          "微信"));
+
+      for (int i = 0; i < 50 && autoReplyModelService.request == null; i++) {
+        Thread.sleep(20);
+      }
+
+      assertEquals(1, visionService.parseCount);
+      assertEquals("CHAT_REPLY_TRIGGER", visionService.request.sceneHint());
+      assertEquals(0, difyClient.chatCount);
+      assertEquals("刚吃完", autoReplyModelService.request.customerMessage());
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
   }
 
   @Test
@@ -317,6 +413,48 @@ class UserDifyControllerTest {
       FakeKnowledgeBaseService knowledgeBaseService,
       OutboundMaterialDecisionService decisionService,
       SmartSalesDifyContextService salesDifyContextService) {
+    return controller(
+        objectMapper,
+        difyClient,
+        role,
+        roleKnowledgeBaseService,
+        knowledgeBaseService,
+        decisionService,
+        salesDifyContextService,
+        null);
+  }
+
+  private static UserDifyController controller(
+      ObjectMapper objectMapper,
+      RecordingDifyClient difyClient,
+      RoleEntity role,
+      FakeRoleKnowledgeBaseService roleKnowledgeBaseService,
+      FakeKnowledgeBaseService knowledgeBaseService,
+      OutboundMaterialDecisionService decisionService,
+      SmartSalesDifyContextService salesDifyContextService,
+      WechatAutoReplyModelService autoReplyModelService) {
+    return controller(
+        objectMapper,
+        difyClient,
+        role,
+        roleKnowledgeBaseService,
+        knowledgeBaseService,
+        decisionService,
+        salesDifyContextService,
+        autoReplyModelService,
+        null);
+  }
+
+  private static UserDifyController controller(
+      ObjectMapper objectMapper,
+      RecordingDifyClient difyClient,
+      RoleEntity role,
+      FakeRoleKnowledgeBaseService roleKnowledgeBaseService,
+      FakeKnowledgeBaseService knowledgeBaseService,
+      OutboundMaterialDecisionService decisionService,
+      SmartSalesDifyContextService salesDifyContextService,
+      WechatAutoReplyModelService autoReplyModelService,
+      WechatVisionService wechatVisionService) {
     return new UserDifyController(
         difyClient,
         new FakeDifyContactConversationMappingService(),
@@ -325,10 +463,12 @@ class UserDifyControllerTest {
         knowledgeBaseService,
         new FakeSessionConfigService(objectMapper),
         new FakeSessionHistoryService(),
-        null,
-        null,
+        new FakeMembershipEntitlementService(),
+        new FakeMembershipQueryService(),
         decisionService,
         salesDifyContextService,
+        autoReplyModelService,
+        wechatVisionService,
         new DifyProperties(),
         objectMapper);
   }
@@ -363,6 +503,7 @@ class UserDifyControllerTest {
 
   private static class RecordingDifyClient extends DifyClient {
     int retrieveCount;
+    int chatCount;
     String answer = "ok";
     String rawJson = "{\"answer\":\"ok\"}";
     String assistantMode;
@@ -380,15 +521,71 @@ class UserDifyControllerTest {
 
     @Override
     public DifyChatResult chatMessages(String requestBodyJson) {
+      chatCount++;
       this.requestBodyJson = requestBodyJson;
       return new DifyChatResult(rawJson, "conv-1", answer);
     }
 
     @Override
     public DifyChatResult chatMessages(String requestBodyJson, String assistantMode) {
+      chatCount++;
       this.assistantMode = assistantMode;
       this.requestBodyJson = requestBodyJson;
       return new DifyChatResult(rawJson, "conv-1", answer);
+    }
+  }
+
+  private static class RecordingWechatAutoReplyModelService extends WechatAutoReplyModelService {
+    AutoReplyRequest request;
+
+    RecordingWechatAutoReplyModelService(ObjectMapper objectMapper) {
+      super(objectMapper, RestClient.builder(), "sk-test", "https://dashscope.aliyuncs.com", "qwen-plus");
+    }
+
+    @Override
+    public String generateReply(AutoReplyRequest request) {
+      this.request = request;
+      return "自动回复结果";
+    }
+  }
+
+  private static class FakeWechatVisionService extends WechatVisionService {
+    private final WechatReplyTriggerResult result;
+    int parseCount;
+    WechatVisionParseRequest request;
+
+    FakeWechatVisionService(ObjectMapper objectMapper, WechatReplyTriggerResult result) {
+      super(objectMapper, RestClient.builder(), "sk-test", "https://dashscope.aliyuncs.com", "qwen-vl-plus");
+      this.result = result;
+    }
+
+    @Override
+    public WechatReplyTriggerResult parseReplyTrigger(WechatVisionParseRequest request) {
+      parseCount++;
+      this.request = request;
+      return result;
+    }
+  }
+
+  private static class FakeMembershipEntitlementService extends MembershipEntitlementService {
+    FakeMembershipEntitlementService() {
+      super(null, null, null, Clock.systemDefaultZone());
+    }
+
+    @Override
+    public boolean deductPoints(long userId, int amount, String reason, String refId) {
+      return true;
+    }
+  }
+
+  private static class FakeMembershipQueryService extends MembershipQueryService {
+    FakeMembershipQueryService() {
+      super(null, null, null, new FakeMembershipEntitlementService(), Clock.systemDefaultZone());
+    }
+
+    @Override
+    public MyMembershipSnapshot queryMyMembership(long userId) {
+      return new MyMembershipSnapshot(null, null, 1, 0);
     }
   }
 

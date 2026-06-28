@@ -11,6 +11,8 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shijie.transit.userapi.wechatvision.WechatVisionParseRequest;
 import com.shijie.transit.userapi.wechatvision.WechatVisionParseResponse;
+import com.shijie.transit.userapi.wechatvision.WechatVisionController;
+import com.shijie.transit.userapi.wechatvision.WechatReplyTriggerResult;
 import com.shijie.transit.userapi.wechatvision.WechatVisionService;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
@@ -351,6 +353,112 @@ class WechatVisionServiceTest {
     assertEquals(120D, response.moments().get(0).verticalRange().y());
     assertEquals(180D, response.moments().get(0).verticalRange().h());
     assertEquals(0.93D, response.moments().get(0).confidence());
+    server.verify();
+  }
+
+  @Test
+  void parseReplyTriggerUsesLightPromptAndReturnsLatestCustomerMessage() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(Matchers.containsString("CHAT_REPLY_TRIGGER")))
+        .andExpect(content().string(Matchers.containsString("只判断是否需要回复最新一条对方消息")))
+        .andExpect(content().string(Matchers.not(Matchers.containsString("messages 必须严格按聊天气泡"))))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"shouldReply\\":true,\\"contact\\":\\"张三\\",\\"latestCustomerMessage\\":\\"这个方案多少钱\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.91,\\"skipReason\\":\\"\\"}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatReplyTriggerResult result = service.parseReplyTrigger(new WechatVisionParseRequest(
+        "data:image/png;base64,TRIGGER",
+        "微信",
+        "",
+        "native-personal",
+        "CHAT_REPLY_TRIGGER"));
+
+    assertEquals(true, result.shouldReply());
+    assertEquals("张三", result.contact());
+    assertEquals("这个方案多少钱", result.latestCustomerMessage());
+    assertEquals("", result.imageSummary());
+    assertEquals("SINGLE", result.conversationType());
+    assertEquals("NORMAL", result.accountCategory());
+    assertEquals(0.91D, result.confidence());
+    assertEquals("", result.skipReason());
+    server.verify();
+  }
+
+  @Test
+  void controllerReturnsReplyTriggerPayloadForChatReplyTriggerScene() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(Matchers.containsString("CHAT_REPLY_TRIGGER")))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"shouldReply\\":true,\\"contact\\":\\"夏天\\",\\"latestCustomerMessage\\":\\"刚吃完\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.98,\\"skipReason\\":\\"\\"}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+    WechatVisionController controller = new WechatVisionController(service);
+
+    Object data = controller.parse(new WechatVisionParseRequest(
+        "data:image/png;base64,TRIGGER",
+        "微信",
+        "",
+        "native-personal",
+        "CHAT_REPLY_TRIGGER")).getData();
+
+    WechatReplyTriggerResult result = (WechatReplyTriggerResult) data;
+    assertEquals(true, result.shouldReply());
+    assertEquals("刚吃完", result.latestCustomerMessage());
+    server.verify();
+  }
+
+  @Test
+  void parseReplyTriggerSkipsSpecialConversationWithChineseReason() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"shouldReply\\":true,\\"contact\\":\\"文件传输助手\\",\\"latestCustomerMessage\\":\\"测试\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"FILE_HELPER\\",\\"confidence\\":0.96,\\"skipReason\\":\\"\\"}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatReplyTriggerResult result = service.parseReplyTrigger(new WechatVisionParseRequest(
+        "data:image/png;base64,FILE",
+        "微信",
+        "",
+        "native-personal",
+        "CHAT_REPLY_TRIGGER"));
+
+    assertEquals(false, result.shouldReply());
+    assertEquals("文件传输助手", result.contact());
+    assertEquals("FILE_HELPER", result.accountCategory());
+    assertEquals("命中文件传输助手固定过滤规则", result.skipReason());
     server.verify();
   }
 

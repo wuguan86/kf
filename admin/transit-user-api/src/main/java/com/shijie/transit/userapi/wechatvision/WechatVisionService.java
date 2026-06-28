@@ -25,6 +25,7 @@ public class WechatVisionService {
   private static final String DEFAULT_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com";
   private static final int MAX_LOG_RESPONSE_LENGTH = 1000;
   private static final String SCENE_HINT_CHAT = "CHAT";
+  private static final String SCENE_HINT_CHAT_REPLY_TRIGGER = "CHAT_REPLY_TRIGGER";
   private static final String SCENE_HINT_CONVERSATION_LIST = "CONVERSATION_LIST";
   private static final String SCENE_HINT_MARKETING_MOMENTS = "MARKETING_MOMENTS";
 
@@ -79,6 +80,33 @@ public class WechatVisionService {
     }
   }
 
+  public WechatReplyTriggerResult parseReplyTrigger(WechatVisionParseRequest request) {
+    if (request == null || !StringUtils.hasText(request.imageDataUrl())) {
+      throw new IllegalArgumentException("微信视觉解析缺少截图");
+    }
+    if (!modelConfigured) {
+      throw new IllegalStateException("微信视觉解析模型未配置");
+    }
+    try {
+      WechatVisionParseRequest triggerRequest = normalizeReplyTriggerRequest(request);
+      String aiOutput = callCompatibleVision(triggerRequest);
+      log.info("微信轻量自动回复视觉解析模型原始返回 model={} output={}", model, abbreviate(aiOutput));
+      WechatReplyTriggerResult parsed = parseReplyTriggerModelOutput(aiOutput, triggerRequest);
+      log.info("微信轻量自动回复视觉解析完成 contact={} shouldReply={} conversationType={} accountCategory={} confidence={} skipReason={}",
+          parsed.contact(),
+          parsed.shouldReply(),
+          parsed.conversationType(),
+          parsed.accountCategory(),
+          parsed.confidence(),
+          parsed.skipReason());
+      return parsed;
+    } catch (IllegalArgumentException | IllegalStateException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw new IllegalStateException("微信轻量自动回复视觉解析调用失败：" + safeMessage(ex), ex);
+    }
+  }
+
   private String callCompatibleVision(WechatVisionParseRequest request) {
     ObjectNode body = objectMapper.createObjectNode();
     body.put("model", model);
@@ -87,7 +115,7 @@ public class WechatVisionService {
     ArrayNode messages = body.putArray("messages");
     messages.addObject()
         .put("role", "system")
-        .put("content", systemPrompt());
+        .put("content", systemPrompt(request));
     ObjectNode userMessage = messages.addObject();
     userMessage.put("role", "user");
     ArrayNode content = userMessage.putArray("content");
@@ -229,6 +257,56 @@ public class WechatVisionService {
         classification.confidence());
   }
 
+  private WechatReplyTriggerResult parseReplyTriggerModelOutput(String aiOutput, WechatVisionParseRequest request) {
+    JsonNode root;
+    try {
+      root = objectMapper.readTree(stripJsonFence(aiOutput));
+    } catch (Exception ex) {
+      throw new IllegalArgumentException("微信轻量自动回复视觉解析结果不是有效 JSON", ex);
+    }
+    if (!root.isObject()) {
+      throw new IllegalArgumentException("微信轻量自动回复视觉解析结果不是有效 JSON");
+    }
+
+    String contact = text(root.path("contact")).trim();
+    if (!StringUtils.hasText(contact)) {
+      contact = StringUtils.hasText(request.windowTitle()) ? request.windowTitle().trim() : "微信";
+    }
+    String conversationType = normalizeConversationType(text(root.path("conversationType")));
+    String accountCategory = normalizeAccountCategory(text(root.path("accountCategory")));
+    String skipReason = text(root.path("skipReason")).trim();
+    double confidence = root.path("confidence").isNumber()
+        ? Math.max(0D, Math.min(1D, root.path("confidence").asDouble()))
+        : 0D;
+    ClassificationResult classification = classifyConversation(
+        contact,
+        accountCategory,
+        conversationType,
+        skipReason,
+        confidence,
+        request);
+    String latestCustomerMessage = text(root.path("latestCustomerMessage")).trim();
+    String imageSummary = text(root.path("imageSummary")).trim();
+    boolean shouldReply = root.path("shouldReply").asBoolean(false)
+        && !classification.skipAutoReply()
+        && confidence >= 0.65D
+        && (StringUtils.hasText(latestCustomerMessage) || StringUtils.hasText(imageSummary));
+    String finalSkipReason = classification.skipAutoReply()
+        ? classification.skipReason()
+        : shouldReply
+            ? ""
+            : ensureSkipReason(skipReason, confidence < 0.65D ? "视觉识别置信度不足，已跳过自动回复" : "未识别到需要回复的最新对方消息");
+    return new WechatReplyTriggerResult(
+        shouldReply,
+        contact,
+        latestCustomerMessage,
+        imageSummary,
+        classification.conversationType(),
+        classification.accountCategory(),
+        classification.confidence(),
+        finalSkipReason);
+  }
+
   private List<WechatMarketingMoment> parseMarketingMoments(JsonNode momentNodes) {
     List<WechatMarketingMoment> moments = new ArrayList<>();
     if (momentNodes == null || !momentNodes.isArray()) {
@@ -339,7 +417,19 @@ public class WechatVisionService {
     return content;
   }
 
-  private String systemPrompt() {
+  private WechatVisionParseRequest normalizeReplyTriggerRequest(WechatVisionParseRequest request) {
+    return new WechatVisionParseRequest(
+        request.imageDataUrl(),
+        request.windowTitle(),
+        request.previousDigest(),
+        request.driverMode(),
+        SCENE_HINT_CHAT_REPLY_TRIGGER);
+  }
+
+  private String systemPrompt(WechatVisionParseRequest request) {
+    if (SCENE_HINT_CHAT_REPLY_TRIGGER.equals(normalizeSceneHint(request == null ? null : request.sceneHint()))) {
+      return replyTriggerSystemPrompt();
+    }
     return """
         你是微信桌面端界面解析助手。
         必须只输出 JSON Object，不要输出 Markdown，不要解释。
@@ -389,6 +479,26 @@ public class WechatVisionService {
         - postBounds、likePoint、commentPoint 是兼容旧版本的可选字段；点赞和评论坐标由客户端本地识别“..”菜单，不要为了补全字段而猜测坐标。
         - 如果没有把握、动态不完整、语义不适合点赞、按钮被遮挡或不在朋友圈页面，moments 返回空数组或降低 confidence。
         只输出真实可见内容，忽略搜索框、输入框、菜单、按钮、时间轴和其他系统控件。
+        """;
+  }
+
+  private String replyTriggerSystemPrompt() {
+    return """
+        你是微信桌面端轻量自动回复触发识别助手。
+        必须只输出 JSON Object，不要输出 Markdown，不要解释。
+        固定输出字段：
+        shouldReply、contact、latestCustomerMessage、imageSummary、conversationType、accountCategory、confidence、skipReason。
+        conversationType 只能是 SINGLE、GROUP、SYSTEM。
+        accountCategory 只能是 NORMAL、FILE_HELPER、TENCENT_NEWS、OFFICIAL_ACCOUNT、SERVICE_ACCOUNT、CUSTOMER_SERVICE、UNKNOWN。
+        你只判断是否需要回复最新一条对方消息，不解析完整聊天记录，不输出 messages，不输出 bounds，不输出点击坐标。
+        判断规则：
+        - 只看当前打开的微信聊天窗口，忽略左侧会话列表、搜索框、输入框、菜单、按钮和时间轴。
+        - 只有最底部可见的最新聊天气泡明确来自对方，且内容适合自动回复时，shouldReply 才能返回 true。
+        - 如果最新气泡是己方消息、系统提示、历史消息上移、输入框内容、公众号/服务号/文件传输助手/腾讯新闻/客服消息，shouldReply 返回 false，并在 skipReason 写中文原因。
+        - 如果最新对方消息是文字，latestCustomerMessage 输出真实可见文字，imageSummary 输出空字符串。
+        - 如果最新对方消息是图片或表情包，latestCustomerMessage 可输出“[图片]”或“[表情包]”，imageSummary 用中文概括图片或表情包真实可见内容；看不清时 shouldReply 返回 false。
+        - 不要推测屏幕外内容，不要补全看不清的文字，不要为了回复而猜测客户意图。
+        - confidence 表示对“最新对方消息可自动回复”判断的置信度，低于 0.65 时应返回 shouldReply=false。
         """;
   }
 
@@ -535,6 +645,9 @@ public class WechatVisionService {
 
   private String normalizeSceneHint(String rawValue) {
     String normalized = defaultString(rawValue).toUpperCase(Locale.ROOT);
+    if (SCENE_HINT_CHAT_REPLY_TRIGGER.equals(normalized)) {
+      return SCENE_HINT_CHAT_REPLY_TRIGGER;
+    }
     if (SCENE_HINT_CONVERSATION_LIST.equals(normalized)) {
       return SCENE_HINT_CONVERSATION_LIST;
     }
