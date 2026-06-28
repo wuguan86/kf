@@ -363,7 +363,11 @@ class WechatVisionServiceTest {
     server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
         .andExpect(method(HttpMethod.POST))
         .andExpect(content().string(Matchers.containsString("CHAT_REPLY_TRIGGER")))
-        .andExpect(content().string(Matchers.containsString("只判断是否需要回复最新一条对方消息")))
+        .andExpect(content().string(Matchers.containsString("只判断是否需要回复最新一组连续对方消息")))
+        .andExpect(content().string(Matchers.containsString("右侧绿色气泡是己方消息")))
+        .andExpect(content().string(Matchers.containsString("左侧灰色气泡是对方消息")))
+        .andExpect(content().string(Matchers.containsString("在吗\\n周末不聊工作")))
+        .andExpect(content().string(Matchers.containsString("latestCustomerMessage 必须是“周末不聊工作”")))
         .andExpect(content().string(Matchers.not(Matchers.containsString("messages 必须严格按聊天气泡"))))
         .andRespond(withSuccess("""
             {
@@ -393,6 +397,39 @@ class WechatVisionServiceTest {
     assertEquals("NORMAL", result.accountCategory());
     assertEquals(0.91D, result.confidence());
     assertEquals("", result.skipReason());
+    server.verify();
+  }
+
+  @Test
+  void parseReplyTriggerKeepsContinuousLatestCustomerMessagesTogether() {
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    server.expect(requestTo("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(Matchers.containsString("最新一组连续对方消息")))
+        .andRespond(withSuccess("""
+            {
+              "choices": [
+                {
+                  "message": {
+                    "content": "{\\"shouldReply\\":true,\\"contact\\":\\"夏天\\",\\"latestCustomerMessage\\":\\"在吗\\\\n周末不聊工作\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.94,\\"skipReason\\":\\"\\"}"
+                  }
+                }
+              ]
+            }
+            """, MediaType.APPLICATION_JSON));
+    WechatVisionService service = createService(builder, "sk-test", "qwen-vl-plus");
+
+    WechatReplyTriggerResult result = service.parseReplyTrigger(new WechatVisionParseRequest(
+        "data:image/png;base64,TRIGGER_GROUP",
+        "微信",
+        "",
+        "native-personal",
+        "CHAT_REPLY_TRIGGER"));
+
+    assertEquals(true, result.shouldReply());
+    assertEquals("在吗\n周末不聊工作", result.latestCustomerMessage());
+    assertEquals("", result.imageSummary());
     server.verify();
   }
 

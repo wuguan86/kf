@@ -1722,6 +1722,42 @@ async function testPersonalChannelEmitsScreenshotCandidateWithoutMainVisionReply
   assert.equal(result.messages[0].trigger_reply, true)
 }
 
+async function testPersonalScreenshotCandidateTriggersForTinyCurrentChatChange() {
+  let triggerParseCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=tiny-reply-trigger',
+      png: Buffer.from('tiny-reply-trigger-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-tiny-reply-trigger', changedRatio: 0.001 }),
+    comparePngSnapshotRegion: () => ({ changed: false, digest: 'digest-tiny-chat-region', changedRatio: 0.001 }),
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('full chat parse should not run for personal screenshot candidates')
+    },
+    parseWeChatReplyTriggerWithVision: async () => {
+      triggerParseCount += 1
+      throw new Error('personal reply trigger parse should be handled by backend unified stream')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  driver.configure({ backendBaseUrl: 'http://127.0.0.1:18080', token: 'token', tenantId: '1', channel: 'personal' })
+  await driver.start()
+  disableStartupBaselineForTest(driver)
+  driver.seenMessageFingerprints.add('existing-baseline')
+  const result = await driver.poll()
+
+  assert.equal(triggerParseCount, 0)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].screenshot_data_url, 'data:image/png;base64=tiny-reply-trigger')
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
 async function testReplyTriggerRecognitionCreatesSingleAutoReplyMessage() {
   let triggerParseCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -4849,6 +4885,7 @@ await testRepeatedCustomerMessageWithChangedUiIdIsNotReportedAgain()
 await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testCustomerMessageCanTriggerAfterGeometryBecomesReliable()
 await testPersonalChannelEmitsScreenshotCandidateWithoutMainVisionReplyParse()
+await testPersonalScreenshotCandidateTriggersForTinyCurrentChatChange()
 await testReplyTriggerRecognitionCreatesSingleAutoReplyMessage()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()

@@ -647,8 +647,6 @@ function AssistantPage(props: Props): JSX.Element {
     }
   }
 
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const chatHistoryRef = useRef<HTMLDivElement>(null)
   const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const marketingLikeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const marketingCommentTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -1007,14 +1005,14 @@ function AssistantPage(props: Props): JSX.Element {
     }
 
     const last = lastProcessedByContactRef.current.get(sessionKey)
-    const hasImageContext = !!imageSummary || !!imageDataUrl || messageType === 'image' || messageType === 'sticker'
-    if (!hasImageContext && last && last.text === normalizedText && now - last.at < 120000) {
+    const hasVisualContext = !!imageSummary || !!imageDataUrl || !!screenshotDataUrl || messageType === 'image' || messageType === 'sticker'
+    if (!hasVisualContext && last && last.text === normalizedText && now - last.at < 120000) {
       return
     }
-    if (!hasImageContext && last && now - last.at < 8000) {
+    if (!hasVisualContext && last && now - last.at < 8000) {
       return
     }
-    lastProcessedByContactRef.current.set(sessionKey, { text: hasImageContext ? `${normalizedText}-${imageSummary || now}` : normalizedText, at: now })
+    lastProcessedByContactRef.current.set(sessionKey, { text: hasVisualContext ? `${normalizedText}-${imageSummary || screenshotDataUrl || now}` : normalizedText, at: now })
 
     setIsSending(true)
     setDifyResponse('')
@@ -1058,12 +1056,12 @@ function AssistantPage(props: Props): JSX.Element {
         const useScreenshotStream = !!screenshotDataUrl && source === 'personal'
         const effectiveChunkTimeoutMs = STREAM_CHUNK_TIMEOUT_MS
         const effectiveTotalTimeoutMs = STREAM_TOTAL_TIMEOUT_MS
-        const streamTraceId = `${sessionKey}-${now}-${useScreenshotStream ? 'screenshot' : (hasImageContext ? 'image-summary' : 'text')}`
+        const streamTraceId = `${sessionKey}-${now}-${useScreenshotStream ? 'screenshot' : (hasVisualContext ? 'image-summary' : 'text')}`
 
         console.log('流式回复开始请求', {
           streamTraceId,
           contact,
-          isImageMessage: hasImageContext,
+          isImageMessage: hasVisualContext,
           messageLength: requestMessage.length,
           hasImageData: false,
           hasScreenshotData: useScreenshotStream,
@@ -1418,18 +1416,6 @@ function AssistantPage(props: Props): JSX.Element {
       eventBus.emit('points-updated')
     }
   }
-
-  useEffect(() => {
-    const container = chatHistoryRef.current
-    if (!container) return
-    const raf = window.requestAnimationFrame(() => {
-      container.scrollTop = container.scrollHeight
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ block: 'end' })
-      }
-    })
-    return () => window.cancelAnimationFrame(raf)
-  }, [messages.length])
 
   useEffect(() => {
     if (pollTimeoutRef.current) {
@@ -1871,21 +1857,6 @@ function AssistantPage(props: Props): JSX.Element {
 
   const configurationDisabled = isRunning || isConnecting
 
-  const groupedChatSessions = messages.reduce<Array<{ sessionKey: string; contact: string; messages: ChatMessage[] }>>((groups, message) => {
-    const existing = groups.find((group) => group.sessionKey === message.sessionKey)
-    if (existing) {
-      existing.messages.push(message)
-      existing.contact = message.contact || existing.contact
-      return groups
-    }
-    groups.push({
-      sessionKey: message.sessionKey,
-      contact: message.contact,
-      messages: [message]
-    })
-    return groups
-  }, [])
-
   return (
     <div className={styles.assistantPage}>
       <header className={styles.pageHeader}>
@@ -1931,90 +1902,6 @@ function AssistantPage(props: Props): JSX.Element {
         <div className={styles.assistantContainer}>
           <div className={styles.mainCard}>
             
-            {/* Top Section: WeChat Messages (Now on top) */}
-            <div className={styles.chatHistorySection}>
-               <div className={styles.sectionHeader}>
-                 <h5 className={styles.sectionTitle}>
-                   实时对话读取
-                 </h5>
-                 {lastReplied && (
-                    <span className={styles.lastRepliedBadge}>
-                      最近回复 {lastReplied.contact}
-                    </span>
-                 )}
-               </div>
-               
-               <div className={styles.chatHistoryContainer} ref={chatHistoryRef}>
-                  {messages.length === 0 && (
-                    <div className={styles.emptyState}>
-                      {isRunning ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span className={styles.iconBreathing} style={{ color: '#52c41a' }}></span>
-                          <span>AI 引擎已就绪，正在等待新的对话产生...</span>
-                        </div>
-                      ) : (
-                        '启动后，收到的微信消息会出现在这里...'
-                      )}
-                    </div>
-                  )}
-                  {groupedChatSessions.map((session) => (
-                    <div key={session.sessionKey} className={styles.chatSessionGroup}>
-                      <div className={styles.chatSessionHeader}>
-                        <span>{session.contact || '未知客户'}</span>
-                        <span>{session.messages.length} 条消息</span>
-                      </div>
-                      {session.messages.map((msg) => {
-                        const isLatest = msg.id === messages[messages.length - 1]?.id
-                        const displayPayload = buildMessageDisplayPayload({
-                          content: msg.content,
-                          type: msg.messageType,
-                          imageDataUrl: msg.imageDataUrl
-                        })
-                        return (
-                          <div
-                            key={msg.id}
-                            className={styles.messageItem}
-                            style={{
-                              alignItems: msg.isSelf ? 'flex-end' : 'flex-start',
-                            }}
-                          >
-                            <div className={styles.messageMeta}>
-                              {!msg.isSelf && isLatest && (
-                                <span className={styles.newBadge}>
-                                  NEW
-                                </span>
-                              )}
-                              <span>{msg.isSelf ? '我' : msg.contact}</span>
-                              <span style={{ marginLeft: '8px' }}>{new Date(msg.timestamp).toLocaleTimeString()}</span>
-                            </div>
-                            <div
-                              className={`${styles.messageBubble} ${msg.isSelf ? styles.messageBubbleSelf : styles.messageBubbleOther}`}
-                            >
-                              {displayPayload.imageDataUrl ? (
-                                <img
-                                  className={styles.messageImage}
-                                  src={displayPayload.imageDataUrl}
-                                  alt="微信图片"
-                                />
-                              ) : (
-                                displayPayload.displayText
-                              )}
-                              {msg.imageNotice && (
-                                <div className={styles.messageNotice}>
-                                  {msg.imageNotice}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-               </div>
-            </div>
-
-            {/* Bottom Section: AI Thinking Process (Now at bottom) */}
             <div className={styles.aiThinkingSection}>
               <div className={styles.sectionHeader}>
                 <h5 className={styles.sectionTitle}>

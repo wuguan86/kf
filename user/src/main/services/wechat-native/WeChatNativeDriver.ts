@@ -53,6 +53,7 @@ const MIN_SELF_REPLY_PARTIAL_MATCH_LENGTH = 8
 const SHORT_TEXT_REPLY_CONTENT_MAX_LENGTH = 6
 const MESSAGE_BOUNDS_FINGERPRINT_BUCKET_PX = 16
 const MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO = 0.002
+const MIN_PERSONAL_SCREENSHOT_REPLY_CHANGE_RATIO = 0.0008
 const CURRENT_CHAT_REGION_CHANGE_RATIO = 0.015
 const LOCKED_UNREAD_CONTACT_TTL_MS = 30_000
 const IMAGE_MESSAGE_CACHE_TTL_MS = 2 * 60_000
@@ -2781,9 +2782,12 @@ export class WeChatNativeDriver {
     this.lastScreenshotPng = screenshot.png
     this.latestSnapshotFromUnreadSwitch = false
     const shouldRetryFailedVision = this.consecutiveVisionFailures > 0
+    const minorCurrentChatChangeRatio = this.shouldUseBackendScreenshotReplyStream()
+      ? MIN_PERSONAL_SCREENSHOT_REPLY_CHANGE_RATIO
+      : MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO
     const shouldParseMinorCurrentChatChange = !currentChatDiff.changed &&
       !shouldRetryFailedVision &&
-      currentChatDiff.changedRatio >= MIN_CURRENT_CHAT_MESSAGE_CHANGE_RATIO
+      currentChatDiff.changedRatio >= minorCurrentChatChangeRatio
     const shouldParseCurrentChatChange = currentChatDiff.changed || shouldParseMinorCurrentChatChange
     let switchedUnreadConversation = false
     if (shouldParseMinorCurrentChatChange) {

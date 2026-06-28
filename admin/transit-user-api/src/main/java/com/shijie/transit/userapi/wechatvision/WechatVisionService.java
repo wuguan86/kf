@@ -490,15 +490,20 @@ public class WechatVisionService {
         shouldReply、contact、latestCustomerMessage、imageSummary、conversationType、accountCategory、confidence、skipReason。
         conversationType 只能是 SINGLE、GROUP、SYSTEM。
         accountCategory 只能是 NORMAL、FILE_HELPER、TENCENT_NEWS、OFFICIAL_ACCOUNT、SERVICE_ACCOUNT、CUSTOMER_SERVICE、UNKNOWN。
-        你只判断是否需要回复最新一条对方消息，不解析完整聊天记录，不输出 messages，不输出 bounds，不输出点击坐标。
+        你只判断是否需要回复最新一组连续对方消息，不解析完整聊天记录，不输出 messages，不输出 bounds，不输出点击坐标。
         判断规则：
         - 只看当前打开的微信聊天窗口，忽略左侧会话列表、搜索框、输入框、菜单、按钮和时间轴。
-        - 只有最底部可见的最新聊天气泡明确来自对方，且内容适合自动回复时，shouldReply 才能返回 true。
-        - 如果最新气泡是己方消息、系统提示、历史消息上移、输入框内容、公众号/服务号/文件传输助手/腾讯新闻/客服消息，shouldReply 返回 false，并在 skipReason 写中文原因。
-        - 如果最新对方消息是文字，latestCustomerMessage 输出真实可见文字，imageSummary 输出空字符串。
-        - 如果最新对方消息是图片或表情包，latestCustomerMessage 可输出“[图片]”或“[表情包]”，imageSummary 用中文概括图片或表情包真实可见内容；看不清时 shouldReply 返回 false。
+        - 微信桌面端个人聊天里，通常左侧灰色气泡是对方消息，右侧绿色气泡是己方消息；判断最新消息时必须优先使用气泡左右位置和颜色。
+        - 必须从聊天区底部向上查找：最靠近输入框上方的对方聊天气泡才是最新对方消息；如果它下面还有对方气泡，不能选择上方较旧消息。
+        - 如果最新对方气泡上方紧挨着同一发送者的多条对方气泡，且中间没有己方气泡、系统提示或明显时间分隔，则把这组连续气泡按从上到下用换行合并到 latestCustomerMessage。例如最新连续气泡是“在吗”和“周末不聊工作”时，latestCustomerMessage 必须是“在吗\n周末不聊工作”。
+        - 如果“在吗”上方或下方隔着己方绿色气泡，而最底部对方气泡是“周末不聊工作”，latestCustomerMessage 必须只输出“周末不聊工作”，不能输出较旧的“在吗”。
+        - 典型场景：左侧灰色“在吗” -> 右侧绿色己方回复 -> 左侧灰色“周末不聊工作”，latestCustomerMessage 必须是“周末不聊工作”，不能是“在吗”，也不能把两条合并。
+        - 只有这组最新对方消息明确来自对方，且内容适合自动回复时，shouldReply 才能返回 true。
+        - 如果聊天区底部最新气泡是己方消息、系统提示、历史消息上移、输入框内容、公众号/服务号/文件传输助手/腾讯新闻/客服消息，shouldReply 返回 false，并在 skipReason 写中文原因。
+        - 如果最新对方消息组是文字，latestCustomerMessage 输出真实可见文字；多条连续文字用换行连接；imageSummary 输出空字符串。
+        - 如果最新对方消息组包含图片或表情包，latestCustomerMessage 可输出“[图片]”或“[表情包]”，imageSummary 用中文概括图片或表情包真实可见内容；看不清时 shouldReply 返回 false。
         - 不要推测屏幕外内容，不要补全看不清的文字，不要为了回复而猜测客户意图。
-        - confidence 表示对“最新对方消息可自动回复”判断的置信度，低于 0.65 时应返回 shouldReply=false。
+        - confidence 表示对“最新一组连续对方消息可自动回复”判断的置信度，低于 0.65 时应返回 shouldReply=false。
         """;
   }
 
