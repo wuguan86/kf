@@ -466,13 +466,15 @@ public class UserDifyController {
                     emitter.complete();
                     return;
                 }
+                String screenshotContact = resolveScreenshotContactKey(request, trigger);
+                String screenshotDisplayName = resolveScreenshotContactDisplayName(request, trigger, screenshotContact);
                 MonitorChatRequest monitorRequest = new MonitorChatRequest(
                         request.roleId(),
                         latestMessage,
                         request.role(),
                         "",
-                        StringUtils.hasText(request.wechatContact()) ? request.wechatContact() : trigger.contact(),
-                        StringUtils.hasText(request.wechatContactDisplayName()) ? request.wechatContactDisplayName() : trigger.contact(),
+                        screenshotContact,
+                        screenshotDisplayName,
                         StringUtils.hasText(request.roomType()) ? request.roomType() : trigger.conversationType(),
                         "",
                         request.assistantMode(),
@@ -983,6 +985,54 @@ public class UserDifyController {
             return wechatContact.trim();
         }
         return "role-" + roleId;
+    }
+
+    private String resolveScreenshotContactKey(MonitorChatScreenshotRequest request, WechatReplyTriggerResult trigger) {
+        String visionContact = trigger == null ? null : trigger.contact();
+        if (StringUtils.hasText(visionContact) && !isGenericWechatContact(visionContact)) {
+            return visionContact.trim();
+        }
+        if (request != null && StringUtils.hasText(request.wechatContact()) && !isGenericWechatContact(request.wechatContact())) {
+            return request.wechatContact().trim();
+        }
+        if (StringUtils.hasText(visionContact)) {
+            return visionContact.trim();
+        }
+        if (request != null && StringUtils.hasText(request.wechatContact())) {
+            return request.wechatContact().trim();
+        }
+        return "";
+    }
+
+    private String resolveScreenshotContactDisplayName(
+            MonitorChatScreenshotRequest request,
+            WechatReplyTriggerResult trigger,
+            String contactKey) {
+        String visionContact = trigger == null ? null : trigger.contact();
+        if (StringUtils.hasText(visionContact) && !isGenericWechatContact(visionContact)) {
+            return visionContact.trim();
+        }
+        if (request != null && StringUtils.hasText(request.wechatContactDisplayName())
+                && !isGenericWechatContact(request.wechatContactDisplayName())) {
+            return request.wechatContactDisplayName().trim();
+        }
+        if (StringUtils.hasText(contactKey)) {
+            return contactKey.trim();
+        }
+        return "未知客户";
+    }
+
+    private boolean isGenericWechatContact(String contact) {
+        if (!StringUtils.hasText(contact)) {
+            return true;
+        }
+        String normalized = contact.trim().toLowerCase(Locale.ROOT);
+        return "微信".equals(normalized)
+                || "wechat".equals(normalized)
+                || "weixin".equals(normalized)
+                || "未知客户".equals(normalized)
+                || "客户".equals(normalized)
+                || "对方".equals(normalized);
     }
 
     static String resolveContactDisplayName(MonitorChatRequest request) {

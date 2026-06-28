@@ -30,6 +30,7 @@ import com.shijie.transit.userapi.wechatvision.WechatReplyTriggerResult;
 import com.shijie.transit.userapi.wechatvision.WechatVisionParseRequest;
 import com.shijie.transit.userapi.wechatvision.WechatVisionService;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -139,6 +140,50 @@ class UserDifyControllerTest {
       assertEquals("CHAT_REPLY_TRIGGER", visionService.request.sceneHint());
       assertEquals(0, difyClient.chatCount);
       assertEquals("刚吃完", autoReplyModelService.request.customerMessage());
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
+  void monitorChatScreenshotStreamPrefersVisionContactWhenRequestContactIsGenericWechat() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    RoleEntity role = role("");
+    RecordingDifyClient difyClient = new RecordingDifyClient(objectMapper);
+    RecordingWechatAutoReplyModelService autoReplyModelService = new RecordingWechatAutoReplyModelService(objectMapper);
+    FakeSessionHistoryService sessionHistoryService = new FakeSessionHistoryService();
+    FakeWechatVisionService visionService = new FakeWechatVisionService(objectMapper,
+        new WechatReplyTriggerResult(true, "夏天", "周末不聊工作", "", "SINGLE", "NORMAL", 0.96D, ""));
+    UserDifyController controller = controller(
+        objectMapper,
+        difyClient,
+        role,
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        null,
+        null,
+        autoReplyModelService,
+        visionService,
+        sessionHistoryService);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      controller.monitorChatScreenshotStream(new UserDifyController.MonitorChatScreenshotRequest(
+          10L,
+          "",
+          "微信",
+          "微信",
+          "SINGLE",
+          DifyClient.ASSISTANT_MODE_CUSTOMER_SERVICE,
+          "data:image/png;base64,AAAA",
+          "微信"));
+
+      for (int i = 0; i < 50 && sessionHistoryService.appendedSessionKeys.isEmpty(); i++) {
+        Thread.sleep(20);
+      }
+
+      assertEquals("夏天", sessionHistoryService.appendedSessionKeys.get(0));
     } finally {
       SecurityContextHolder.clearContext();
     }
@@ -455,6 +500,30 @@ class UserDifyControllerTest {
       SmartSalesDifyContextService salesDifyContextService,
       WechatAutoReplyModelService autoReplyModelService,
       WechatVisionService wechatVisionService) {
+    return controller(
+        objectMapper,
+        difyClient,
+        role,
+        roleKnowledgeBaseService,
+        knowledgeBaseService,
+        decisionService,
+        salesDifyContextService,
+        autoReplyModelService,
+        wechatVisionService,
+        new FakeSessionHistoryService());
+  }
+
+  private static UserDifyController controller(
+      ObjectMapper objectMapper,
+      RecordingDifyClient difyClient,
+      RoleEntity role,
+      FakeRoleKnowledgeBaseService roleKnowledgeBaseService,
+      FakeKnowledgeBaseService knowledgeBaseService,
+      OutboundMaterialDecisionService decisionService,
+      SmartSalesDifyContextService salesDifyContextService,
+      WechatAutoReplyModelService autoReplyModelService,
+      WechatVisionService wechatVisionService,
+      FakeSessionHistoryService sessionHistoryService) {
     return new UserDifyController(
         difyClient,
         new FakeDifyContactConversationMappingService(),
@@ -462,7 +531,7 @@ class UserDifyControllerTest {
         roleKnowledgeBaseService,
         knowledgeBaseService,
         new FakeSessionConfigService(objectMapper),
-        new FakeSessionHistoryService(),
+        sessionHistoryService,
         new FakeMembershipEntitlementService(),
         new FakeMembershipQueryService(),
         decisionService,
@@ -723,12 +792,15 @@ class UserDifyControllerTest {
   }
 
   private static class FakeSessionHistoryService extends SessionHistoryService {
+    private final List<String> appendedSessionKeys = new ArrayList<>();
+
     FakeSessionHistoryService() {
       super(null, Clock.systemDefaultZone());
     }
 
     @Override
     public void appendMessage(Long userId, Long roleId, String sceneType, String sessionKey, String senderType, String messageContent) {
+      appendedSessionKeys.add(sessionKey);
     }
 
     @Override
