@@ -161,6 +161,14 @@ function loadNativeDriver(mocks = {}) {
       }
     }
     if (id === './chatRegionDetector') {
+      if (mocks.detectCurrentChatSnapshotRegion || mocks.buildFallbackCurrentChatRegion) {
+        const actual = loadTranspiledTsModule('chatRegionDetector.ts')
+        return {
+          ...actual,
+          ...(mocks.detectCurrentChatSnapshotRegion ? { detectCurrentChatSnapshotRegion: mocks.detectCurrentChatSnapshotRegion } : {}),
+          ...(mocks.buildFallbackCurrentChatRegion ? { buildFallbackCurrentChatRegion: mocks.buildFallbackCurrentChatRegion } : {})
+        }
+      }
       return loadTranspiledTsModule('chatRegionDetector.ts')
     }
     if (id === './visionDebugRecorder') {
@@ -1686,6 +1694,254 @@ async function testCurrentChatRegionUsesDynamicLayoutBoundaries() {
   assert.ok(capturedRegions[0].y + capturedRegions[0].height <= 548, `expected region to end above raised input box, got ${capturedRegions[0].y + capturedRegions[0].height}`)
 }
 
+async function testChatRegionReusesCacheWhenWindowOnlyMoves() {
+  const detectedRegions = [
+    {
+      region: { x: 300, y: 63, width: 500, height: 430 },
+      source: 'dynamic',
+      confidence: 0.8,
+      reason: 'dynamic_region_detected',
+      splitterX: 298,
+      inputTopY: 501,
+      rightEdgeX: 800
+    },
+    {
+      region: { x: 300, y: 63, width: 500, height: 452 },
+      source: 'dynamic',
+      confidence: 0.8,
+      reason: 'dynamic_region_detected',
+      splitterX: 298,
+      inputTopY: 523,
+      rightEdgeX: 800
+    }
+  ]
+  const capturedRegions = []
+  const debugMetadata = []
+  let captureIndex = 0
+  let detectIndex = 0
+  let windowLookupIndex = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: {
+      createFromBuffer: () => createNativeImageMockFromBitmap(1200, 900, Buffer.alloc(1200 * 900 * 4, 255)),
+      createFromPath: () => ({
+        isEmpty: () => true,
+        toDataURL: () => ''
+      })
+    },
+    findWeChatWindow: async () => {
+      const initialWindow = windowLookupIndex < 2
+      windowLookupIndex += 1
+      return {
+        ...testWindow,
+        x: initialWindow ? 20 : 180,
+        y: initialWindow ? 30 : 260,
+        width: 900,
+        height: 700
+      }
+    },
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=window-move',
+      png: Buffer.from(`window-move-${captureIndex++}`),
+      width: 900,
+      height: 700,
+      scaleFactor: 1
+    }),
+    detectCurrentChatSnapshotRegion: () => detectedRegions[Math.min(detectIndex++, detectedRegions.length - 1)],
+    comparePngSnapshots: () => ({ changed: false, digest: `digest-window-move-${captureIndex}`, changedRatio: 0 }),
+    comparePngSnapshotRegion: (_previous, _current, region) => {
+      capturedRegions.push(region)
+      return { changed: false, digest: `digest-window-move-region-${captureIndex}`, changedRatio: 0 }
+    },
+    getVisionDebugRecorderStatus: () => ({ enabled: true, outputDir: testUserDataPath }),
+    saveVisionDebugImage: async (payload) => {
+      if (payload.stage === 'chat-region') {
+        debugMetadata.push(payload.metadata)
+      }
+      return null
+    },
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('window move cache test should not request vision parsing')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  await driver.poll()
+
+  const latestRegion = capturedRegions.at(-1)
+  const latestMetadata = debugMetadata.at(-1)
+  assert.deepEqual(latestRegion, detectedRegions[0].region)
+  assert.equal(latestMetadata.windowMoved, true)
+  assert.equal(latestMetadata.windowResized, false)
+  assert.equal(latestMetadata.regionReuseReason, 'window_moved_without_resize')
+}
+
+async function testChatRegionRebuildsAfterWindowResize() {
+  const detectedRegions = [
+    {
+      region: { x: 300, y: 63, width: 500, height: 430 },
+      source: 'dynamic',
+      confidence: 0.8,
+      reason: 'dynamic_region_detected',
+      splitterX: 298,
+      inputTopY: 501,
+      rightEdgeX: 800
+    },
+    {
+      region: { x: 340, y: 72, width: 620, height: 480 },
+      source: 'dynamic',
+      confidence: 0.8,
+      reason: 'dynamic_region_detected',
+      splitterX: 338,
+      inputTopY: 560,
+      rightEdgeX: 960
+    }
+  ]
+  const capturedRegions = []
+  const debugMetadata = []
+  let captureIndex = 0
+  let detectIndex = 0
+  let windowLookupIndex = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: {
+      createFromBuffer: () => createNativeImageMockFromBitmap(1200, 900, Buffer.alloc(1200 * 900 * 4, 255)),
+      createFromPath: () => ({
+        isEmpty: () => true,
+        toDataURL: () => ''
+      })
+    },
+    findWeChatWindow: async () => {
+      const initialWindow = windowLookupIndex < 2
+      windowLookupIndex += 1
+      return {
+        ...testWindow,
+        width: initialWindow ? 900 : 1040,
+        height: initialWindow ? 700 : 780
+      }
+    },
+    captureWeChatWindow: async () => {
+      const first = captureIndex === 0
+      captureIndex += 1
+      return {
+        dataUrl: 'data:image/png;base64=window-resize',
+        png: Buffer.from(`window-resize-${captureIndex}`),
+        width: first ? 900 : 1040,
+        height: first ? 700 : 780,
+        scaleFactor: 1
+      }
+    },
+    detectCurrentChatSnapshotRegion: () => detectedRegions[Math.min(detectIndex++, detectedRegions.length - 1)],
+    comparePngSnapshots: () => ({ changed: false, digest: `digest-window-resize-${captureIndex}`, changedRatio: 0 }),
+    comparePngSnapshotRegion: (_previous, _current, region) => {
+      capturedRegions.push(region)
+      return { changed: false, digest: `digest-window-resize-region-${captureIndex}`, changedRatio: 0 }
+    },
+    getVisionDebugRecorderStatus: () => ({ enabled: true, outputDir: testUserDataPath }),
+    saveVisionDebugImage: async (payload) => {
+      if (payload.stage === 'chat-region') {
+        debugMetadata.push(payload.metadata)
+      }
+      return null
+    },
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('window resize cache test should not request vision parsing')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  await driver.poll()
+
+  const latestRegion = capturedRegions.at(-1)
+  const latestMetadata = debugMetadata.at(-1)
+  assert.deepEqual(latestRegion, detectedRegions[1].region)
+  assert.equal(latestMetadata.windowResized, true)
+  assert.equal(latestMetadata.regionReuseReason, '')
+}
+
+async function testChatRegionRejectsInputTopDownshiftWithoutResize() {
+  const detectedRegions = [
+    {
+      region: { x: 300, y: 63, width: 500, height: 430 },
+      source: 'dynamic',
+      confidence: 0.8,
+      reason: 'dynamic_region_detected',
+      splitterX: 298,
+      inputTopY: 501,
+      rightEdgeX: 800
+    },
+    {
+      region: { x: 300, y: 63, width: 500, height: 482 },
+      source: 'dynamic',
+      confidence: 0.8,
+      reason: 'dynamic_region_detected',
+      splitterX: 298,
+      inputTopY: 553,
+      rightEdgeX: 800
+    }
+  ]
+  const capturedRegions = []
+  const debugMetadata = []
+  let captureIndex = 0
+  let detectIndex = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: {
+      createFromBuffer: () => createNativeImageMockFromBitmap(1200, 900, Buffer.alloc(1200 * 900 * 4, 255)),
+      createFromPath: () => ({
+        isEmpty: () => true,
+        toDataURL: () => ''
+      })
+    },
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=input-downshift',
+      png: Buffer.from(`input-downshift-${captureIndex++}`),
+      width: 900,
+      height: 700,
+      scaleFactor: 1
+    }),
+    detectCurrentChatSnapshotRegion: () => detectedRegions[Math.min(detectIndex++, detectedRegions.length - 1)],
+    comparePngSnapshots: () => ({ changed: false, digest: `digest-input-downshift-${captureIndex}`, changedRatio: 0 }),
+    comparePngSnapshotRegion: (_previous, _current, region) => {
+      capturedRegions.push(region)
+      return { changed: false, digest: `digest-input-downshift-region-${captureIndex}`, changedRatio: 0 }
+    },
+    getVisionDebugRecorderStatus: () => ({ enabled: true, outputDir: testUserDataPath }),
+    saveVisionDebugImage: async (payload) => {
+      if (payload.stage === 'chat-region') {
+        debugMetadata.push(payload.metadata)
+      }
+      return null
+    },
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('input top downshift cache test should not request vision parsing')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+  driver.lastPollAt = 0
+  await driver.poll()
+
+  const latestRegion = capturedRegions.at(-1)
+  const latestMetadata = debugMetadata.at(-1)
+  assert.deepEqual(latestRegion, detectedRegions[0].region)
+  assert.equal(latestMetadata.regionReuseReason, 'input_top_unstable_downshift')
+  assert.equal(latestMetadata.previousInputTopY, 501)
+  assert.equal(latestMetadata.detectedInputTopY, 553)
+}
+
 async function testCurrentChatRegionTrimsDarkPixelsOutsideWechatRightEdge() {
   const capturedRegions = []
   const width = 744
@@ -1820,7 +2076,7 @@ async function testReplyTriggerRecognitionCreatesSingleAutoReplyMessage() {
     parseWeChatReplyTriggerWithVision: async () => {
       triggerParseCount += 1
       return {
-        shouldReply: true,
+        hasNewUnrepliedMessage: true,
         contact: '客户A',
         latestCustomerMessage: '这个多少钱',
         imageSummary: '',
@@ -4945,6 +5201,9 @@ await testCurrentChatRegionChangeStillTriggersVisionParsing()
 await testCurrentChatRegionUsesDynamicLayoutBoundaries()
 await testCurrentChatRegionTrimsDarkPixelsOutsideWechatRightEdge()
 await testCurrentChatRegionReusesStableRegionForSmallBoundaryJitter()
+await testChatRegionReusesCacheWhenWindowOnlyMoves()
+await testChatRegionRebuildsAfterWindowResize()
+await testChatRegionRejectsInputTopDownshiftWithoutResize()
 await testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged()
 await testNativeSendReturnsSelfMessageForDisplay()
 await testNativeSendRefreshesInputGeometryBeforePasting()
