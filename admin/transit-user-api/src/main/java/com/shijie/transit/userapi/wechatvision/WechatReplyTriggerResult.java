@@ -1,7 +1,7 @@
 package com.shijie.transit.userapi.wechatvision;
 
 public record WechatReplyTriggerResult(
-    boolean shouldReply,
+    boolean hasNewUnrepliedMessage,
     String contact,
     String latestCustomerMessage,
     String imageSummary,

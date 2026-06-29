@@ -452,8 +452,8 @@ public class UserDifyController {
                         "",
                         "native-personal",
                         "CHAT_REPLY_TRIGGER"));
-                if (!trigger.shouldReply()) {
-                    String skipReason = StringUtils.hasText(trigger.skipReason()) ? trigger.skipReason() : "未识别到需要回复的最新客户消息。";
+                if (!trigger.hasNewUnrepliedMessage()) {
+                    String skipReason = StringUtils.hasText(trigger.skipReason()) ? trigger.skipReason() : "未识别到尚未回复的最新客户消息。";
                     emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", skipReason)));
                     emitter.complete();
                     return;

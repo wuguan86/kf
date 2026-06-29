@@ -32,7 +32,7 @@
 }
 
 .aiThinkingSection {
-  flex: 0 0 38%;
+  flex: 0 0 80%;
   min-height: 150px;
   overflow: hidden;
   display: flex;

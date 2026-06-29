@@ -701,7 +701,7 @@ export class WeChatNativeDriver {
       return { ok: true, messages: [] }
     }
     const skipReason = String(trigger.skipReason || snapshot.skipReason || '').trim()
-    if (!trigger.shouldReply) {
+    if (!trigger.hasNewUnrepliedMessage) {
       if (skipReason) {
         console.info('微信轻量自动回复识别结果已跳过', {
           contact: snapshot.contact,

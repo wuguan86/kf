@@ -374,7 +374,7 @@ class WechatVisionServiceTest {
               "choices": [
                 {
                   "message": {
-                    "content": "{\\"shouldReply\\":true,\\"contact\\":\\"张三\\",\\"latestCustomerMessage\\":\\"这个方案多少钱\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.91,\\"skipReason\\":\\"\\"}"
+        "content": "{\\"hasNewUnrepliedMessage\\":true,\\"contact\\":\\"张三\\",\\"latestCustomerMessage\\":\\"这个方案多少钱\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.91,\\"skipReason\\":\\"\\"}"
                   }
                 }
               ]
@@ -389,7 +389,7 @@ class WechatVisionServiceTest {
         "native-personal",
         "CHAT_REPLY_TRIGGER"));
 
-    assertEquals(true, result.shouldReply());
+    assertEquals(true, result.hasNewUnrepliedMessage());
     assertEquals("张三", result.contact());
     assertEquals("这个方案多少钱", result.latestCustomerMessage());
     assertEquals("", result.imageSummary());
@@ -412,7 +412,7 @@ class WechatVisionServiceTest {
               "choices": [
                 {
                   "message": {
-                    "content": "{\\"shouldReply\\":true,\\"contact\\":\\"夏天\\",\\"latestCustomerMessage\\":\\"在吗\\\\n周末不聊工作\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.94,\\"skipReason\\":\\"\\"}"
+        "content": "{\\"hasNewUnrepliedMessage\\":true,\\"contact\\":\\"夏天\\",\\"latestCustomerMessage\\":\\"在吗\\\\n周末不聊工作\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.94,\\"skipReason\\":\\"\\"}"
                   }
                 }
               ]
@@ -427,7 +427,7 @@ class WechatVisionServiceTest {
         "native-personal",
         "CHAT_REPLY_TRIGGER"));
 
-    assertEquals(true, result.shouldReply());
+    assertEquals(true, result.hasNewUnrepliedMessage());
     assertEquals("在吗\n周末不聊工作", result.latestCustomerMessage());
     assertEquals("", result.imageSummary());
     server.verify();
@@ -445,7 +445,7 @@ class WechatVisionServiceTest {
               "choices": [
                 {
                   "message": {
-                    "content": "{\\"shouldReply\\":true,\\"contact\\":\\"夏天\\",\\"latestCustomerMessage\\":\\"刚吃完\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.98,\\"skipReason\\":\\"\\"}"
+        "content": "{\\"hasNewUnrepliedMessage\\":true,\\"contact\\":\\"夏天\\",\\"latestCustomerMessage\\":\\"刚吃完\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SINGLE\\",\\"accountCategory\\":\\"NORMAL\\",\\"confidence\\":0.98,\\"skipReason\\":\\"\\"}"
                   }
                 }
               ]
@@ -462,7 +462,7 @@ class WechatVisionServiceTest {
         "CHAT_REPLY_TRIGGER")).getData();
 
     WechatReplyTriggerResult result = (WechatReplyTriggerResult) data;
-    assertEquals(true, result.shouldReply());
+    assertEquals(true, result.hasNewUnrepliedMessage());
     assertEquals("刚吃完", result.latestCustomerMessage());
     server.verify();
   }
@@ -477,7 +477,7 @@ class WechatVisionServiceTest {
               "choices": [
                 {
                   "message": {
-                    "content": "{\\"shouldReply\\":true,\\"contact\\":\\"文件传输助手\\",\\"latestCustomerMessage\\":\\"测试\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"FILE_HELPER\\",\\"confidence\\":0.96,\\"skipReason\\":\\"\\"}"
+        "content": "{\\"hasNewUnrepliedMessage\\":true,\\"contact\\":\\"文件传输助手\\",\\"latestCustomerMessage\\":\\"测试\\",\\"imageSummary\\":\\"\\",\\"conversationType\\":\\"SYSTEM\\",\\"accountCategory\\":\\"FILE_HELPER\\",\\"confidence\\":0.96,\\"skipReason\\":\\"\\"}"
                   }
                 }
               ]
@@ -492,7 +492,7 @@ class WechatVisionServiceTest {
         "native-personal",
         "CHAT_REPLY_TRIGGER"));
 
-    assertEquals(false, result.shouldReply());
+    assertEquals(false, result.hasNewUnrepliedMessage());
     assertEquals("文件传输助手", result.contact());
     assertEquals("FILE_HELPER", result.accountCategory());
     assertEquals("命中文件传输助手固定过滤规则", result.skipReason());

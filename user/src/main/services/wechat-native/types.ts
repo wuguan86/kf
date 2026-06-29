@@ -115,7 +115,7 @@ export type ParsedWeChatSnapshot = {
 }
 
 export type ReplyTriggerRecognition = {
-  shouldReply: boolean
+  hasNewUnrepliedMessage: boolean
   contact: string
   latestCustomerMessage: string
   imageSummary: string

@@ -25,7 +25,7 @@ type VisionMessage = {
 type VisionResponse = {
   contact?: unknown
   messages?: VisionMessage[]
-  shouldReply?: unknown
+  hasNewUnrepliedMessage?: unknown
   latestCustomerMessage?: unknown
   imageSummary?: unknown
   moments?: unknown
@@ -143,7 +143,7 @@ const normalizeReplyTrigger = (data: ParsedWeChatSnapshot): ReplyTriggerRecognit
   const imageSummary = String(data.replyTrigger?.imageSummary || (data as any)?.imageSummary || '').trim()
   const contact = String(data.replyTrigger?.contact || data.contact || '微信').trim() || '微信'
   return {
-    shouldReply: data.replyTrigger?.shouldReply === true || (data as any)?.shouldReply === true,
+    hasNewUnrepliedMessage: data.replyTrigger?.hasNewUnrepliedMessage === true || (data as any)?.hasNewUnrepliedMessage === true,
     contact,
     latestCustomerMessage,
     imageSummary,
@@ -197,13 +197,13 @@ const normalizeVisionResponse = (data: VisionResponse): ParsedWeChatSnapshot => 
 }
 
 const normalizeReplyTriggerFromVisionResponse = (data: VisionResponse): ReplyTriggerRecognition | undefined => {
-  if (!data || typeof data.shouldReply !== 'boolean') {
+  if (!data || typeof data.hasNewUnrepliedMessage !== 'boolean') {
     return undefined
   }
   const latestCustomerMessage = String(data.latestCustomerMessage || '').trim()
   const imageSummary = String(data.imageSummary || '').trim()
   return {
-    shouldReply: data.shouldReply === true,
+    hasNewUnrepliedMessage: data.hasNewUnrepliedMessage === true,
     contact: String(data.contact || '微信').trim() || '微信',
     latestCustomerMessage,
     imageSummary,

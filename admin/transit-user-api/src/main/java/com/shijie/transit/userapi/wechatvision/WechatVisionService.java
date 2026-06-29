@@ -92,9 +92,9 @@ public class WechatVisionService {
       String aiOutput = callCompatibleVision(triggerRequest);
       log.info("微信轻量自动回复视觉解析模型原始返回 model={} output={}", model, abbreviate(aiOutput));
       WechatReplyTriggerResult parsed = parseReplyTriggerModelOutput(aiOutput, triggerRequest);
-      log.info("微信轻量自动回复视觉解析完成 contact={} shouldReply={} conversationType={} accountCategory={} confidence={} skipReason={}",
+      log.info("微信轻量自动回复视觉解析完成 contact={} hasNewUnrepliedMessage={} conversationType={} accountCategory={} confidence={} skipReason={}",
           parsed.contact(),
-          parsed.shouldReply(),
+          parsed.hasNewUnrepliedMessage(),
           parsed.conversationType(),
           parsed.accountCategory(),
           parsed.confidence(),
@@ -287,17 +287,17 @@ public class WechatVisionService {
         request);
     String latestCustomerMessage = text(root.path("latestCustomerMessage")).trim();
     String imageSummary = text(root.path("imageSummary")).trim();
-    boolean shouldReply = root.path("shouldReply").asBoolean(false)
+    boolean hasNewUnrepliedMessage = root.path("hasNewUnrepliedMessage").asBoolean(false)
         && !classification.skipAutoReply()
-        && confidence >= 0.65D
+        && confidence >= 0.70D
         && (StringUtils.hasText(latestCustomerMessage) || StringUtils.hasText(imageSummary));
     String finalSkipReason = classification.skipAutoReply()
         ? classification.skipReason()
-        : shouldReply
+        : hasNewUnrepliedMessage
             ? ""
-            : ensureSkipReason(skipReason, confidence < 0.65D ? "视觉识别置信度不足，已跳过自动回复" : "未识别到需要回复的最新对方消息");
+            : ensureSkipReason(skipReason, confidence < 0.70D ? "视觉识别置信度不足，已跳过" : "未识别到尚未回复的最新对方消息");
     return new WechatReplyTriggerResult(
-        shouldReply,
+        hasNewUnrepliedMessage,
         contact,
         latestCustomerMessage,
         imageSummary,
@@ -484,10 +484,10 @@ public class WechatVisionService {
 
   private String replyTriggerSystemPrompt() {
     return """
-        你是微信桌面端轻量自动回复触发识别助手。
+        你是微信桌面端轻量消息状态识别助手。
         必须只输出 JSON Object，不要输出 Markdown，不要解释。
         固定输出字段：
-        shouldReply、contact、latestCustomerMessage、imageSummary、conversationType、accountCategory、confidence、skipReason。
+        hasNewUnrepliedMessage、contact、latestCustomerMessage、imageSummary、conversationType、accountCategory、confidence、skipReason。
         conversationType 只能是 SINGLE、GROUP、SYSTEM。
         accountCategory 只能是 NORMAL、FILE_HELPER、TENCENT_NEWS、OFFICIAL_ACCOUNT、SERVICE_ACCOUNT、CUSTOMER_SERVICE、UNKNOWN。
         你只判断是否需要回复最新一组连续对方消息，不解析完整聊天记录，不输出 messages，不输出 bounds，不输出点击坐标。
@@ -498,12 +498,12 @@ public class WechatVisionService {
         - 如果最新对方气泡上方紧挨着同一发送者的多条对方气泡，且中间没有己方气泡、系统提示或明显时间分隔，则把这组连续气泡按从上到下用换行合并到 latestCustomerMessage。例如最新连续气泡是“在吗”和“周末不聊工作”时，latestCustomerMessage 必须是“在吗\n周末不聊工作”。
         - 如果“在吗”上方或下方隔着己方绿色气泡，而最底部对方气泡是“周末不聊工作”，latestCustomerMessage 必须只输出“周末不聊工作”，不能输出较旧的“在吗”。
         - 典型场景：左侧灰色“在吗” -> 右侧绿色己方回复 -> 左侧灰色“周末不聊工作”，latestCustomerMessage 必须是“周末不聊工作”，不能是“在吗”，也不能把两条合并。
-        - 只有这组最新对方消息明确来自对方，且内容适合自动回复时，shouldReply 才能返回 true。
-        - 如果聊天区底部最新气泡是己方消息、系统提示、历史消息上移、输入框内容、公众号/服务号/文件传输助手/腾讯新闻/客服消息，shouldReply 返回 false，并在 skipReason 写中文原因。
+        - 只有当聊天区底部最新消息确实是对方消息，且未被己方回复时，hasNewUnrepliedMessage 才能返回 true。
+        - 如果聊天区底部最新气泡是己方消息、系统提示、历史消息上移、输入框内容、公众号/服务号/文件传输助手/腾讯新闻/客服消息，hasNewUnrepliedMessage 返回 false，并在 skipReason 写中文原因。
         - 如果最新对方消息组是文字，latestCustomerMessage 输出真实可见文字；多条连续文字用换行连接；imageSummary 输出空字符串。
-        - 如果最新对方消息组包含图片或表情包，latestCustomerMessage 可输出“[图片]”或“[表情包]”，imageSummary 用中文概括图片或表情包真实可见内容；看不清时 shouldReply 返回 false。
+        - 如果最新对方消息组包含图片或表情包，latestCustomerMessage 可输出“[图片]”或“[表情包]”，imageSummary 用中文概括图片或表情包真实可见内容；看不清时 hasNewUnrepliedMessage 返回 false。
         - 不要推测屏幕外内容，不要补全看不清的文字，不要为了回复而猜测客户意图。
-        - confidence 表示对“最新一组连续对方消息可自动回复”判断的置信度，低于 0.65 时应返回 shouldReply=false。
+        - confidence 表示对“当前底部是否存在尚未回复的最新对方消息”判断的置信度，低于 0.70 时应返回 hasNewUnrepliedMessage=false。
         """;
   }
 
