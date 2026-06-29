@@ -7,12 +7,12 @@ const FALLBACK_TOP_RATIO = 0.1
 const FALLBACK_BOTTOM_RATIO = 0.82
 const MIN_REGION_WIDTH_RATIO = 0.35
 const MIN_REGION_HEIGHT_RATIO = 0.3
-const CHAT_TOP_RATIO = 0.1
+const CHAT_TOP_RATIO = 0.09
 const SPLITTER_SCAN_LEFT_RATIO = 0.22
 const SPLITTER_SCAN_RIGHT_RATIO = 0.62
 const SPLITTER_SCAN_TOP_RATIO = 0.08
 const SPLITTER_SCAN_BOTTOM_RATIO = 0.9
-const INPUT_SCAN_TOP_RATIO = 0.62
+const INPUT_SCAN_TOP_RATIO = 0.48
 const INPUT_SCAN_BOTTOM_RATIO = 0.96
 const INPUT_BOTTOM_PADDING_PX = 8
 const MIN_SPLITTER_SCORE = 22
@@ -20,6 +20,11 @@ const MIN_INPUT_TOP_SCORE = 18
 const INPUT_TOP_STRONG_EDGE_SCORE = 10
 const INPUT_TOP_MIN_COVERAGE = 0.5
 const SAMPLE_STEP = 8
+const LIGHT_ROW_LUMA = 243
+const LIGHT_ROW_SPREAD = 18
+const MIN_LIGHT_RUN_ROWS = 14
+const CONTENT_EDGE_MIN_LUMA = 160
+const CONTENT_EDGE_MIN_COVERAGE = 0.45
 
 export type ChatRegionDetection = {
   region: SnapshotRegion
@@ -28,6 +33,7 @@ export type ChatRegionDetection = {
   reason: string
   splitterX?: number
   inputTopY?: number
+  rightEdgeX?: number
 }
 
 const clampNumber = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
@@ -72,13 +78,18 @@ export const detectCurrentChatSnapshotRegion = (screenshot: WeChatScreenshot): C
   }
 
   const top = Math.floor(size.height * CHAT_TOP_RATIO)
-  // 输入框光标和草稿内容不属于消息区；底边必须停在输入框顶部上方，避免空闲时误触发视觉请求。
-  const bottom = clampNumber(inputTop.y - Math.round(INPUT_BOTTOM_PADDING_PX * (screenshot.scaleFactor || 1)), top + 1, size.height)
+  // 输入框光标和草稿内容不属于消息区，底边必须停在输入框顶部上方，避免空闲时误触发视觉请求。
+  const bottom = clampNumber(
+    inputTop.y - Math.round(INPUT_BOTTOM_PADDING_PX * (screenshot.scaleFactor || 1)),
+    top + 1,
+    size.height
+  )
   const left = clampNumber(splitter.x + 2, 0, size.width - 1)
+  const right = clampNumber(detectChatRightEdge(bitmap, size.width, size.height, left, top, bottom), left + 1, size.width)
   const region: SnapshotRegion = {
     x: left,
     y: top,
-    width: Math.max(1, size.width - left),
+    width: Math.max(1, right - left),
     height: Math.max(1, bottom - top)
   }
 
@@ -89,7 +100,8 @@ export const detectCurrentChatSnapshotRegion = (screenshot: WeChatScreenshot): C
       confidence: Math.min(splitter.confidence, inputTop.confidence),
       reason: 'dynamic_region_not_plausible',
       splitterX: splitter.x,
-      inputTopY: inputTop.y
+      inputTopY: inputTop.y,
+      rightEdgeX: right
     }
   }
 
@@ -99,7 +111,8 @@ export const detectCurrentChatSnapshotRegion = (screenshot: WeChatScreenshot): C
     confidence: Math.min(splitter.confidence, inputTop.confidence),
     reason: 'dynamic_region_detected',
     splitterX: splitter.x,
-    inputTopY: inputTop.y
+    inputTopY: inputTop.y,
+    rightEdgeX: right
   }
 }
 
@@ -148,6 +161,25 @@ const detectInputTop = (
   const maxY = Math.min(height - 2, Math.floor(height * INPUT_SCAN_BOTTOM_RATIO))
   const minX = clampNumber(chatLeft + Math.round(width * 0.04), 1, width - 2)
   const maxX = Math.min(width - 2, Math.max(minX, width - Math.round(width * 0.04)))
+  const minWhiteRun = Math.max(MIN_LIGHT_RUN_ROWS, Math.floor(height * 0.03))
+  let whiteRunLength = 0
+
+  for (let y = maxY; y >= minY; y -= 1) {
+    if (isLightRow(bitmap, width, minX, maxX, y)) {
+      whiteRunLength += 1
+      continue
+    }
+
+    if (whiteRunLength >= minWhiteRun) {
+      return {
+        y,
+        confidence: clampNumber(Math.min(1, whiteRunLength / Math.max(1, height * 0.25)), 0.1, 1)
+      }
+    }
+
+    whiteRunLength = 0
+  }
+
   let bestY = 0
   let bestScore = 0
   let bestCoverage = 0
@@ -169,7 +201,7 @@ const detectInputTop = (
     }
     const averageScore = samples > 0 ? score / samples : 0
     const coverage = samples > 0 ? strongEdges / samples : 0
-    // 输入框顶部应该是一条横向连续分割线；单个消息气泡边缘虽然局部很强，但横向覆盖不足，不能作为下边界。
+    // 输入框顶部应是一条横向连续分割线；单个消息气泡边缘虽然局部很强，但横向覆盖不足，不能作为下边界。
     if (coverage < INPUT_TOP_MIN_COVERAGE) {
       continue
     }
@@ -184,6 +216,49 @@ const detectInputTop = (
     return null
   }
   return { y: bestY, confidence: clampNumber((bestScore / 70) * bestCoverage, 0.1, 1) }
+}
+
+const isLightRow = (bitmap: Buffer, width: number, startX: number, endX: number, y: number): boolean => {
+  let lightCount = 0
+  let sampleCount = 0
+
+  for (let x = startX; x <= endX; x += 6) {
+    const index = (y * width + x) * 4
+    const first = bitmap[index]
+    const second = bitmap[index + 1]
+    const third = bitmap[index + 2]
+    const luma = (first + second + third) / 3
+    const spread = Math.max(first, second, third) - Math.min(first, second, third)
+    if (luma >= LIGHT_ROW_LUMA && spread <= LIGHT_ROW_SPREAD) {
+      lightCount += 1
+    }
+    sampleCount += 1
+  }
+
+  return sampleCount > 0 && lightCount / sampleCount >= 0.82
+}
+
+const isWechatContentColumn = (bitmap: Buffer, width: number, x: number, top: number, bottom: number): boolean => {
+  let contentCount = 0
+  let sampleCount = 0
+  for (let y = top; y <= bottom; y += SAMPLE_STEP) {
+    if (getLuma(bitmap, width, x, y) >= CONTENT_EDGE_MIN_LUMA) {
+      contentCount += 1
+    }
+    sampleCount += 1
+  }
+  return sampleCount > 0 && contentCount / sampleCount >= CONTENT_EDGE_MIN_COVERAGE
+}
+
+const detectChatRightEdge = (bitmap: Buffer, width: number, height: number, left: number, top: number, bottom: number): number => {
+  const minX = clampNumber(left + Math.round(width * 0.2), left + 1, width - 1)
+  const maxY = Math.min(height - 1, bottom)
+  for (let x = width - 1; x >= minX; x -= 1) {
+    if (isWechatContentColumn(bitmap, width, x, top, maxY)) {
+      return x + 1
+    }
+  }
+  return width
 }
 
 const isPlausibleChatRegion = (region: SnapshotRegion, width: number, height: number): boolean => {

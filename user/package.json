@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "chcp 65001 > nul && electron-vite dev",
     "build": "electron-vite build",
+    "capture:wechat-chat-region": "electron scripts/capture-wechat-chat-region.cjs",
     "preview": "electron-vite preview",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"

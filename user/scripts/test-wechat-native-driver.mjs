@@ -68,12 +68,13 @@ function paintWechatLayoutRect(bitmap, width, rect, color) {
 function createWechatLayoutBitmap(width, height, options = {}) {
   const listWidth = options.listWidth ?? 342
   const inputTop = options.inputTop ?? 574
-  const bitmap = Buffer.alloc(width * height * 4, 245)
-  paintWechatLayoutRect(bitmap, width, { x: 0, y: 0, width: listWidth, height }, [236, 236, 236])
+  const contentRight = options.contentRight ?? width
+  const bitmap = Buffer.alloc(width * height * 4, 35)
+  paintWechatLayoutRect(bitmap, width, { x: 0, y: 0, width: Math.min(listWidth, contentRight), height }, [236, 236, 236])
   paintWechatLayoutRect(bitmap, width, { x: listWidth, y: 0, width: 2, height }, [210, 210, 210])
-  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: 0, width: width - listWidth - 2, height: inputTop }, [248, 248, 248])
-  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: inputTop, width: width - listWidth - 2, height: 2 }, [214, 214, 214])
-  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: inputTop + 2, width: width - listWidth - 2, height: height - inputTop - 2 }, [250, 250, 250])
+  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: 0, width: contentRight - listWidth - 2, height: inputTop }, [248, 248, 248])
+  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: inputTop, width: contentRight - listWidth - 2, height: 2 }, [214, 214, 214])
+  paintWechatLayoutRect(bitmap, width, { x: listWidth + 2, y: inputTop + 2, width: contentRight - listWidth - 2, height: height - inputTop - 2 }, [250, 250, 250])
   return bitmap
 }
 
@@ -1683,6 +1684,50 @@ async function testCurrentChatRegionUsesDynamicLayoutBoundaries() {
   assert.equal(capturedRegions.length, 1)
   assert.ok(capturedRegions[0].x >= 450, `expected dynamic left boundary after wide contact list, got ${capturedRegions[0].x}`)
   assert.ok(capturedRegions[0].y + capturedRegions[0].height <= 548, `expected region to end above raised input box, got ${capturedRegions[0].y + capturedRegions[0].height}`)
+}
+
+async function testCurrentChatRegionTrimsDarkPixelsOutsideWechatRightEdge() {
+  const capturedRegions = []
+  const width = 744
+  const height = 728
+  const contentRight = 736
+  const layoutBitmap = createWechatLayoutBitmap(width, height, { listWidth: 263, inputTop: 615, contentRight })
+  const { WeChatNativeDriver } = loadNativeDriver({
+    nativeImage: {
+      createFromBuffer: () => createNativeImageMockFromBitmap(width, height, layoutBitmap),
+      createFromPath: () => ({
+        isEmpty: () => true,
+        toDataURL: () => ''
+      })
+    },
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=right-edge-layout',
+      png: Buffer.from('right-edge-layout'),
+      width,
+      height,
+      scaleFactor: 1
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'digest-right-edge-layout', changedRatio: 0.004 }),
+    comparePngSnapshotRegion: (_previous, _current, region) => {
+      capturedRegions.push(region)
+      return { changed: false, digest: 'digest-right-edge-layout-region', changedRatio: 0 }
+    },
+    findUnreadConversationCandidates: () => [],
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('right edge region test should not request vision parsing')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  const result = await driver.poll()
+
+  assert.deepEqual(result.messages, [])
+  assert.equal(capturedRegions.length, 1)
+  assert.ok(capturedRegions[0].x + capturedRegions[0].width <= contentRight, `expected region to exclude dark right edge, got ${capturedRegions[0].x + capturedRegions[0].width}`)
+  assert.ok(capturedRegions[0].x + capturedRegions[0].width >= contentRight - 6, `expected region to keep WeChat right border, got ${capturedRegions[0].x + capturedRegions[0].width}`)
 }
 
 async function testPersonalChannelEmitsScreenshotCandidateWithoutMainVisionReplyParse() {
@@ -4898,6 +4943,7 @@ await testLegacyPersistedContentFingerprintDoesNotSuppressNewCustomerMessage()
 await testLeftListOnlyChangeDoesNotTriggerVisionParsing()
 await testCurrentChatRegionChangeStillTriggersVisionParsing()
 await testCurrentChatRegionUsesDynamicLayoutBoundaries()
+await testCurrentChatRegionTrimsDarkPixelsOutsideWechatRightEdge()
 await testCurrentChatRegionReusesStableRegionForSmallBoundaryJitter()
 await testVisionFailureRetryWaitsForCooldownWhenChatRegionUnchanged()
 await testNativeSendReturnsSelfMessageForDisplay()

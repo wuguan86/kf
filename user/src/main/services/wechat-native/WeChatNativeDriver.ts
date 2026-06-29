@@ -237,6 +237,7 @@ type CachedChatRegion = {
   reason: string
   splitterX?: number
   inputTopY?: number
+  rightEdgeX?: number
 }
 
 type CurrentChatRegionResult = CachedChatRegion & {
@@ -313,6 +314,7 @@ export class WeChatNativeDriver {
     }
     this.lockedUnreadConversationContact = null
     this.reliableConversationContact = null
+    this.cachedChatRegion = null
     console.info('视觉解析配置已更新', {
       hasBackendBaseUrl: !!this.runtimeConfig.backendBaseUrl,
       hasToken: !!this.runtimeConfig.token,
@@ -2674,7 +2676,8 @@ export class WeChatNativeDriver {
       confidence: detection.confidence,
       reason: detection.reason,
       splitterX: detection.splitterX,
-      inputTopY: detection.inputTopY
+      inputTopY: detection.inputTopY,
+      rightEdgeX: detection.rightEdgeX
     }
 
     if (hasCachedRegionForCurrentWindow && previousRegion) {
@@ -2686,6 +2689,7 @@ export class WeChatNativeDriver {
         confidence: detection.confidence,
         splitterX: detection.splitterX,
         inputTopY: detection.inputTopY,
+        rightEdgeX: detection.rightEdgeX,
         screenshot: { width: screenshot.width, height: screenshot.height, scaleFactor: screenshot.scaleFactor }
       })
       return {
@@ -2701,6 +2705,7 @@ export class WeChatNativeDriver {
       confidence: detection.confidence,
       splitterX: detection.splitterX,
       inputTopY: detection.inputTopY,
+      rightEdgeX: detection.rightEdgeX,
       screenshot: { width: screenshot.width, height: screenshot.height, scaleFactor: screenshot.scaleFactor }
     })
     return {
