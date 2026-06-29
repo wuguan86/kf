@@ -67,6 +67,7 @@ config.yaml  # 如果里面有密码或Token，建议也忽略
 # --- Dependencies ---
 node_modules/
 .pnpm-debug.log*
+user/.tmp-wechat-native-test/
 
 # --- Build Outputs ---
 # Electron-vite 默认输出目录

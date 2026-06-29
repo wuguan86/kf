@@ -16,6 +16,8 @@ const INPUT_SCAN_TOP_RATIO = 0.48
 const INPUT_SCAN_BOTTOM_RATIO = 0.96
 const INPUT_BOTTOM_PADDING_PX = 8
 const MIN_SPLITTER_SCORE = 22
+const MIN_SPLITTER_EDGE_COVERAGE = 0.62
+const SPLITTER_STRONG_EDGE_SCORE = 10
 const MIN_INPUT_TOP_SCORE = 18
 const INPUT_TOP_STRONG_EDGE_SCORE = 10
 const INPUT_TOP_MIN_COVERAGE = 0.5
@@ -127,22 +129,42 @@ const detectVerticalSplitter = (
   const maxY = Math.min(height - 1, Math.floor(height * SPLITTER_SCAN_BOTTOM_RATIO))
   let bestX = 0
   let bestScore = 0
+  let bestContinuousX = 0
+  let bestContinuousScore = 0
 
   for (let x = minX; x <= maxX; x += 1) {
     let score = 0
     let samples = 0
+    let strongEdges = 0
     for (let y = minY; y <= maxY; y += SAMPLE_STEP) {
       const current = getLuma(bitmap, width, x, y)
       const left = getLuma(bitmap, width, x - 2, y)
       const right = getLuma(bitmap, width, x + 2, y)
-      score += Math.abs(current - left) + Math.abs(current - right) + Math.abs(left - right)
+      const edgeScore = Math.abs(current - left) + Math.abs(current - right) + Math.abs(left - right)
+      score += edgeScore
+      if (edgeScore >= SPLITTER_STRONG_EDGE_SCORE) {
+        strongEdges += 1
+      }
       samples += 1
     }
     const averageScore = samples > 0 ? score / samples : 0
+    const coverage = samples > 0 ? strongEdges / samples : 0
+    // 会话列表和聊天区的分割线应纵向连续；消息头像、气泡边缘虽然局部很强，但覆盖高度不足，不能作为左边界。
+    if (coverage >= MIN_SPLITTER_EDGE_COVERAGE) {
+      const continuousScore = coverage * 120 + Math.min(averageScore, 80)
+      if (continuousScore > bestContinuousScore) {
+        bestContinuousScore = continuousScore
+        bestContinuousX = x
+      }
+    }
     if (averageScore > bestScore) {
       bestScore = averageScore
       bestX = x
     }
+  }
+
+  if (bestContinuousX > 0) {
+    return { x: bestContinuousX, confidence: clampNumber(bestContinuousScore / 200, 0.1, 1) }
   }
 
   if (bestScore < MIN_SPLITTER_SCORE) {

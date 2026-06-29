@@ -62,6 +62,11 @@ function createWechatLayoutBitmap(width, height, options = {}) {
   paintRect({ x: listWidth + 2, y: 0, width: contentRight - listWidth - 2, height: inputTop }, [238, 238, 238])
   paintRect({ x: listWidth + 2, y: inputTop, width: contentRight - listWidth - 2, height: 2 }, [214, 214, 214])
   paintRect({ x: listWidth + 2, y: inputTop + 2, width: contentRight - listWidth - 2, height: height - inputTop - 2 }, [251, 251, 251])
+  if (options.chatContentEdgeX) {
+    const edgeX = options.chatContentEdgeX
+    paintRect({ x: edgeX, y: Math.round(height * 0.18), width: 3, height: Math.round(height * 0.58) }, [120, 120, 120])
+    paintRect({ x: edgeX + 3, y: Math.round(height * 0.18), width: 70, height: Math.round(height * 0.58) }, [245, 245, 245])
+  }
   return bitmap
 }
 
@@ -160,6 +165,24 @@ function testTrimsDarkPixelsOutsideWechatRightEdge() {
   assert.ok(result.region.x + result.region.width >= contentRight - 6, `expected right edge to keep WeChat border, got ${result.region.x + result.region.width}`)
 }
 
+function testPrefersContinuousSidebarDividerOverChatContentEdge() {
+  const width = 745
+  const height = 728
+  const listWidth = 250
+  const bitmap = createWechatLayoutBitmap(width, height, {
+    listWidth,
+    inputTop: 588,
+    chatContentEdgeX: 371,
+    contentRight: 737
+  })
+  const { detectCurrentChatSnapshotRegion } = loadDetector(width, height, bitmap)
+  const result = detectCurrentChatSnapshotRegion({ png: Buffer.from('content-edge-window'), width, height, scaleFactor: 1 })
+
+  assert.equal(result.source, 'dynamic')
+  assert.ok(result.region.x >= listWidth + 2, `expected region to start after sidebar divider, got ${result.region.x}`)
+  assert.ok(result.region.x <= listWidth + 24, `expected region to keep left avatar area, got ${result.region.x}`)
+}
+
 function testPicksWechatWindowSourceInsteadOfFirstSource() {
   const { pickWeChatWindowSource } = loadWindowCapture()
   const sources = [
@@ -175,4 +198,5 @@ testDetectsInputTopAfterWindowResizeMakesComposerHigher()
 testDetectsChatRegionWithDifferentDpiScale()
 testKeepsScaledDpiPaddingAboveInputBox()
 testTrimsDarkPixelsOutsideWechatRightEdge()
+testPrefersContinuousSidebarDividerOverChatContentEdge()
 testPicksWechatWindowSourceInsteadOfFirstSource()
