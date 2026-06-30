@@ -1,6 +1,7 @@
 package com.shijie.transit.userapi.service;
 
 import com.shijie.transit.userapi.dto.SmartSalesDto;
+import com.shijie.transit.userapi.dto.SmartSalesDto.ConfirmBasicInfoRequest;
 import com.shijie.transit.userapi.vo.SmartSalesVo;
 import com.shijie.transit.userapi.vo.SmartSalesVo.AiProfile;
 import com.shijie.transit.userapi.vo.SmartSalesVo.CustomerListResponse;
@@ -102,5 +103,9 @@ public class SmartSalesService {
 
   public void updateAiProfile(Long ownerUserId, String contactKey, AiProfile aiProfile) {
     customerService.updateAiProfile(ownerUserId, contactKey, aiProfile);
+  }
+
+  public CustomerProfile confirmBasicInfo(Long ownerUserId, String contactKey, ConfirmBasicInfoRequest request) {
+    return customerService.confirmBasicInfo(ownerUserId, contactKey, request);
   }
 }

@@ -11,9 +11,23 @@ export interface TagView {
 }
 
 export interface AiProfile {
-  communicationFocus: string | null
-  interestTags: string[] | null
-  suggestedNextAction: string | null
+  communicationStyle: string | null
+  relationshipContext: string | null
+  preferenceHints: string[] | null
+  riskWarnings: string[] | null
+  nextConversationTips: string | null
+  profileNote: string | null
+  updatedAt: string | null
+}
+
+export interface BasicInfoSuggestion {
+  remarkName: string | null
+  phone: string | null
+  gender: string | null
+  source: string | null
+  remark: string | null
+  evidence: string | null
+  confidence: number | null
   updatedAt: string | null
 }
 
@@ -80,6 +94,7 @@ export interface CustomerProfile {
   customerId: string | null
   remarkName: string | null
   phone: string | null
+  gender: string | null
   source: string | null
   stage: string | null
   aiStageSuggestion: string | null
@@ -92,6 +107,7 @@ export interface CustomerProfile {
   lastChatTime: string | null
   tags: TagView[]
   followUps: FollowUpView[]
+  basicInfoSuggestion: BasicInfoSuggestion | null
   aiProfile: AiProfile | null
 }
 
@@ -150,6 +166,7 @@ export const smartSalesApi = {
     contactKey: string
     remarkName?: string
     phone?: string
+    gender?: string
     source?: string
     stage?: string
     assignedRoleId?: string
@@ -161,6 +178,16 @@ export const smartSalesApi = {
     http.post<any, CustomerProfile>(`${BASE}/customers/${encodeURIComponent(contactKey)}/stage`, { stage }),
   updateStarred: (contactKey: string, starred: number) =>
     http.post<any, CustomerProfile>(`${BASE}/customers/${encodeURIComponent(contactKey)}/starred`, { starred }),
+  confirmBasicInfo: (
+    contactKey: string,
+    data: { remarkName?: string; phone?: string; gender?: string; source?: string; remark?: string }
+  ) =>
+    http.post<any, CustomerProfile>(
+      `${BASE}/customers/${encodeURIComponent(contactKey)}/basic-info/confirm`,
+      data
+    ),
+  updateAiProfile: (contactKey: string, data: Omit<AiProfile, 'updatedAt'>) =>
+    http.put<any, CustomerProfile>(`${BASE}/customers/${encodeURIComponent(contactKey)}/profile`, data),
   listTags: () => http.get<any, TagView[]>(`${BASE}/tags`),
   createTag: (name: string, color?: string) =>
     http.post<any, TagView>(`${BASE}/tags`, { name, color }),

@@ -18,6 +18,7 @@ public final class SmartSalesDto {
       String contactKey,
       String remarkName,
       String phone,
+      String gender,
       String source,
       String stage,
       Long assignedRoleId,
@@ -38,6 +39,15 @@ public final class SmartSalesDto {
 
   /** 星标切换请求。 */
   public record UpdateStarredRequest(Integer starred) {
+  }
+
+  /** 确认 AI 提取的基础资料。AI 只提供草稿，写入正式字段必须经过人工确认。 */
+  public record ConfirmBasicInfoRequest(
+      String remarkName,
+      String phone,
+      String gender,
+      String source,
+      String remark) {
   }
 
   /** 新建标签请求。 */

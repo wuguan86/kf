@@ -77,6 +77,7 @@ public class SmartSalesDifyContextService {
       appendTags(profile, tags);
       appendLine(profile, "客户来源", customer.getSource());
       appendLine(profile, "联系电话", customer.getPhone());
+      appendLine(profile, "客户性别", customer.getGender());
       appendLine(profile, "客户备注", customer.getRemark());
       if (customer.getNextFollowUpAt() != null) {
         appendLine(profile, "下次跟进时间", customer.getNextFollowUpAt().toString());
@@ -141,12 +142,12 @@ public class SmartSalesDifyContextService {
     try {
       Map<String, Object> payload = objectMapper.readValue(
           customer.getAiProfileJson(), new TypeReference<Map<String, Object>>() {});
-      appendLine(profile, "AI沟通重点", asText(payload.get("communicationFocus")));
-      List<String> interestTags = asTextList(payload.get("interestTags"));
-      if (!interestTags.isEmpty()) {
-        appendLine(profile, "兴趣标签", String.join("、", interestTags));
-      }
-      appendLine(profile, "建议下一步", asText(payload.get("suggestedNextAction")));
+      appendLine(profile, "沟通风格", firstText(payload, "communicationStyle", "communicationFocus"));
+      appendLine(profile, "关系背景", asText(payload.get("relationshipContext")));
+      appendTextList(profile, "偏好线索", firstTextList(payload, "preferenceHints", "interestTags"));
+      appendTextList(profile, "风险提醒", asTextList(payload.get("riskWarnings")));
+      appendLine(profile, "下次沟通提示", firstText(payload, "nextConversationTips", "suggestedNextAction"));
+      appendLine(profile, "画像备注", asText(payload.get("profileNote")));
     } catch (Exception ex) {
       log.warn("解析智能销售 AI 画像失败，已跳过画像补充 customerId={} contactKey={}",
           customer.getId(), customer.getContactKey(), ex);
@@ -157,6 +158,13 @@ public class SmartSalesDifyContextService {
     if (StringUtils.hasText(value)) {
       profile.add(label + "：" + value.trim());
     }
+  }
+
+  private void appendTextList(StringJoiner profile, String label, List<String> values) {
+    if (values == null || values.isEmpty()) {
+      return;
+    }
+    appendLine(profile, label, String.join("、", values));
   }
 
   private String asText(Object value) {
@@ -175,6 +183,26 @@ public class SmartSalesDifyContextService {
           .map(String::trim)
           .filter(StringUtils::hasText)
           .toList();
+    }
+    return List.of();
+  }
+
+  private String firstText(Map<String, Object> payload, String... fields) {
+    for (String field : fields) {
+      String text = asText(payload.get(field));
+      if (StringUtils.hasText(text)) {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  private List<String> firstTextList(Map<String, Object> payload, String... fields) {
+    for (String field : fields) {
+      List<String> values = asTextList(payload.get(field));
+      if (!values.isEmpty()) {
+        return values;
+      }
     }
     return List.of();
   }

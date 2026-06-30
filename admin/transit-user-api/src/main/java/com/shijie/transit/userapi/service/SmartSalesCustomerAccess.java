@@ -53,6 +53,7 @@ public class SmartSalesCustomerAccess {
     entity.setContactKey(contactKey);
     entity.setRemarkName(null);
     entity.setPhone("");
+    entity.setGender("UNKNOWN");
     entity.setSource("UNKNOWN");
     entity.setStage("LEAD");
     entity.setStarred(0);

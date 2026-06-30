@@ -14,6 +14,7 @@ import com.shijie.transit.userapi.mapper.SessionMessageHistoryMapper;
 import com.shijie.transit.userapi.mapper.SessionMessageHistoryMapper.MessageItem;
 import com.shijie.transit.userapi.mapper.UserIntentMapper;
 import com.shijie.transit.userapi.vo.SmartSalesVo.AiProfile;
+import com.shijie.transit.userapi.vo.SmartSalesVo.BasicInfoSuggestion;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -117,16 +118,16 @@ public class UserProfileAIService {
     }
 
     UserIntentEntity intent = getIntent(tenantId, ownerUserId, contactKey.trim());
-    AiProfile aiProfile;
+    ProfileGenerationResult generationResult;
     try {
-      aiProfile = callDashScope(ownerUserId, contactKey.trim(), messages, intent);
+      generationResult = callDashScope(ownerUserId, contactKey.trim(), messages, intent, customer);
     } catch (Exception ex) {
       log.error("AI画像模型调用失败 tenantId={} userId={} contactKey={}",
           tenantId, ownerUserId, contactKey, ex);
       // 调用失败时返回历史画像(若有)，避免用户看到空白
       return customer == null ? null : parseAiProfile(customer);
     }
-    if (aiProfile == null) {
+    if (generationResult == null || generationResult.aiProfile() == null) {
       return customer == null ? null : parseAiProfile(customer);
     }
 
@@ -138,6 +139,7 @@ public class UserProfileAIService {
       customer.setContactKey(contactKey.trim());
       customer.setRemarkName(null);
       customer.setPhone("");
+      customer.setGender("UNKNOWN");
       customer.setSource("UNKNOWN");
       customer.setStage("LEAD");
       customer.setStarred(0);
@@ -145,19 +147,21 @@ public class UserProfileAIService {
       log.info("AI画像刷新触发自动建档 tenantId={} userId={} contactKey={} customerId={}",
           tenantId, ownerUserId, contactKey, customer.getId());
     }
-    writeAiProfile(customer, aiProfile);
-    return aiProfile;
+    writeGenerationResult(customer, generationResult);
+    return generationResult.aiProfile();
   }
 
   // ===================== DashScope 调用 =====================
 
-  private AiProfile callDashScope(
+  private ProfileGenerationResult callDashScope(
       Long ownerUserId,
       String contactKey,
       List<MessageItem> messages,
-      UserIntentEntity intent) {
+      UserIntentEntity intent,
+      CrmCustomerEntity customer) {
     String conversationText = buildConversationText(messages);
     String intentContext = buildIntentContext(intent);
+    String oldProfileContext = buildOldProfileContext(customer);
 
     ObjectNode request = objectMapper.createObjectNode();
     request.put("model", model);
@@ -169,7 +173,8 @@ public class UserProfileAIService {
         .put("content", profileSystemPrompt());
     messagesNode.addObject()
         .put("role", "user")
-        .put("content", "【已有意向分析】\n" + intentContext
+        .put("content", "【已有AI沟通辅助画像】\n" + oldProfileContext
+            + "\n\n【已有意向分析】\n" + intentContext
             + "\n\n【最近会话记录】\n" + conversationText);
 
     log.info("AI画像模型请求发起 endpoint={} model={} userId={} contactKey={}",
@@ -194,7 +199,7 @@ public class UserProfileAIService {
 
   // ===================== 输出解析 =====================
 
-  private AiProfile parseWorkflowOutput(String raw) {
+  ProfileGenerationResult parseWorkflowOutput(String raw) {
     JsonNode node;
     try {
       // 模型输出可能是 JSON 字符串，也可能被包了一层代码块
@@ -203,37 +208,115 @@ public class UserProfileAIService {
       log.warn("AI画像模型返回非JSON，跳过写入可展示画像");
       return null;
     }
-    // 兼容多种命名风格
-    if (node.hasNonNull("communicationFocus") || node.hasNonNull("communication_focus")
-        || node.hasNonNull("suggestedNextAction") || node.hasNonNull("suggested_next_action")
-        || node.hasNonNull("interestTags") || node.hasNonNull("interest_tags")) {
-      return fromNode(node);
-    }
-    // 若整体是 outputs 包裹，尝试取 data.outputs 或 outputs 字段
     JsonNode outputs = node.path("data").path("outputs");
     if (outputs.isMissingNode() || outputs.isNull()) {
       outputs = node.path("outputs");
     }
     if (!outputs.isMissingNode() && !outputs.isNull()) {
-      return fromNode(outputs);
+      node = outputs;
     }
-    return null;
+    JsonNode profileNode = node.path("aiProfile");
+    if (profileNode.isMissingNode() || profileNode.isNull()) {
+      profileNode = node.path("ai_profile");
+    }
+    if (profileNode.isMissingNode() || profileNode.isNull()) {
+      profileNode = node;
+    }
+    AiProfile aiProfile = fromNode(profileNode);
+    BasicInfoSuggestion suggestion = fromSuggestionNode(firstNode(node, "basicInfoSuggestion", "basic_info_suggestion"));
+    return aiProfile == null && suggestion == null ? null : new ProfileGenerationResult(aiProfile, suggestion);
+  }
+
+  private JsonNode firstNode(JsonNode node, String... fields) {
+    for (String field : fields) {
+      JsonNode value = node.path(field);
+      if (!value.isMissingNode() && !value.isNull()) {
+        return value;
+      }
+    }
+    return objectMapper.nullNode();
   }
 
   private AiProfile fromNode(JsonNode node) {
-    String focus = safeProfileText(readText(node, "communicationFocus", "communication_focus"));
-    String action = safeProfileText(readText(node, "suggestedNextAction", "suggested_next_action"));
-    List<String> rawTags = readStringList(node, "interestTags", "interest_tags");
-    List<String> tags = rawTags == null ? List.of() : rawTags.stream()
+    // 兼容历史三字段画像，避免老客户打开详情后画像丢失。
+    if (node.hasNonNull("communicationFocus") || node.hasNonNull("communication_focus")
+        || node.hasNonNull("suggestedNextAction") || node.hasNonNull("suggested_next_action")
+        || node.hasNonNull("interestTags") || node.hasNonNull("interest_tags")) {
+      String focus = safeProfileText(readText(node, "communicationFocus", "communication_focus"));
+      String action = safeProfileText(readText(node, "suggestedNextAction", "suggested_next_action"));
+      List<String> rawTags = readStringList(node, "interestTags", "interest_tags");
+      List<String> tags = rawTags == null ? List.of() : rawTags.stream()
+          .map(this::safeProfileText)
+          .filter(StringUtils::hasText)
+          .limit(6)
+          .toList();
+      if (!StringUtils.hasText(focus) && !StringUtils.hasText(action) && tags.isEmpty()) {
+        return null;
+      }
+      return new AiProfile(focus, null, tags, List.of(), action, null, LocalDateTime.now(clock));
+    }
+    String communicationStyle = safeProfileText(readText(node, "communicationStyle", "communication_style"));
+    String relationshipContext = safeProfileText(readText(node, "relationshipContext", "relationship_context"));
+    List<String> preferenceHints = safeProfileList(readStringList(node, "preferenceHints", "preference_hints"));
+    List<String> riskWarnings = safeProfileList(readStringList(node, "riskWarnings", "risk_warnings"));
+    String nextConversationTips = safeProfileText(readText(node, "nextConversationTips", "next_conversation_tips"));
+    String profileNote = safeProfileText(readText(node, "profileNote", "profile_note"));
+    if (!StringUtils.hasText(communicationStyle)
+        && !StringUtils.hasText(relationshipContext)
+        && preferenceHints.isEmpty()
+        && riskWarnings.isEmpty()
+        && !StringUtils.hasText(nextConversationTips)
+        && !StringUtils.hasText(profileNote)) {
+      return null;
+    }
+    return new AiProfile(
+        communicationStyle,
+        relationshipContext,
+        preferenceHints,
+        riskWarnings,
+        nextConversationTips,
+        profileNote,
+        LocalDateTime.now(clock));
+  }
+
+  private List<String> safeProfileList(List<String> rawTags) {
+    if (rawTags == null) {
+      return List.of();
+    }
+    return rawTags.stream()
         .map(this::safeProfileText)
         .filter(StringUtils::hasText)
         .limit(6)
         .toList();
-    if (!StringUtils.hasText(focus) && !StringUtils.hasText(action)
-        && (tags == null || tags.isEmpty())) {
+  }
+
+  private BasicInfoSuggestion fromSuggestionNode(JsonNode node) {
+    if (node == null || node.isMissingNode() || node.isNull()) {
       return null;
     }
-    return new AiProfile(focus, tags == null ? List.of() : tags, action, LocalDateTime.now(clock));
+    String remarkName = safeBasicInfoText(readText(node, "remarkName", "remark_name", "name"));
+    String phone = safeBasicInfoText(readText(node, "phone"));
+    String gender = normalizeGender(readText(node, "gender"));
+    String source = normalizeSource(readText(node, "source"));
+    String remark = safeBasicInfoText(readText(node, "remark"));
+    String evidence = safeBasicInfoText(readText(node, "evidence"));
+    Integer confidence = readInteger(node, "confidence");
+    if (!StringUtils.hasText(remarkName)
+        && !StringUtils.hasText(phone)
+        && !StringUtils.hasText(gender)
+        && !StringUtils.hasText(source)
+        && !StringUtils.hasText(remark)) {
+      return null;
+    }
+    return new BasicInfoSuggestion(
+        remarkName,
+        phone,
+        StringUtils.hasText(gender) ? gender : "UNKNOWN",
+        StringUtils.hasText(source) ? source : "UNKNOWN",
+        remark,
+        evidence,
+        confidence,
+        LocalDateTime.now(clock));
   }
 
   private String safeProfileText(String text) {
@@ -241,25 +324,60 @@ public class UserProfileAIService {
     return result.safe() ? result.safeText() : null;
   }
 
-  private void writeAiProfile(CrmCustomerEntity customer, AiProfile aiProfile) {
+  private String safeBasicInfoText(String text) {
+    if (!StringUtils.hasText(text)) {
+      return null;
+    }
+    String value = text.trim();
+    return value.length() > 120 ? value.substring(0, 120) : value;
+  }
+
+  private void writeGenerationResult(CrmCustomerEntity customer, ProfileGenerationResult result) {
     try {
       ObjectNode payload = objectMapper.createObjectNode();
-      payload.put("communicationFocus", aiProfile.communicationFocus());
-      ArrayNode tagsNode = payload.putArray("interestTags");
-      if (aiProfile.interestTags() != null) {
-        for (String tag : aiProfile.interestTags()) {
-          tagsNode.add(tag);
-        }
-      }
-      payload.put("suggestedNextAction", aiProfile.suggestedNextAction());
+      writeAiProfilePayload(payload, result.aiProfile());
       customer.setAiProfileJson(objectMapper.writeValueAsString(payload));
-      customer.setAiProfileUpdatedAt(LocalDateTime.now(clock));
+      LocalDateTime now = LocalDateTime.now(clock);
+      customer.setAiProfileUpdatedAt(now);
+      if (result.basicInfoSuggestion() != null) {
+        customer.setBasicInfoSuggestionJson(objectMapper.writeValueAsString(toSuggestionPayload(result.basicInfoSuggestion())));
+        customer.setBasicInfoSuggestionUpdatedAt(now);
+      }
       customerMapper.updateById(customer);
       log.info("AI画像写入成功 customerId={} contactKey={}", customer.getId(), customer.getContactKey());
     } catch (Exception ex) {
       log.error("AI画像序列化写入失败 customerId={}", customer.getId(), ex);
       throw new TransitException(ErrorCode.INTERNAL_ERROR, "AI画像保存失败");
     }
+  }
+
+  private void writeAiProfilePayload(ObjectNode payload, AiProfile aiProfile) {
+    payload.put("communicationStyle", aiProfile.communicationStyle());
+    payload.put("relationshipContext", aiProfile.relationshipContext());
+    ArrayNode preferenceHintsNode = payload.putArray("preferenceHints");
+    if (aiProfile.preferenceHints() != null) {
+      aiProfile.preferenceHints().forEach(preferenceHintsNode::add);
+    }
+    ArrayNode riskWarningsNode = payload.putArray("riskWarnings");
+    if (aiProfile.riskWarnings() != null) {
+      aiProfile.riskWarnings().forEach(riskWarningsNode::add);
+    }
+    payload.put("nextConversationTips", aiProfile.nextConversationTips());
+    payload.put("profileNote", aiProfile.profileNote());
+  }
+
+  private ObjectNode toSuggestionPayload(BasicInfoSuggestion suggestion) {
+    ObjectNode payload = objectMapper.createObjectNode();
+    payload.put("remarkName", suggestion.remarkName());
+    payload.put("phone", suggestion.phone());
+    payload.put("gender", suggestion.gender());
+    payload.put("source", suggestion.source());
+    payload.put("remark", suggestion.remark());
+    payload.put("evidence", suggestion.evidence());
+    if (suggestion.confidence() != null) {
+      payload.put("confidence", suggestion.confidence());
+    }
+    return payload;
   }
 
   // ===================== 数据加载辅助 =====================
@@ -278,14 +396,18 @@ public class UserProfileAIService {
     }
     try {
       JsonNode node = objectMapper.readTree(customer.getAiProfileJson());
-      String focus = readText(node, "communicationFocus", "communication_focus");
-      String action = readText(node, "suggestedNextAction", "suggested_next_action");
-      List<String> tags = readStringList(node, "interestTags", "interest_tags");
-      if (!StringUtils.hasText(focus) && !StringUtils.hasText(action)
-          && (tags == null || tags.isEmpty())) {
+      AiProfile parsed = fromNode(node);
+      if (parsed == null) {
         return null;
       }
-      return new AiProfile(focus, tags == null ? List.of() : tags, action, customer.getAiProfileUpdatedAt());
+      return new AiProfile(
+          parsed.communicationStyle(),
+          parsed.relationshipContext(),
+          parsed.preferenceHints(),
+          parsed.riskWarnings(),
+          parsed.nextConversationTips(),
+          parsed.profileNote(),
+          customer.getAiProfileUpdatedAt());
     } catch (Exception ex) {
       log.warn("解析AI画像JSON失败，忽略 customerId={}", customer.getId(), ex);
       return null;
@@ -345,8 +467,28 @@ public class UserProfileAIService {
         + "；需求强度：" + safe(intent.getDemandLevel())
         + "；预算：" + safe(intent.getBudgetLevel())
         + "；时间紧迫度：" + safe(intent.getTimeLevel())
+        + "；预算描述：" + safe(intent.getBudgetDesc())
+        + "；购买时间：" + safe(intent.getTimeDesc())
+        + "；核心痛点：" + safe(intent.getPainPoints())
+        + "；提及竞品：" + safe(intent.getCompetitors())
         + "；最近事件：" + safe(intent.getLatestEvent())
         + "；已有总结：" + safe(intent.getDailySummary());
+  }
+
+  private String buildOldProfileContext(CrmCustomerEntity customer) {
+    if (customer == null || !StringUtils.hasText(customer.getAiProfileJson())) {
+      return "暂无历史沟通辅助画像。";
+    }
+    AiProfile oldProfile = parseAiProfile(customer);
+    if (oldProfile == null) {
+      return "暂无可解析的历史沟通辅助画像。";
+    }
+    return "沟通风格：" + safe(oldProfile.communicationStyle())
+        + "；关系背景：" + safe(oldProfile.relationshipContext())
+        + "；偏好线索：" + String.join("、", oldProfile.preferenceHints() == null ? List.of() : oldProfile.preferenceHints())
+        + "；风险提醒：" + String.join("、", oldProfile.riskWarnings() == null ? List.of() : oldProfile.riskWarnings())
+        + "；下次沟通提示：" + safe(oldProfile.nextConversationTips())
+        + "；画像备注：" + safe(oldProfile.profileNote());
   }
 
   // ===================== Prompt =====================
@@ -355,15 +497,24 @@ public class UserProfileAIService {
     return """
         你是销售助理。请基于提供的会话内容和已有意向分析，总结该客户的画像。
         输出必须是 JSON，字段固定为：
-        - communicationFocus：沟通重点（不超过100字）
-        - interestTags：兴趣标签（字符串数组，不超过5个，每个不超过6字）
-        - suggestedNextAction：下一步建议动作（不超过80字）
+        - aiProfile：沟通辅助画像对象
+          - communicationStyle：沟通风格（不超过100字）
+          - relationshipContext：关系背景（不超过100字）
+          - preferenceHints：偏好线索（字符串数组，不超过5个，每个不超过20字）
+          - riskWarnings：风险提醒（字符串数组，不超过5个，每个不超过30字）
+          - nextConversationTips：下次沟通提示（不超过100字）
+          - profileNote：人工可编辑画像备注（不超过100字）
+        - basicInfoSuggestion：基础资料草稿对象
+          - remarkName、phone、gender、source、remark、evidence、confidence
 
         严格规则：
-        1) 只使用对话中明确出现的信息
-        2) 对话中未涉及的字段返回空字符串或空数组
-        3) 禁止编造、禁止推测
-        4) 只输出 JSON，不要任何解释、不要代码块""";
+        1) user_intent 已维护需求、预算、周期、痛点、竞品、最近事件，aiProfile 不要重复这些销售事实。
+        2) aiProfile 只写沟通风格、关系背景、偏好、风险提醒、下次沟通提示和综合备注。
+        3) 按“老画像 + 新聊天 = 新画像”增量更新：老画像仍有效则保留，新聊天明确推翻时才修正。
+        4) 基础资料只能作为 basicInfoSuggestion 草稿返回，禁止直接假定已确认。
+        5) 只使用对话中明确出现的信息；未涉及字段返回空字符串或空数组。
+        6) gender 仅可输出 UNKNOWN、MALE、FEMALE、OTHER；source 仅可输出 UNKNOWN、GROUP、SCAN、REFERRAL、IMPORT。
+        7) 只输出 JSON，不要任何解释、不要代码块。""";
   }
 
   // ===================== 通用工具方法 =====================
@@ -406,6 +557,37 @@ public class UserProfileAIService {
       }
     }
     return null;
+  }
+
+  private Integer readInteger(JsonNode node, String field) {
+    JsonNode value = node.path(field);
+    if (value.isInt()) {
+      return value.asInt();
+    }
+    if (value.isTextual() && StringUtils.hasText(value.asText())) {
+      try {
+        return Integer.parseInt(value.asText().trim());
+      } catch (NumberFormatException ex) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  private String normalizeGender(String value) {
+    if (!StringUtils.hasText(value)) {
+      return null;
+    }
+    String normalized = value.trim().toUpperCase();
+    return SmartSalesConstants.VALID_GENDERS.contains(normalized) ? normalized : "UNKNOWN";
+  }
+
+  private String normalizeSource(String value) {
+    if (!StringUtils.hasText(value)) {
+      return null;
+    }
+    String normalized = value.trim().toUpperCase();
+    return SmartSalesConstants.VALID_SOURCES.contains(normalized) ? normalized : "UNKNOWN";
   }
 
   private List<String> readStringList(JsonNode node, String... fields) {
@@ -458,5 +640,8 @@ public class UserProfileAIService {
     }
     String value = text.trim();
     return value.length() <= maxLength ? value : value.substring(0, maxLength);
+  }
+
+  record ProfileGenerationResult(AiProfile aiProfile, BasicInfoSuggestion basicInfoSuggestion) {
   }
 }

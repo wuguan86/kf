@@ -17,6 +17,7 @@ final class SmartSalesConstants {
       "LOST", "已流失");
   static final Set<String> VALID_SOURCES = Set.of("GROUP", "SCAN", "REFERRAL", "IMPORT", "UNKNOWN");
   static final Set<String> VALID_FOLLOW_UP_TYPES = Set.of("PHONE", "WECHAT", "MEETING", "NOTE");
+  static final Set<String> VALID_GENDERS = Set.of("UNKNOWN", "MALE", "FEMALE", "OTHER");
 
   private SmartSalesConstants() {
   }

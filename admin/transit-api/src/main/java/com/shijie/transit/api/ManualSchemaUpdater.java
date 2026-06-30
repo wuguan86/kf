@@ -18,6 +18,7 @@ public class ManualSchemaUpdater implements ApplicationRunner {
     public void run(ApplicationArguments args) throws Exception {
         ensureUserAccountInitColumn();
         ensureUserIntentDailySummaryColumn();
+        ensureCrmCustomerProfileAssistColumns();
         ensureKnowledgeBaseCleaningTaskTable();
         jdbcTemplate.execute("""
             CREATE TABLE IF NOT EXISTS system_config (
@@ -171,6 +172,27 @@ public class ManualSchemaUpdater implements ApplicationRunner {
               KEY idx_kb_cleaning_user_status_time (tenant_id, user_id, task_status, created_at) COMMENT '索引:租户+用户+状态+时间'
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库文件AI清洗任务表';
         """);
+    }
+
+    private void ensureCrmCustomerProfileAssistColumns() {
+        if (!hasColumn("crm_customer", "gender")) {
+            jdbcTemplate.execute("""
+                ALTER TABLE crm_customer
+                ADD COLUMN gender varchar(16) NOT NULL DEFAULT 'UNKNOWN' COMMENT '客户性别，人工确认后写入' AFTER phone;
+            """);
+        }
+        if (!hasColumn("crm_customer", "basic_info_suggestion_json")) {
+            jdbcTemplate.execute("""
+                ALTER TABLE crm_customer
+                ADD COLUMN basic_info_suggestion_json text NULL COMMENT 'AI提取的基础资料待确认草稿' AFTER ai_profile_updated_at;
+            """);
+        }
+        if (!hasColumn("crm_customer", "basic_info_suggestion_updated_at")) {
+            jdbcTemplate.execute("""
+                ALTER TABLE crm_customer
+                ADD COLUMN basic_info_suggestion_updated_at datetime(3) NULL COMMENT '基础资料草稿更新时间' AFTER basic_info_suggestion_json;
+            """);
+        }
     }
 
     private boolean hasColumn(String tableName, String columnName) {

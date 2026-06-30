@@ -23,10 +23,40 @@ const cssFile = path.join(
   'smart-sales',
   'CustomerProfileDetail.module.css'
 )
+const aiProfileFile = path.join(
+  root,
+  'src',
+  'renderer',
+  'src',
+  'pages',
+  'smart-sales',
+  'AiProfileSection.tsx'
+)
+const basicInfoFile = path.join(
+  root,
+  'src',
+  'renderer',
+  'src',
+  'pages',
+  'smart-sales',
+  'BasicInfoSection.tsx'
+)
+const salesIntentFile = path.join(
+  root,
+  'src',
+  'renderer',
+  'src',
+  'pages',
+  'smart-sales',
+  'SalesIntentSection.tsx'
+)
 
 const apiSource = fs.readFileSync(apiFile, 'utf8')
 const detailSource = fs.readFileSync(detailFile, 'utf8')
 const cssSource = fs.readFileSync(cssFile, 'utf8')
+const aiProfileSource = fs.readFileSync(aiProfileFile, 'utf8')
+const basicInfoSource = fs.readFileSync(basicInfoFile, 'utf8')
+const salesIntentSource = fs.readFileSync(salesIntentFile, 'utf8')
 
 function assertIncludes(source, expected, file) {
   if (!source.includes(expected)) {
@@ -39,11 +69,18 @@ for (const field of ['budgetDesc', 'timeDesc', 'painPoints', 'competitors']) {
 }
 
 for (const label of ['预算描述', '购买时间', '核心痛点', '提及竞品', '最近事件']) {
-  assertIncludes(detailSource, label, 'CustomerProfileDetail.tsx')
+  assertIncludes(salesIntentSource, label, 'SalesIntentSection.tsx')
 }
 
-assertIncludes(detailSource, 'SalesInsightSection', 'CustomerProfileDetail.tsx')
-assertIncludes(detailSource, 'salesInsightEmpty', 'CustomerProfileDetail.tsx')
+assertIncludes(salesIntentSource, 'SalesInsightSection', 'SalesIntentSection.tsx')
+assertIncludes(apiSource, 'basicInfoSuggestion: BasicInfoSuggestion | null', 'smartSales.ts')
+assertIncludes(apiSource, 'communicationStyle: string | null', 'smartSales.ts')
+assertIncludes(apiSource, 'confirmBasicInfo', 'smartSales.ts')
+assertIncludes(apiSource, 'updateAiProfile', 'smartSales.ts')
+assertIncludes(detailSource, 'BasicInfoSection', 'CustomerProfileDetail.tsx')
+assertIncludes(aiProfileSource, 'AI 沟通辅助画像', 'AiProfileSection.tsx')
+assertIncludes(basicInfoSource, 'AI 提取结果需人工确认后存入', 'BasicInfoSection.tsx')
+assertIncludes(salesIntentSource, 'salesInsightEmpty', 'SalesIntentSection.tsx')
 assertIncludes(detailSource, '暂无', 'CustomerProfileDetail.tsx')
 assertIncludes(cssSource, '.salesInsightGrid', 'CustomerProfileDetail.module.css')
 assertIncludes(cssSource, '.salesInsightEmpty', 'CustomerProfileDetail.module.css')

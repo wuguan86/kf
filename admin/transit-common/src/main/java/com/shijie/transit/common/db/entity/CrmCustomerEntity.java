@@ -18,6 +18,8 @@ public class CrmCustomerEntity extends BaseTenantEntity {
   private String contactKey;
   private String remarkName;
   private String phone;
+  /** 客户性别：UNKNOWN/MALE/FEMALE/OTHER。该字段只保存人工确认后的结果。 */
+  private String gender;
   /** 客户来源：GROUP/SCAN/REFERRAL/IMPORT/UNKNOWN */
   private String source;
   /** 商机阶段：LEAD/FOLLOWING/INTENDED/WON/LOST */
@@ -33,6 +35,10 @@ public class CrmCustomerEntity extends BaseTenantEntity {
   private String aiProfileJson;
   @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
   private LocalDateTime aiProfileUpdatedAt;
+  /** AI 提取的基础资料待确认草稿，确认前不能覆盖正式客户资料。 */
+  private String basicInfoSuggestionJson;
+  @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+  private LocalDateTime basicInfoSuggestionUpdatedAt;
   private String aiStageSuggestion;
   private Integer aiStageConfidence;
   private String aiStageReason;
@@ -69,6 +75,14 @@ public class CrmCustomerEntity extends BaseTenantEntity {
 
   public void setPhone(String phone) {
     this.phone = phone;
+  }
+
+  public String getGender() {
+    return gender;
+  }
+
+  public void setGender(String gender) {
+    this.gender = gender;
   }
 
   public String getSource() {
@@ -133,6 +147,22 @@ public class CrmCustomerEntity extends BaseTenantEntity {
 
   public void setAiProfileUpdatedAt(LocalDateTime aiProfileUpdatedAt) {
     this.aiProfileUpdatedAt = aiProfileUpdatedAt;
+  }
+
+  public String getBasicInfoSuggestionJson() {
+    return basicInfoSuggestionJson;
+  }
+
+  public void setBasicInfoSuggestionJson(String basicInfoSuggestionJson) {
+    this.basicInfoSuggestionJson = basicInfoSuggestionJson;
+  }
+
+  public LocalDateTime getBasicInfoSuggestionUpdatedAt() {
+    return basicInfoSuggestionUpdatedAt;
+  }
+
+  public void setBasicInfoSuggestionUpdatedAt(LocalDateTime basicInfoSuggestionUpdatedAt) {
+    this.basicInfoSuggestionUpdatedAt = basicInfoSuggestionUpdatedAt;
   }
 
   public String getAiStageSuggestion() {

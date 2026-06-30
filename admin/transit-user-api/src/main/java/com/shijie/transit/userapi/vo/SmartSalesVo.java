@@ -90,6 +90,7 @@ public final class SmartSalesVo {
       @JsonSerialize(using = ToStringSerializer.class) Long customerId,
       String remarkName,
       String phone,
+      String gender,
       String source,
       String stage,
       String aiStageSuggestion,
@@ -102,14 +103,30 @@ public final class SmartSalesVo {
       @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime lastChatTime,
       List<TagView> tags,
       List<FollowUpView> followUps,
+      BasicInfoSuggestion basicInfoSuggestion,
       AiProfile aiProfile) {
   }
 
-  /** AI 生成的画像补充字段(存于 crm_customer.ai_profile_json)。 */
+  /** AI 提取的客户基础资料草稿。展示给人工确认，不能直接覆盖正式客户资料。 */
+  public record BasicInfoSuggestion(
+      String remarkName,
+      String phone,
+      String gender,
+      String source,
+      String remark,
+      String evidence,
+      Integer confidence,
+      @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime updatedAt) {
+  }
+
+  /** AI 生成的沟通辅助画像(存于 crm_customer.ai_profile_json)。 */
   public record AiProfile(
-      String communicationFocus,
-      List<String> interestTags,
-      String suggestedNextAction,
+      String communicationStyle,
+      String relationshipContext,
+      List<String> preferenceHints,
+      List<String> riskWarnings,
+      String nextConversationTips,
+      String profileNote,
       @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime updatedAt) {
   }
 

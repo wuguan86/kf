@@ -4,6 +4,7 @@ import com.shijie.transit.common.security.TransitPrincipal;
 import com.shijie.transit.common.web.Result;
 import com.shijie.transit.userapi.dto.SmartSalesDto.CreateFollowUpRequest;
 import com.shijie.transit.userapi.dto.SmartSalesDto.CreateTagRequest;
+import com.shijie.transit.userapi.dto.SmartSalesDto.ConfirmBasicInfoRequest;
 import com.shijie.transit.userapi.dto.SmartSalesDto.SaveCustomerRequest;
 import com.shijie.transit.userapi.dto.SmartSalesDto.UpdateCustomerTagsRequest;
 import com.shijie.transit.userapi.dto.SmartSalesDto.UpdateStageRequest;
@@ -94,6 +95,21 @@ public class UserSmartSalesController {
       @PathVariable("contactKey") String contactKey,
       @RequestBody UpdateStarredRequest request) {
     return Result.success(smartSalesService.updateStarred(currentUserId(), contactKey, request.starred()));
+  }
+
+  @PostMapping("/customers/{contactKey}/basic-info/confirm")
+  public Result<CustomerProfile> confirmBasicInfo(
+      @PathVariable("contactKey") String contactKey,
+      @RequestBody ConfirmBasicInfoRequest request) {
+    return Result.success(smartSalesService.confirmBasicInfo(currentUserId(), contactKey, request));
+  }
+
+  @PutMapping("/customers/{contactKey}/profile")
+  public Result<CustomerProfile> updateAiProfile(
+      @PathVariable("contactKey") String contactKey,
+      @RequestBody AiProfile aiProfile) {
+    smartSalesService.updateAiProfile(currentUserId(), contactKey, aiProfile);
+    return Result.success(smartSalesService.getProfile(currentUserId(), contactKey));
   }
 
   // ===================== 标签 =====================

@@ -22,9 +22,10 @@ class SmartSalesDifyContextServiceTest {
     customer.setStage("FOLLOWING");
     customer.setSource("GROUP");
     customer.setPhone("13800000000");
+    customer.setGender("MALE");
     customer.setRemark("重点关注企业微信方案");
     customer.setAiProfileJson("""
-        {"communicationFocus":"先解释私域转化效果","interestTags":["企业微信","自动回复"],"suggestedNextAction":"约演示"}
+        {"communicationStyle":"客户关注效率，适合直接给案例","relationshipContext":"群聊加好友后咨询","preferenceHints":["偏好微信沟通","关注落地案例"],"riskWarnings":["不要承诺固定折扣"],"nextConversationTips":"先发同行案例再约试用","profileNote":"适合轻量跟进"}
         """);
 
     UserIntentEntity intent = new UserIntentEntity();
@@ -51,10 +52,14 @@ class SmartSalesDifyContextServiceTest {
 
       assertEquals("FOLLOWING（跟进中）", context.salesStage());
       assertTrue(context.customerProfile().contains("客户名称：张三"));
-      assertTrue(context.customerProfile().contains("AI沟通重点：先解释私域转化效果"));
-      assertTrue(context.customerProfile().contains("兴趣标签：企业微信、自动回复"));
+      assertTrue(context.customerProfile().contains("客户性别：MALE"));
+      assertTrue(context.customerProfile().contains("沟通风格：客户关注效率，适合直接给案例"));
+      assertTrue(context.customerProfile().contains("关系背景：群聊加好友后咨询"));
+      assertTrue(context.customerProfile().contains("偏好线索：偏好微信沟通、关注落地案例"));
+      assertTrue(context.customerProfile().contains("风险提醒：不要承诺固定折扣"));
       assertTrue(context.customerProfile().contains("客户标签：高价值客户、已约演示"));
-      assertTrue(context.customerProfile().contains("建议下一步：约演示"));
+      assertTrue(context.customerProfile().contains("下次沟通提示：先发同行案例再约试用"));
+      assertTrue(context.customerProfile().contains("画像备注：适合轻量跟进"));
       assertTrue(context.customerProfile().contains("意向等级：高意向"));
       assertTrue(context.customerProfile().contains("预算描述：预算在 3 万以内，关注年付优惠"));
       assertTrue(context.customerProfile().contains("购买时间描述：希望本周完成试用并尽快上线"));

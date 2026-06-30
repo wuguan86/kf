@@ -8,8 +8,10 @@ import com.shijie.transit.common.tenant.TenantContext;
 import com.shijie.transit.common.web.ErrorCode;
 import com.shijie.transit.common.web.TransitException;
 import com.shijie.transit.userapi.dto.SmartSalesDto;
+import com.shijie.transit.userapi.dto.SmartSalesDto.ConfirmBasicInfoRequest;
 import com.shijie.transit.userapi.mapper.CrmCustomerMapper;
 import com.shijie.transit.userapi.vo.SmartSalesVo.AiProfile;
+import com.shijie.transit.userapi.vo.SmartSalesVo.BasicInfoSuggestion;
 import com.shijie.transit.userapi.vo.SmartSalesVo.CustomerListItem;
 import com.shijie.transit.userapi.vo.SmartSalesVo.CustomerListResponse;
 import com.shijie.transit.userapi.vo.SmartSalesVo.CustomerProfile;
@@ -128,6 +130,7 @@ public class SmartSalesCustomerService {
     }
     customerAccess.validateStage(req.stage());
     customerAccess.validateSource(req.source());
+    validateGender(req.gender());
     Long tenantId = TenantContext.getTenantId();
     String contactKey = req.contactKey().trim();
     CrmCustomerEntity existing = customerAccess.findCustomer(tenantId, ownerUserId, contactKey);
@@ -139,9 +142,11 @@ public class SmartSalesCustomerService {
       entity.setStarred(req.starred() == null ? 0 : (req.starred() == 1 ? 1 : 0));
       entity.setStage(StringUtils.hasText(req.stage()) ? req.stage() : "LEAD");
       entity.setSource(StringUtils.hasText(req.source()) ? req.source() : "UNKNOWN");
+      entity.setGender(StringUtils.hasText(req.gender()) ? req.gender() : "UNKNOWN");
     }
     if (req.remarkName() != null) entity.setRemarkName(req.remarkName());
     if (req.phone() != null) entity.setPhone(req.phone());
+    if (StringUtils.hasText(req.gender())) entity.setGender(req.gender());
     if (StringUtils.hasText(req.source())) entity.setSource(req.source());
     if (StringUtils.hasText(req.stage())) entity.setStage(req.stage());
     entity.setAssignedRoleId(req.assignedRoleId());
@@ -208,6 +213,7 @@ public class SmartSalesCustomerService {
     List<TagView> tags = customer == null ? List.of() : tagService.loadTagsOfCustomer(tenantId, customer.getId());
     List<FollowUpView> followUps = customer == null ? List.of() : followUpService.loadFollowUps(tenantId, customer.getId());
     AiProfile aiProfile = customer == null ? null : parseAiProfile(customer);
+    BasicInfoSuggestion basicInfoSuggestion = customer == null ? null : parseBasicInfoSuggestion(customer);
     Integer intentLevel = intent == null ? null : intent.getIntentLevel();
     LocalDateTime lastChatTime = customerAccess.findLastChatTime(tenantId, ownerUserId, normalizedKey);
     return new CustomerProfile(
@@ -229,6 +235,7 @@ public class SmartSalesCustomerService {
         customer == null ? null : customer.getId(),
         customer == null ? null : customer.getRemarkName(),
         customer == null ? null : customer.getPhone(),
+        customer == null ? null : customer.getGender(),
         customer == null ? null : customer.getSource(),
         customer == null ? null : customer.getStage(),
         customer == null ? null : customer.getAiStageSuggestion(),
@@ -241,7 +248,43 @@ public class SmartSalesCustomerService {
         lastChatTime,
         tags,
         followUps,
+        basicInfoSuggestion,
         aiProfile);
+  }
+
+  @Transactional
+  public CustomerProfile confirmBasicInfo(Long ownerUserId, String contactKey, ConfirmBasicInfoRequest request) {
+    if (!StringUtils.hasText(contactKey)) {
+      throw new TransitException(ErrorCode.BAD_REQUEST, "contactKey 不能为空");
+    }
+    if (request == null) {
+      throw new TransitException(ErrorCode.BAD_REQUEST, "基础资料不能为空");
+    }
+    customerAccess.validateSource(request.source());
+    validateGender(request.gender());
+    Long tenantId = TenantContext.getTenantId();
+    CrmCustomerEntity entity = customerAccess.ensureCustomer(tenantId, ownerUserId, contactKey.trim());
+    if (request.remarkName() != null) {
+      entity.setRemarkName(request.remarkName().trim());
+    }
+    if (request.phone() != null) {
+      entity.setPhone(request.phone().trim());
+    }
+    if (StringUtils.hasText(request.gender())) {
+      entity.setGender(request.gender().trim());
+    }
+    if (StringUtils.hasText(request.source())) {
+      entity.setSource(request.source().trim());
+    }
+    if (request.remark() != null) {
+      entity.setRemark(request.remark().trim());
+    }
+    entity.setBasicInfoSuggestionJson(null);
+    entity.setBasicInfoSuggestionUpdatedAt(null);
+    customerMapper.updateById(entity);
+    log.info("确认智能销售客户基础资料 tenantId={} userId={} contactKey={} customerId={}",
+        tenantId, ownerUserId, contactKey, entity.getId());
+    return getProfile(ownerUserId, contactKey);
   }
 
   @Transactional
@@ -250,9 +293,12 @@ public class SmartSalesCustomerService {
     CrmCustomerEntity entity = customerAccess.ensureCustomer(tenantId, ownerUserId, contactKey);
     try {
       Map<String, Object> payload = new LinkedHashMap<>();
-      payload.put("communicationFocus", aiProfile.communicationFocus());
-      payload.put("interestTags", aiProfile.interestTags());
-      payload.put("suggestedNextAction", aiProfile.suggestedNextAction());
+      payload.put("communicationStyle", aiProfile.communicationStyle());
+      payload.put("relationshipContext", aiProfile.relationshipContext());
+      payload.put("preferenceHints", aiProfile.preferenceHints());
+      payload.put("riskWarnings", aiProfile.riskWarnings());
+      payload.put("nextConversationTips", aiProfile.nextConversationTips());
+      payload.put("profileNote", aiProfile.profileNote());
       entity.setAiProfileJson(objectMapper.writeValueAsString(payload));
       entity.setAiProfileUpdatedAt(LocalDateTime.now(clock));
       customerMapper.updateById(entity);
@@ -270,18 +316,73 @@ public class SmartSalesCustomerService {
     try {
       Map<String, Object> payload = objectMapper.readValue(
           customer.getAiProfileJson(), new TypeReference<Map<String, Object>>() {});
-      String focus = asString(payload.get("communicationFocus"));
-      List<String> interestTags = asStringList(payload.get("interestTags"));
-      String action = asString(payload.get("suggestedNextAction"));
-      if (!StringUtils.hasText(focus) && !StringUtils.hasText(action)
-          && (interestTags == null || interestTags.isEmpty())) {
+      String communicationStyle = asString(payload.get("communicationStyle"));
+      String relationshipContext = asString(payload.get("relationshipContext"));
+      List<String> preferenceHints = asStringList(payload.get("preferenceHints"));
+      List<String> riskWarnings = asStringList(payload.get("riskWarnings"));
+      String nextConversationTips = asString(payload.get("nextConversationTips"));
+      String profileNote = asString(payload.get("profileNote"));
+      if (!StringUtils.hasText(communicationStyle)) {
+        communicationStyle = asString(payload.get("communicationFocus"));
+      }
+      if ((preferenceHints == null || preferenceHints.isEmpty()) && payload.containsKey("interestTags")) {
+        preferenceHints = asStringList(payload.get("interestTags"));
+      }
+      if (!StringUtils.hasText(nextConversationTips)) {
+        nextConversationTips = asString(payload.get("suggestedNextAction"));
+      }
+      if (!StringUtils.hasText(communicationStyle)
+          && !StringUtils.hasText(relationshipContext)
+          && (preferenceHints == null || preferenceHints.isEmpty())
+          && (riskWarnings == null || riskWarnings.isEmpty())
+          && !StringUtils.hasText(nextConversationTips)
+          && !StringUtils.hasText(profileNote)) {
         return null;
       }
-      return new AiProfile(focus, interestTags, action, customer.getAiProfileUpdatedAt());
+      return new AiProfile(
+          communicationStyle,
+          relationshipContext,
+          preferenceHints == null ? List.of() : preferenceHints,
+          riskWarnings == null ? List.of() : riskWarnings,
+          nextConversationTips,
+          profileNote,
+          customer.getAiProfileUpdatedAt());
     } catch (Exception ex) {
       log.warn("解析智能销售AI画像JSON失败，忽略 customer={} json={}",
           customer.getId(), customer.getAiProfileJson(), ex);
       return null;
+    }
+  }
+
+  private BasicInfoSuggestion parseBasicInfoSuggestion(CrmCustomerEntity customer) {
+    if (!StringUtils.hasText(customer.getBasicInfoSuggestionJson())) {
+      return null;
+    }
+    try {
+      Map<String, Object> payload = objectMapper.readValue(
+          customer.getBasicInfoSuggestionJson(), new TypeReference<Map<String, Object>>() {});
+      return new BasicInfoSuggestion(
+          asString(payload.get("remarkName")),
+          asString(payload.get("phone")),
+          asString(payload.get("gender")),
+          asString(payload.get("source")),
+          asString(payload.get("remark")),
+          asString(payload.get("evidence")),
+          asInteger(payload.get("confidence")),
+          customer.getBasicInfoSuggestionUpdatedAt());
+    } catch (Exception ex) {
+      log.warn("解析智能销售基础资料草稿失败，忽略 customer={} json={}",
+          customer.getId(), customer.getBasicInfoSuggestionJson(), ex);
+      return null;
+    }
+  }
+
+  private void validateGender(String gender) {
+    if (!StringUtils.hasText(gender)) {
+      return;
+    }
+    if (!SmartSalesConstants.VALID_GENDERS.contains(gender)) {
+      throw new TransitException(ErrorCode.BAD_REQUEST, "客户性别不合法");
     }
   }
 
@@ -316,5 +417,20 @@ public class SmartSalesCustomerService {
           .collect(Collectors.toList());
     }
     return List.of();
+  }
+
+  private Integer asInteger(Object value) {
+    if (value instanceof Number number) {
+      return number.intValue();
+    }
+    String text = asString(value);
+    if (!StringUtils.hasText(text)) {
+      return null;
+    }
+    try {
+      return Integer.parseInt(text);
+    } catch (NumberFormatException ex) {
+      return null;
+    }
   }
 }
