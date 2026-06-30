@@ -52,8 +52,7 @@ function SalesInsightSection({ profile }: { profile: CustomerProfile }) {
     { label: '预算描述', value: displaySalesValue(profile.budgetDesc) },
     { label: '购买时间', value: displaySalesValue(profile.timeDesc) },
     { label: '核心痛点', value: displaySalesValue(profile.painPoints) },
-    { label: '提及竞品', value: displaySalesValue(profile.competitors) },
-    { label: '最近事件', value: displaySalesValue(latestEventText(profile.latestEvent)) }
+    { label: '提及竞品', value: displaySalesValue(profile.competitors) }
   ]
 
   return (
@@ -93,18 +92,6 @@ function levelText(level: string | null): string {
   if (v === 'medium' || v === 'mid') return '中'
   if (v === 'low') return '低'
   return '未知'
-}
-
-function latestEventText(value: string | null): string | null {
-  if (!value) return null
-  const normalized = value.toLowerCase()
-  if (normalized === 'price') return '询价'
-  if (normalized === 'demo') return '预约演示'
-  if (normalized === 'trial') return '试用咨询'
-  if (normalized === 'refusal') return '明确拒绝'
-  if (normalized === 'objection') return '提出异议'
-  if (normalized === 'handoff') return '转人工跟进'
-  return value
 }
 
 function displaySalesValue(value: string | null): string {

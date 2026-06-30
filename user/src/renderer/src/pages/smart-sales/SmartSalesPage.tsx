@@ -349,7 +349,6 @@ function CustomerListTab({
               <th>意向</th>
               <th>阶段</th>
               <th>标签</th>
-              <th>最近事件</th>
               <th>最后沟通</th>
               <th>星标</th>
             </tr>
@@ -357,13 +356,13 @@ function CustomerListTab({
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className={styles.loading}>
+                <td colSpan={6} className={styles.loading}>
                   正在加载...
                 </td>
               </tr>
             ) : list.length === 0 ? (
               <tr>
-                <td colSpan={7} className={styles.emptyCell}>
+                <td colSpan={6} className={styles.emptyCell}>
                   暂无客户数据
                 </td>
               </tr>
@@ -414,7 +413,6 @@ function CustomerListTab({
                       <span className={styles.unknownTag}>无</span>
                     )}
                   </td>
-                  <td className={styles.summaryCell}>{item.latestEvent || '—'}</td>
                   <td>{formatTime(item.lastChatTime)}</td>
                   <td
                     className={`${styles.starCell} ${
