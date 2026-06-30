@@ -304,10 +304,6 @@ export default function CustomerProfileDetail({
               </span>
             </div>
             <div className={styles.headerMeta}>
-              <span>联系人：{profile.contactKey}</span>
-              {profile.phone && <span>电话：{profile.phone}</span>}
-              <span>性别：{genderLabel(profile.gender)}</span>
-              <span>来源：{sourceLabel(profile.source)}</span>
               <span>最后沟通：{formatTime(profile.lastChatTime)}</span>
             </div>
           </div>
