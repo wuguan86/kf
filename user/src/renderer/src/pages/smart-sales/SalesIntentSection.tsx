@@ -3,19 +3,16 @@ import { CustomerProfile } from '../../api/smartSales'
 
 export default function SalesIntentSection({ profile }: { profile: CustomerProfile }): JSX.Element {
   return (
-    <>
-      <h2 className={styles.cardTitle}>意向评分</h2>
-      <div className={styles.scoreRow}>
-        <span className={styles.scoreLabel}>总评分</span>
-        <div className={styles.scoreBarWrap}>
-          <div
-            className={styles.scoreBar}
-            style={{ width: `${Math.min(100, (profile.totalScore || 0))}%` }}
-          />
+    <section className={styles.panel}>
+      <div className={styles.intentSummary}>
+        <div>
+          <h2 className={styles.cardTitle}>销售判断</h2>
+          <div className={styles.intentHint}>根据会话内容提取预算、需求和推进时机。</div>
         </div>
-        <span className={styles.scoreValue}>
-          <span className={styles.totalScore}>{profile.totalScore ?? '—'}</span>
-        </span>
+        <div className={styles.intentScore}>
+          <span>{profile.totalScore ?? '—'}</span>
+          <small>总评分</small>
+        </div>
       </div>
       <ScoreBar label="需求强度" level={profile.demandLevel} />
       <ScoreBar label="预算" level={profile.budgetLevel} />
@@ -33,7 +30,7 @@ export default function SalesIntentSection({ profile }: { profile: CustomerProfi
           <div className={styles.aiText}>{profile.aiReason}</div>
         </div>
       )}
-    </>
+    </section>
   )
 }
 

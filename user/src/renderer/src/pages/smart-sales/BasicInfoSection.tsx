@@ -39,7 +39,7 @@ export default function BasicInfoSection({ profile, saving, onConfirm }: Props):
   }
 
   return (
-    <div className={styles.basicInfoBlock}>
+    <section className={styles.panel}>
       <div className={styles.sectionHeader}>
         <h2 className={styles.cardTitle}>基础资料</h2>
         {profile.basicInfoSuggestion && (
@@ -122,7 +122,7 @@ export default function BasicInfoSection({ profile, saving, onConfirm }: Props):
       ) : (
         <div className={styles.aiEmpty}>暂无待确认基础资料，重新生成 AI 画像后可能产生草稿。</div>
       )}
-    </div>
+    </section>
   )
 }
 

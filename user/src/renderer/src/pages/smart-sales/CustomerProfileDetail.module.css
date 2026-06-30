@@ -2,7 +2,7 @@
   padding: 0 32px 32px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
 .backBar {
@@ -30,7 +30,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: #fff;
-  padding: 20px 24px;
+  padding: 18px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -199,6 +199,29 @@
   gap: 16px;
 }
 
+.contentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.9fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.insightColumn,
+.activityColumn {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: #fff;
+  padding: 18px 20px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+}
+
 .card {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
@@ -208,7 +231,7 @@
 }
 
 .cardTitle {
-  margin: 0 0 14px;
+  margin: 0;
   font-size: 16px;
   color: var(--text-main);
   font-weight: 600;
@@ -222,7 +245,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .basicInfoBlock {
@@ -234,18 +257,18 @@
 .basicInfoGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  column-gap: 24px;
+  row-gap: 12px;
 }
 
 .basicInfoItem {
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  background: #f8fafc;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid #eef2f7;
 }
 
 .suggestionBadge {
@@ -260,7 +283,7 @@
 .suggestionPanel {
   margin-top: 12px;
   padding: 12px;
-  border: 1px solid #d6e4ff;
+  border: 1px solid #bfdbfe;
   border-radius: 8px;
   background: #f8fbff;
 }
@@ -339,11 +362,11 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-top: 12px;
 }
 
 .scoreLabel {
-  width: 80px;
+  width: 86px;
   font-size: 13px;
   color: var(--text-secondary);
 }
@@ -351,14 +374,14 @@
 .scoreBarWrap {
   flex: 1;
   background: #f1f5f9;
-  border-radius: 6px;
-  height: 18px;
+  border-radius: 999px;
+  height: 12px;
   overflow: hidden;
 }
 
 .scoreBar {
   height: 100%;
-  border-radius: 6px;
+  border-radius: 999px;
   background: linear-gradient(90deg, #52c41a, #1677ff);
 }
 
@@ -376,12 +399,46 @@
   margin-right: 8px;
 }
 
+.intentSummary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 2px;
+}
+
+.intentHint {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.intentScore {
+  min-width: 82px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: #1677ff;
+}
+
+.intentScore span {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.intentScore small {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .salesInsightBlock {
   margin-top: 14px;
   padding: 14px;
-  border: 1px solid #d6e4ff;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
-  background: #f8fbff;
+  background: #f8fafc;
 }
 
 .salesInsightHeader {
@@ -424,11 +481,15 @@
 }
 
 .aiBlock {
-  background: linear-gradient(135deg, #f0f7ff, #f6f0ff);
-  border: 1px solid #d6e4ff;
-  border-radius: 10px;
-  padding: 14px 16px;
+  background: #f8fbff;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 12px 14px;
   margin-top: 12px;
+}
+
+.aiProfilePanel {
+  background: #fbfcff;
 }
 
 .aiLabel {
@@ -441,6 +502,9 @@
   background: rgba(114, 46, 209, 0.1);
   padding: 2px 8px;
   border-radius: 4px;
+}
+
+.aiBlock .aiLabel {
   margin-bottom: 8px;
 }
 
@@ -472,7 +536,6 @@
 
 .tagManageBtn {
   height: 30px;
-  margin: -4px 0 12px;
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   background: #fff;
@@ -514,6 +577,14 @@
   flex-wrap: wrap;
 }
 
+.tagTools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #eef2f7;
+}
+
 .tagInput {
   height: 30px;
   padding: 0 10px;
@@ -541,16 +612,21 @@
 .timeline {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-height: 380px;
+  gap: 0;
+  max-height: 520px;
   overflow-y: auto;
+}
+
+.timelinePanel {
+  display: flex;
+  flex-direction: column;
 }
 
 .timelineItem {
   display: flex;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px dashed var(--border-subtle);
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid #eef2f7;
 }
 
 .timelineItem:last-child {
@@ -566,6 +642,14 @@
 
 .timelineBody {
   flex: 1;
+  min-width: 0;
+}
+
+.timelineMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .timelineType {
@@ -573,7 +657,6 @@
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 11px;
-  margin-right: 6px;
   background: #eef2ff;
   color: #3730a3;
 }
@@ -590,16 +673,15 @@
 .timelineAi {
   font-size: 11px;
   color: #722ed1;
-  margin-left: 4px;
 }
 
 .followUpForm {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 12px;
+  margin-top: 14px;
   padding: 12px;
-  background: #f7f9fc;
+  background: #f8fafc;
   border-radius: 8px;
   border: 1px solid var(--border-subtle);
 }
@@ -624,6 +706,11 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.inlineLabel {
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .empty {
@@ -661,7 +748,8 @@
 }
 
 @media (max-width: 1100px) {
-  .grid {
+  .grid,
+  .contentGrid {
     grid-template-columns: 1fr;
   }
 }
@@ -674,5 +762,16 @@
 
   .salesInsightGrid {
     grid-template-columns: 1fr;
+  }
+
+  .headerCard,
+  .intentSummary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .headerActions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }

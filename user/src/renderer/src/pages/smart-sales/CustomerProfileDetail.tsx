@@ -360,9 +360,9 @@ export default function CustomerProfileDetail({
         </div>
       )}
 
-      <div className={styles.grid}>
-        {/* 左列：意向评分 + AI 画像 */}
-        <div className={styles.card}>
+      <div className={styles.contentGrid}>
+        {/* 左列：客户事实 + 销售判断 + AI 画像 */}
+        <div className={styles.insightColumn}>
           <BasicInfoSection
             profile={profile}
             saving={savingBasicInfo}
@@ -378,8 +378,8 @@ export default function CustomerProfileDetail({
           />
         </div>
 
-        {/* 右列：标签 + 跟进时间线 */}
-        <div className={styles.card}>
+        {/* 右列：标签 + 跟进时间线 + 跟进操作 */}
+        <div className={styles.activityColumn}>
           <CustomerFollowUpPanel
             customerTags={customerTags}
             unselectedTags={unselectedTags}

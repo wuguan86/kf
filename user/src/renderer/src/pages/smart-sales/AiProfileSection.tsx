@@ -39,7 +39,7 @@ export default function AiProfileSection({
   }
 
   return (
-    <div className={styles.aiBlock}>
+    <section className={`${styles.panel} ${styles.aiProfilePanel}`}>
       <div className={styles.sectionHeader}>
         <span className={styles.aiLabel}>AI 沟通辅助画像</span>
         {aiProfile?.updatedAt && (
@@ -90,7 +90,7 @@ export default function AiProfileSection({
           </div>
         </>
       )}
-    </div>
+    </section>
   )
 }
 
