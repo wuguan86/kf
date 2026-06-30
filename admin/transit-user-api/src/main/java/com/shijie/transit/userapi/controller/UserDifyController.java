@@ -450,7 +450,7 @@ public class UserDifyController {
                     emitter.completeWithError(new IllegalArgumentException("Invalid request"));
                     return;
                 }
-                emitter.send(SseEmitter.event().data(new StepMsg("VISION", "正在识别微信截图里的最新客户消息。")));
+                emitter.send(SseEmitter.event().data(new StepMsg("VISION", "正在识别最新客户消息。")));
                 WechatReplyTriggerResult trigger = wechatVisionService.parseReplyTrigger(new WechatVisionParseRequest(
                         request.imageDataUrl(),
                         request.windowTitle(),
@@ -540,7 +540,7 @@ public class UserDifyController {
         String question = effectiveMessage.length() > 20 ? effectiveMessage.substring(0, 20) + "..." : effectiveMessage;
         String contactName = resolveContactDisplayName(request);
         emitter.send(SseEmitter.event().data(new StepMsg("INTENT",
-                "正在分析微信截图... 识别到客户 “" + contactName + "” 的消息： “" + question + "”，正在按【" + role.getName() + "】角色逻辑进行思考和回复。")));
+                "正在分析... 识别到客户 “" + contactName + "” 的消息： “" + question + "”，正在按【" + role.getName() + "】角色逻辑进行思考和回复。")));
 
         String sceneType = "SINGLE";
         if ("GROUP".equalsIgnoreCase(request.roomType())) {

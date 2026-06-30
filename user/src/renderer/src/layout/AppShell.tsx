@@ -180,7 +180,7 @@ function AppShell(props: Props): JSX.Element {
             onClick={() => handleNavClick('smart-sales')}
           >
             <span className={styles.navIcon}>
-              <svg className={styles.navIconSvg} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+              <svg className={styles.navIconSvg} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 20a6 6 0 0 0-12 0"/><circle cx="9" cy="7" r="4"/><path d="M14 14h7v7"/><path d="m14 21 7-7"/></svg>
             </span>
             <span className={styles.navLabel}>智能销售</span>
           </div>
