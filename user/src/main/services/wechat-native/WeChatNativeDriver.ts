@@ -2864,7 +2864,8 @@ export class WeChatNativeDriver {
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {
     const previousScreenshotPng = this.lastScreenshotPng
     let screenshot = await captureWeChatWindow(window)
-    window.scaleFactor = screenshot.scaleFactor
+    // 截图裁剪坐标与 Win32 窗口坐标同尺度，未读会话点击必须沿用该比例，避免 125% 显示缩放下重复换算。
+    window.scaleFactor = screenshot.scaleFactor || 1
     await saveVisionDebugImage({
       stage: 'window',
       image: screenshot,
@@ -2897,7 +2898,6 @@ export class WeChatNativeDriver {
       currentChatRegionResult.region,
       CURRENT_CHAT_REGION_CHANGE_RATIO
     )
-    this.lastScreenshotPng = screenshot.png
     this.latestSnapshotFromUnreadSwitch = false
     const shouldRetryFailedVision = this.consecutiveVisionFailures > 0
     const minorCurrentChatChangeRatio = this.shouldUseBackendScreenshotReplyStream()
@@ -2908,13 +2908,30 @@ export class WeChatNativeDriver {
       currentChatDiff.changedRatio >= minorCurrentChatChangeRatio
     const shouldParseCurrentChatChange = currentChatDiff.changed || shouldParseMinorCurrentChatChange
     let switchedUnreadConversation = false
+    if (shouldParseCurrentChatChange && this.shouldUseBackendScreenshotReplyStream() && this.activeReplySessionKey) {
+      console.info('当前会话仍在回复中，已跳过本轮截图自动回复触发', {
+        activeReplySessionKey: this.activeReplySessionKey,
+        digest: currentChatDiff.digest,
+        changedRatio: currentChatDiff.changedRatio
+      })
+      return null
+    }
+    this.lastScreenshotPng = screenshot.png
     if (shouldParseMinorCurrentChatChange) {
       console.info('检测到当前聊天轻微变化，按短消息气泡处理并请求视觉解析', {
         digest: currentChatDiff.digest,
         changedRatio: currentChatDiff.changedRatio
       })
     }
-    if (!shouldParseCurrentChatChange) {
+    const shouldScanUnreadBeforeParsing = !shouldParseCurrentChatChange ||
+      (shouldParseMinorCurrentChatChange && this.shouldUseBackendScreenshotReplyStream())
+    if (shouldScanUnreadBeforeParsing) {
+      if (shouldParseMinorCurrentChatChange) {
+        console.info('个人微信后端截图流检测到轻微聊天区变化，先扫描未读红点再决定是否触发截图识别', {
+          digest: currentChatDiff.digest,
+          changedRatio: currentChatDiff.changedRatio
+        })
+      }
       const unreadCandidates = findUnreadConversationCandidates(screenshot, window, this.channel)
       this.cleanupStartupUnreadCandidateBaseline(unreadCandidates)
       const candidate = unreadCandidates.find((item) => {
@@ -2952,7 +2969,7 @@ export class WeChatNativeDriver {
               await wait(settleMs)
               const previousPng = screenshot.png
               screenshot = await captureWeChatWindow(window)
-              window.scaleFactor = screenshot.scaleFactor
+              window.scaleFactor = screenshot.scaleFactor || 1
               diff = comparePngSnapshots(previousPng, screenshot.png)
               currentChatRegionResult = this.buildCurrentChatSnapshotRegion(window, screenshot)
               await this.saveCurrentChatRegionDebugImage(screenshot, window, currentChatRegionResult.region, {

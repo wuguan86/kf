@@ -146,6 +146,53 @@ class UserDifyControllerTest {
   }
 
   @Test
+  void monitorChatScreenshotStreamSkipsDuplicateVisionMessage() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    RoleEntity role = role("");
+    RecordingWechatAutoReplyModelService autoReplyModelService = new RecordingWechatAutoReplyModelService(objectMapper);
+    FakeWechatVisionService visionService = new FakeWechatVisionService(objectMapper,
+        new WechatReplyTriggerResult(true, "夏天", "快到中午了。", "", "SINGLE", "NORMAL", 0.96D, ""));
+    UserDifyController controller = controller(
+        objectMapper,
+        new RecordingDifyClient(objectMapper),
+        role,
+        new FakeRoleKnowledgeBaseService(),
+        new FakeKnowledgeBaseService(objectMapper),
+        null,
+        null,
+        autoReplyModelService,
+        visionService);
+
+    SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+        new TransitPrincipal(1L, 1L, "USER"), null));
+    try {
+      UserDifyController.MonitorChatScreenshotRequest request = new UserDifyController.MonitorChatScreenshotRequest(
+          10L,
+          "",
+          "夏天",
+          "夏天",
+          "SINGLE",
+          DifyClient.ASSISTANT_MODE_CUSTOMER_SERVICE,
+          "data:image/png;base64,AAAA",
+          "微信");
+
+      controller.monitorChatScreenshotStream(request);
+      for (int i = 0; i < 50 && autoReplyModelService.requestCount == 0; i++) {
+        Thread.sleep(20);
+      }
+      controller.monitorChatScreenshotStream(request);
+      for (int i = 0; i < 50 && visionService.parseCount < 2; i++) {
+        Thread.sleep(20);
+      }
+
+      assertEquals(2, visionService.parseCount);
+      assertEquals(1, autoReplyModelService.requestCount);
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
   void monitorChatScreenshotStreamPrefersVisionContactWhenRequestContactIsGenericWechat() throws Exception {
     ObjectMapper objectMapper = new ObjectMapper();
     RoleEntity role = role("");
@@ -606,6 +653,7 @@ class UserDifyControllerTest {
 
   private static class RecordingWechatAutoReplyModelService extends WechatAutoReplyModelService {
     AutoReplyRequest request;
+    int requestCount;
 
     RecordingWechatAutoReplyModelService(ObjectMapper objectMapper) {
       super(objectMapper, RestClient.builder(), Clock.systemDefaultZone(), "sk-test", "https://dashscope.aliyuncs.com", "qwen-plus");
@@ -613,6 +661,7 @@ class UserDifyControllerTest {
 
     @Override
     public String generateReply(AutoReplyRequest request) {
+      requestCount++;
       this.request = request;
       return "自动回复结果";
     }

@@ -7,6 +7,7 @@ import { getMomentsEntryPoint } from './momentsEntryPoint'
 import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
 import { getMessageInputClickPoint } from './messageInputPoint'
 import { toPhysicalScreenPoint } from './screenPoint'
+import { getUnreadConversationClickPoint } from './unreadConversationClickPoint'
 
 type Win32Api = {
   setForegroundWindow: (hwnd: number) => boolean
@@ -153,12 +154,17 @@ export const createWin32InputBackend = (): WeChatInputBackend => {
 
     async clickConversationCandidate(bounds: WindowBounds, candidate: UnreadConversationCandidate): Promise<boolean> {
       const api = loadWin32Api()
+      const conversationPoint = getUnreadConversationClickPoint(bounds, candidate)
+      const physicalConversationPoint = toPhysicalScreenPoint(bounds, conversationPoint)
       await focusWindow(api, bounds.hwnd)
-      await clickAt(api, candidate.centerX, candidate.centerY)
+      await clickAt(api, physicalConversationPoint.x, physicalConversationPoint.y)
       console.info('原生输入后端已点击未读会话', {
         candidateId: candidate.id,
-        clickX: candidate.centerX,
-        clickY: candidate.centerY,
+        logicalClickX: conversationPoint.x,
+        logicalClickY: conversationPoint.y,
+        clickX: physicalConversationPoint.x,
+        clickY: physicalConversationPoint.y,
+        scaleFactor: bounds.scaleFactor,
         score: candidate.score
       })
       return true

@@ -389,6 +389,45 @@ function testMessageInputBackendsNormalizeClickPointBeforeNativeInput() {
   assert.match(powerShellPasteSource, /toPhysicalScreenPoint\(bounds,\s*sendPoint\)/)
 }
 
+function testUnreadConversationClickBackendsNormalizeClickPointBeforeNativeInput() {
+  const win32Source = readFileSync(resolve('src/main/services/wechat-native/win32InputBackend.ts'), 'utf8')
+  const powerShellSource = readFileSync(resolve('src/main/services/wechat-native/powerShellInputBackend.ts'), 'utf8')
+  const win32ClickSource = win32Source.slice(win32Source.indexOf('async clickConversationCandidate'), win32Source.indexOf('async exitConversationToList'))
+  const powerShellClickSource = powerShellSource.slice(powerShellSource.indexOf('async clickConversationCandidate'), powerShellSource.indexOf('async exitConversationToList'))
+
+  assert.match(win32ClickSource, /toPhysicalScreenPoint\(bounds,\s*conversationPoint\)/)
+  assert.match(powerShellClickSource, /toPhysicalScreenPoint\(bounds,\s*conversationPoint\)/)
+}
+
+function testUnreadConversationClickPointTargetsRowBodyInsteadOfRedBadge() {
+  const { getUnreadConversationClickPoint } = loadWechatNativeModule('unreadConversationClickPoint.ts')
+  const scaledWindow = {
+    ...testWindow,
+    x: 125,
+    y: 76,
+    width: 772,
+    height: 771,
+    scaleFactor: 1.25
+  }
+  const unreadBadgeCandidate = {
+    id: 'unread-summer',
+    x: 232,
+    y: 164,
+    width: 14,
+    height: 14,
+    centerX: 239,
+    centerY: 171,
+    score: 28
+  }
+
+  const point = getUnreadConversationClickPoint(scaledWindow, unreadBadgeCandidate)
+
+  assert.ok(point.x >= unreadBadgeCandidate.centerX + 40)
+  assert.ok(point.x < scaledWindow.x + scaledWindow.width * 0.38 - 24)
+  assert.ok(point.y >= unreadBadgeCandidate.centerY + 24)
+  assert.ok(point.y <= unreadBadgeCandidate.centerY + 36)
+}
+
 function testTextInputBackendsKeepClipboardLongEnoughForWechatPaste() {
   const win32Source = readFileSync(resolve('src/main/services/wechat-native/win32InputBackend.ts'), 'utf8')
   const powerShellSource = readFileSync(resolve('src/main/services/wechat-native/powerShellInputBackend.ts'), 'utf8')
@@ -399,6 +438,14 @@ function testTextInputBackendsKeepClipboardLongEnoughForWechatPaste() {
   assert.match(powerShellPasteSource, /WECHAT_TEXT_PASTE_SETTLE_MS/)
   assert.match(win32PasteSource, /WECHAT_TEXT_SEND_SETTLE_MS/)
   assert.match(powerShellPasteSource, /WECHAT_TEXT_SEND_SETTLE_MS/)
+}
+
+function testWechatNativeDriverUsesScreenshotScaleForUnreadClickPath() {
+  const driverSource = readFileSync(resolve('src/main/services/wechat-native/WeChatNativeDriver.ts'), 'utf8')
+  const readSnapshotSource = driverSource.slice(driverSource.indexOf('private async readSnapshotIfChanged'), driverSource.indexOf('private normalizeBackendSnapshot'))
+
+  assert.match(readSnapshotSource, /window\.scaleFactor\s*=\s*screenshot\.scaleFactor\s*\|\|\s*1/)
+  assert.doesNotMatch(readSnapshotSource, /window\.scaleFactor\s*=\s*getWindowScreenScaleFactor\(window\)/)
 }
 
 await testUsesNativeBackendFirstOnWindows()
@@ -420,4 +467,7 @@ testMessageInputPointFollowsResizedWindowBounds()
 testScreenPointKeepsPointWhenDisplayScaleIsOne()
 testScreenPointConvertsWindowPointToPhysicalPointForScaledDisplay()
 testMessageInputBackendsNormalizeClickPointBeforeNativeInput()
+testUnreadConversationClickBackendsNormalizeClickPointBeforeNativeInput()
+testUnreadConversationClickPointTargetsRowBodyInsteadOfRedBadge()
 testTextInputBackendsKeepClipboardLongEnoughForWechatPaste()
+testWechatNativeDriverUsesScreenshotScaleForUnreadClickPath()

@@ -7,6 +7,7 @@ import { getMomentsEntryPoint } from './momentsEntryPoint'
 import { getMarketingCommentSendPoint } from './marketingCommentSendPoint'
 import { getMessageInputClickPoint, getMessageSendButtonPoint } from './messageInputPoint'
 import { toPhysicalScreenPoint } from './screenPoint'
+import { getUnreadConversationClickPoint } from './unreadConversationClickPoint'
 
 const WECHAT_TEXT_PASTE_SETTLE_MS = 520
 const WECHAT_TEXT_SEND_SETTLE_MS = 320
@@ -176,8 +177,10 @@ Start-Sleep -Milliseconds 160
     },
 
     async clickConversationCandidate(bounds: WindowBounds, candidate: UnreadConversationCandidate): Promise<boolean> {
-      const clickX = Math.round(candidate.centerX + Math.random() * 10 - 5)
-      const clickY = Math.round(candidate.centerY + Math.random() * 10 - 5)
+      const conversationPoint = getUnreadConversationClickPoint(bounds, candidate)
+      const physicalConversationPoint = toPhysicalScreenPoint(bounds, conversationPoint)
+      const clickX = Math.round(physicalConversationPoint.x + Math.random() * 10 - 5)
+      const clickY = Math.round(physicalConversationPoint.y + Math.random() * 10 - 5)
       const script = `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms
@@ -215,8 +218,11 @@ Start-Sleep -Milliseconds (Get-Random -Minimum 45 -Maximum 105)
       await runPowerShell(script, 8000)
       console.info('PowerShell 输入后端已点击未读会话', {
         candidateId: candidate.id,
+        logicalClickX: conversationPoint.x,
+        logicalClickY: conversationPoint.y,
         clickX,
         clickY,
+        scaleFactor: bounds.scaleFactor,
         score: candidate.score
       })
       return true

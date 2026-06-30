@@ -55,8 +55,10 @@ import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -70,6 +72,8 @@ public class UserDifyController {
     private static final Pattern IMAGE_DATA_URL_PATTERN = Pattern.compile("^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", Pattern.DOTALL);
     private static final int MAX_IMAGE_BYTES = 10 * 1024 * 1024;
     private static final long DIFY_WAIT_HEARTBEAT_MS = 15000L;
+    private static final long SCREENSHOT_REPLY_DEDUP_TTL_MS = 120_000L;
+    private static final int MAX_SCREENSHOT_REPLY_DEDUP_KEYS = 1000;
     private final DifyClient difyClient;
     private final DifyContactConversationMappingService contactConversationMappingService;
     private final RoleService roleService;
@@ -85,6 +89,7 @@ public class UserDifyController {
     private final WechatVisionService wechatVisionService;
     private final DifyProperties difyProperties;
     private final ObjectMapper objectMapper;
+    private final Map<String, Long> recentScreenshotReplyKeys = new ConcurrentHashMap<>();
 
     public UserDifyController(
             DifyClient difyClient,
@@ -468,6 +473,15 @@ public class UserDifyController {
                 }
                 String screenshotContact = resolveScreenshotContactKey(request, trigger);
                 String screenshotDisplayName = resolveScreenshotContactDisplayName(request, trigger, screenshotContact);
+                String dedupKey = buildScreenshotReplyDedupKey(principal.subjectId(), request.roleId(), screenshotContact, latestMessage, trigger.imageSummary());
+                if (isDuplicateScreenshotReply(dedupKey)) {
+                    log.info("monitorChatScreenshotStream 命中重复客户消息，已跳过二次回复 traceId={} contact={} latestMessage={}",
+                            streamTraceId, screenshotContact, latestMessage);
+                    emitter.send(SseEmitter.event().data(new StepMsg("LOGIC", "识别到同一客户消息正在处理或已处理，已跳过本次重复回复。")));
+                    emitter.complete();
+                    return;
+                }
+                markScreenshotReplyDedupKey(dedupKey);
                 MonitorChatRequest monitorRequest = new MonitorChatRequest(
                         request.roleId(),
                         latestMessage,
@@ -679,6 +693,43 @@ public class UserDifyController {
         emitter.send(SseEmitter.event().data(new StepMsg("OUTPUT", answer)));
         log.info("monitorChatStream 编排完成 traceId={}", streamTraceId);
         emitter.complete();
+    }
+
+    private boolean isDuplicateScreenshotReply(String dedupKey) {
+        cleanupScreenshotReplyDedupKeys();
+        Long markedAt = recentScreenshotReplyKeys.get(dedupKey);
+        return markedAt != null && System.currentTimeMillis() - markedAt < SCREENSHOT_REPLY_DEDUP_TTL_MS;
+    }
+
+    private void markScreenshotReplyDedupKey(String dedupKey) {
+        cleanupScreenshotReplyDedupKeys();
+        recentScreenshotReplyKeys.put(dedupKey, System.currentTimeMillis());
+        if (recentScreenshotReplyKeys.size() <= MAX_SCREENSHOT_REPLY_DEDUP_KEYS) {
+            return;
+        }
+        recentScreenshotReplyKeys.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue())
+                .limit(Math.max(1, recentScreenshotReplyKeys.size() - MAX_SCREENSHOT_REPLY_DEDUP_KEYS))
+                .map(Map.Entry::getKey)
+                .forEach(recentScreenshotReplyKeys::remove);
+    }
+
+    private void cleanupScreenshotReplyDedupKeys() {
+        long now = System.currentTimeMillis();
+        recentScreenshotReplyKeys.entrySet().removeIf(entry -> now - entry.getValue() >= SCREENSHOT_REPLY_DEDUP_TTL_MS);
+    }
+
+    private String buildScreenshotReplyDedupKey(Long userId, Long roleId, String contact, String latestMessage, String imageSummary) {
+        // 截图流每次截图摘要都会变化，按真实客户文本做短期幂等，避免己方回复落屏后再次触发同一条消息。
+        return normalizeDedupPart(userId) + "|"
+                + normalizeDedupPart(roleId) + "|"
+                + normalizeDedupPart(contact) + "|"
+                + normalizeDedupPart(latestMessage) + "|"
+                + normalizeDedupPart(imageSummary);
+    }
+
+    private String normalizeDedupPart(Object value) {
+        return String.valueOf(value == null ? "" : value).replaceAll("\\s+", " ").trim();
     }
 
     @GetMapping(value = "/datasets/{datasetId}/documents/{documentId}", produces = MediaType.APPLICATION_JSON_VALUE)

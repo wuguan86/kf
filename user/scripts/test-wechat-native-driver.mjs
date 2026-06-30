@@ -2059,6 +2059,108 @@ async function testPersonalScreenshotCandidateTriggersForTinyCurrentChatChange()
   assert.equal(result.messages[0].trigger_reply, true)
 }
 
+async function testPersonalBackendScreenshotStreamClicksUnreadBeforeTinyCurrentChatChange() {
+  let captureCount = 0
+  const clickedCandidates = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=unread-before-tiny-change-${captureCount}`,
+        png: Buffer.from(`unread-before-tiny-change-window-${captureCount}`),
+        width: 900,
+        height: 700,
+        scaleFactor: 1
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: `digest-unread-before-tiny-change-${captureCount}`, changedRatio: 0.001 }),
+    comparePngSnapshotRegion: () => ({ changed: false, digest: `digest-unread-before-tiny-chat-${captureCount}`, changedRatio: 0.001 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-summer',
+      x: 82,
+      y: 132,
+      width: 14,
+      height: 14,
+      centerX: 89,
+      centerY: 139,
+      score: 16
+    }],
+    recognizeUnreadConversationCandidate: async () => ({
+      contact: '夏天',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL',
+      skipAutoReply: false,
+      skipReason: '',
+      confidence: 0.96
+    }),
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('full chat parse should not run for personal backend screenshot stream')
+    },
+    parseWeChatReplyTriggerWithVision: async () => {
+      throw new Error('personal reply trigger parse should be handled by backend unified stream')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  driver.configure({ backendBaseUrl: 'http://127.0.0.1:18080', token: 'token', tenantId: '1', channel: 'personal' })
+  await driver.start()
+  disableStartupBaselineForTest(driver)
+  driver.seenMessageFingerprints.add('existing-baseline')
+  const result = await driver.poll()
+
+  assert.deepEqual(clickedCandidates, ['unread-summer'])
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].contact, '夏天')
+  assert.equal(result.messages[0].screenshot_data_url, 'data:image/png;base64=unread-before-tiny-change-2')
+  assert.equal(result.messages[0].trigger_reply, true)
+}
+
+async function testPersonalScreenshotCandidateIsSkippedDuringActiveReplySession() {
+  let captureCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=active-reply-${captureCount}`,
+        png: Buffer.from(`active-reply-window-${captureCount}`),
+        width: 900,
+        height: 700,
+        scaleFactor: 1
+      }
+    },
+    comparePngSnapshots: () => ({ changed: false, digest: `active-reply-digest-${captureCount}`, changedRatio: 0.001 }),
+    comparePngSnapshotRegion: () => ({ changed: false, digest: `active-reply-chat-${captureCount}`, changedRatio: 0.001 }),
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('full chat parse should not run for personal screenshot candidates')
+    },
+    parseWeChatReplyTriggerWithVision: async () => {
+      throw new Error('personal reply trigger parse should be handled by backend unified stream')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  driver.configure({ backendBaseUrl: 'http://127.0.0.1:18080', token: 'token', tenantId: '1', channel: 'personal' })
+  await driver.start()
+  disableStartupBaselineForTest(driver)
+  driver.seenMessageFingerprints.add('existing-baseline')
+  const firstResult = await driver.poll()
+  await driver.command({ action: 'reply_session_started', sessionKey: '微信' })
+  driver.lastPollAt = 0
+  const secondResult = await driver.poll()
+
+  assert.equal(firstResult.messages.length, 1)
+  assert.equal(firstResult.messages[0].trigger_reply, true)
+  assert.equal(secondResult.messages.length, 0)
+}
+
 async function testReplyTriggerRecognitionCreatesSingleAutoReplyMessage() {
   let triggerParseCount = 0
   const { WeChatNativeDriver } = loadNativeDriver({
@@ -5187,6 +5289,8 @@ await testRepeatedCustomerMessageInSameVisionResultIsReportedOnce()
 await testCustomerMessageCanTriggerAfterGeometryBecomesReliable()
 await testPersonalChannelEmitsScreenshotCandidateWithoutMainVisionReplyParse()
 await testPersonalScreenshotCandidateTriggersForTinyCurrentChatChange()
+await testPersonalBackendScreenshotStreamClicksUnreadBeforeTinyCurrentChatChange()
+await testPersonalScreenshotCandidateIsSkippedDuringActiveReplySession()
 await testReplyTriggerRecognitionCreatesSingleAutoReplyMessage()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()
