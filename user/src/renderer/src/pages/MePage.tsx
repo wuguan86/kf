@@ -6,6 +6,8 @@ import { PaymentModal } from '../components/PaymentModal'
 import { eventBus } from '../utils/eventBus'
 import { buildAvatarSrc } from './mePageUtils'
 
+const showSubscriptionPlanSection = false
+
 type Props = {
   backendBaseUrl: string
   tenantId: string
@@ -141,7 +143,13 @@ function MePage(props: Props): JSX.Element {
           setMembership(null)
         }
 
-        // Fetch Plans (Public endpoint)
+        // 订阅计划暂时不展示时，不请求套餐列表，避免页面产生无意义的购买数据加载。
+        if (!showSubscriptionPlanSection) {
+          setMonthlyPlans([])
+          setPointPlans([])
+          return
+        }
+
         try {
             const plans = await http.get<MembershipPlan[]>('/api/user/membership/plans', { headers })
             
@@ -452,114 +460,116 @@ function MePage(props: Props): JSX.Element {
           </div>
         </div>
 
-        {/* Pricing Section */}
-        <div className={styles.pricingSection}>
-          <div className={styles.sectionHeader}>
-            <h3 className={styles.sectionTitle}>订阅计划</h3>
-            <div className={styles.pricingTabs}>
-              <button 
-                className={`${styles.tabBtn} ${activeTab === 'monthly' ? styles.active : ''}`}
-                onClick={() => setActiveTab('monthly')}
-              >
-                会员计划
-              </button>
-              <button 
-                className={`${styles.tabBtn} ${activeTab === 'points' ? styles.active : ''}`}
-                onClick={() => setActiveTab('points')}
-              >
-                积分加油包
-              </button>
-            </div>
-          </div>
-
-          {activeTab === 'monthly' && (
-            <div className={styles.billingToggleWrapper}>
-              <div className={styles.billingToggle}>
+        {showSubscriptionPlanSection && (
+          /* 临时屏蔽订阅计划展示，只保留个人资料和邀请码兑换入口。 */
+          <div className={styles.pricingSection}>
+            <div className={styles.sectionHeader}>
+              <h3 className={styles.sectionTitle}>订阅计划</h3>
+              <div className={styles.pricingTabs}>
                 <button 
-                  className={`${styles.toggleBtn} ${billingCycle === 'MONTHLY' ? styles.toggleActive : ''}`}
-                  onClick={() => setBillingCycle('MONTHLY')}
+                  className={`${styles.tabBtn} ${activeTab === 'monthly' ? styles.active : ''}`}
+                  onClick={() => setActiveTab('monthly')}
                 >
-                  月付
+                  会员计划
                 </button>
                 <button 
-                  className={`${styles.toggleBtn} ${billingCycle === 'YEARLY' ? styles.toggleActive : ''}`}
-                  onClick={() => setBillingCycle('YEARLY')}
+                  className={`${styles.tabBtn} ${activeTab === 'points' ? styles.active : ''}`}
+                  onClick={() => setActiveTab('points')}
                 >
-                  年付
+                  积分加油包
                 </button>
               </div>
             </div>
-          )}
 
-          <div className={styles.pricingCards}>
-            {loading && <div className={styles.loadingState}>加载中...</div>}
-            {error && <div className={styles.errorMessage}>加载失败: {error}</div>}
-            {!loading && !error && activeTab === 'monthly' && monthlyPlans.filter(p => p.periodType === billingCycle || p.isCustom).length === 0 && (
-              <div className={styles.emptyState}>暂无订阅套餐</div>
-            )}
-            {!loading && !error && activeTab === 'points' && pointPlans.length === 0 && (
-              <div className={styles.emptyState}>暂无积分套餐</div>
+            {activeTab === 'monthly' && (
+              <div className={styles.billingToggleWrapper}>
+                <div className={styles.billingToggle}>
+                  <button 
+                    className={`${styles.toggleBtn} ${billingCycle === 'MONTHLY' ? styles.toggleActive : ''}`}
+                    onClick={() => setBillingCycle('MONTHLY')}
+                  >
+                    月付
+                  </button>
+                  <button 
+                    className={`${styles.toggleBtn} ${billingCycle === 'YEARLY' ? styles.toggleActive : ''}`}
+                    onClick={() => setBillingCycle('YEARLY')}
+                  >
+                    年付
+                  </button>
+                </div>
+              </div>
             )}
 
-            {!loading && !error && (
-              activeTab === 'monthly' ? (
-                monthlyPlans
-                  .filter(plan => plan.periodType === billingCycle || plan.isCustom)
-                  .map((plan, index) => (
-                  <div key={index} className={`${styles.pricingCard} ${plan.isCustom ? styles.customCard : ''}`}>
-                    <div className={styles.cardGlow}></div>
-                    <div className={styles.cardHeader}>
-                      <h3>{plan.title}</h3>
-                      {plan.isCustom ? (
-                        <div className={styles.customPrice}>{plan.customTitle}</div>
-                      ) : (
-                        <div className={styles.priceRow}>
-                          <div className={styles.price}>{plan.price}</div>
-                          <div className={styles.period}>{plan.period}</div>
-                        </div>
-                      )}
+            <div className={styles.pricingCards}>
+              {loading && <div className={styles.loadingState}>加载中...</div>}
+              {error && <div className={styles.errorMessage}>加载失败: {error}</div>}
+              {!loading && !error && activeTab === 'monthly' && monthlyPlans.filter(p => p.periodType === billingCycle || p.isCustom).length === 0 && (
+                <div className={styles.emptyState}>暂无订阅套餐</div>
+              )}
+              {!loading && !error && activeTab === 'points' && pointPlans.length === 0 && (
+                <div className={styles.emptyState}>暂无积分套餐</div>
+              )}
+
+              {!loading && !error && (
+                activeTab === 'monthly' ? (
+                  monthlyPlans
+                    .filter(plan => plan.periodType === billingCycle || plan.isCustom)
+                    .map((plan, index) => (
+                    <div key={index} className={`${styles.pricingCard} ${plan.isCustom ? styles.customCard : ''}`}>
+                      <div className={styles.cardGlow}></div>
+                      <div className={styles.cardHeader}>
+                        <h3>{plan.title}</h3>
+                        {plan.isCustom ? (
+                          <div className={styles.customPrice}>{plan.customTitle}</div>
+                        ) : (
+                          <div className={styles.priceRow}>
+                            <div className={styles.price}>{plan.price}</div>
+                            <div className={styles.period}>{plan.period}</div>
+                          </div>
+                        )}
+                      </div>
+                      <ul className={styles.featuresList}>
+                        {plan.features.map((feature, i) => (
+                          <li key={i}>
+                            <svg className={styles.checkIcon} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            {feature}
+                          </li>
+                        ))}
+                      </ul>
+                      <button 
+                        className={styles.buyBtn}
+                        onClick={() => plan.isCustom ? undefined : handleOpenPayment(plan.id, plan.title, plan.priceCents, plan.periodType, 'monthly')}
+                      >
+                        {plan.isCustom ? '联系顾问' : '立即开通'}
+                      </button>
                     </div>
-                    <ul className={styles.featuresList}>
-                      {plan.features.map((feature, i) => (
-                        <li key={i}>
-                          <svg className={styles.checkIcon} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
-                    <button 
-                      className={styles.buyBtn}
-                      onClick={() => plan.isCustom ? undefined : handleOpenPayment(plan.id, plan.title, plan.priceCents, plan.periodType, 'monthly')}
-                    >
-                      {plan.isCustom ? '联系顾问' : '立即开通'}
-                    </button>
-                  </div>
-                ))
-              ) : (
-                pointPlans.map((plan, index) => (
-                  <div key={index} className={`${styles.pricingCard} ${styles.pointsCard}`}>
-                    <div className={styles.cardGlow}></div>
-                    <div className={styles.cardHeader}>
-                      <h3>{plan.title}</h3>
-                      <div className={styles.price}>{plan.price}</div>
+                  ))
+                ) : (
+                  pointPlans.map((plan, index) => (
+                    <div key={index} className={`${styles.pricingCard} ${styles.pointsCard}`}>
+                      <div className={styles.cardGlow}></div>
+                      <div className={styles.cardHeader}>
+                        <h3>{plan.title}</h3>
+                        <div className={styles.price}>{plan.price}</div>
+                      </div>
+                      <div className={styles.planDescription}>
+                        <svg className={styles.checkIcon} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        {plan.description}
+                      </div>
+                      <div className="spacer" style={{ flex: 1 }}></div>
+                      <button 
+                        className={styles.buyBtn}
+                        onClick={() => handleOpenPayment(plan.id, plan.title, plan.priceCents, 'POINTS', 'points')}
+                      >
+                        立即充值
+                      </button>
                     </div>
-                    <div className={styles.planDescription}>
-                      <svg className={styles.checkIcon} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                      {plan.description}
-                    </div>
-                    <div className="spacer" style={{ flex: 1 }}></div>
-                    <button 
-                      className={styles.buyBtn}
-                      onClick={() => handleOpenPayment(plan.id, plan.title, plan.priceCents, 'POINTS', 'points')}
-                    >
-                      立即充值
-                    </button>
-                  </div>
-                ))
-              )
-            )}
+                  ))
+                )
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {isEditOpen && (

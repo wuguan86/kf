@@ -10,7 +10,6 @@ import OutboundMaterialPage from "./pages/OutboundMaterialPage";
 import SettingsPage from "./pages/SettingsPage";
 import SystemSettingsPage from "./pages/SystemSettingsPage";
 import SessionManagementPage from "./pages/SessionManagementPage";
-import MarketingManagementPage from "./pages/MarketingManagementPage";
 import DataStatisticsPage from "./pages/DataStatisticsPage";
 import SmartSalesPage from "./pages/smart-sales/SmartSalesPage";
 import { AlertDialog } from "./components/AlertDialog";
@@ -28,7 +27,6 @@ const parseHashRoute = (hash: string): HashRoute => {
   if (value.startsWith("#/knowledge")) return "knowledge";
   if (value.startsWith("#/outbound-materials")) return "outbound-materials";
   if (value.startsWith("#/session-management")) return "session-management";
-  if (value.startsWith("#/marketing")) return "marketing";
   if (value.startsWith("#/smart-sales")) return "smart-sales";
   if (value.startsWith("#/data-statistics")) return "data-statistics";
   if (value.startsWith("#/system-settings")) return "system-settings";
@@ -290,7 +288,6 @@ function App(): JSX.Element {
             userToken={userToken}
           />
         )}
-        {activeRoute === "marketing" && <MarketingManagementPage />}
         {activeRoute === "smart-sales" && <SmartSalesPage />}
         {activeRoute === "data-statistics" && <DataStatisticsPage />}
         {activeRoute === "system-settings" && (

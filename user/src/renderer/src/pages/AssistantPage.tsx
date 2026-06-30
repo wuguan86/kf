@@ -632,6 +632,10 @@ function AssistantPage(props: Props): JSX.Element {
     if (channel === wechatChannelRef.current) {
       return
     }
+    if (channel === 'enterprise') {
+      showToast('功能开发中', 'info')
+      return
+    }
     const nextConfig = normalizeWechatChannelConfig({ ...wechatChannelConfig, channel })
     wechatChannelRef.current = nextConfig.channel
     setWechatChannelConfig(nextConfig)
