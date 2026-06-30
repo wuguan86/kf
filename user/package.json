@@ -14,7 +14,7 @@
   },
   "build": {
     "appId": "com.shijie.ai-assistant",
-    "productName": "Shijie AI Assistant",
+    "productName": "视界AI助手",
     "directories": {
       "output": "dist"
     },
@@ -22,8 +22,15 @@
       "out/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "resources/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
     "win": {
       "target": "nsis",
+      "icon": "resources/icon.ico",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {

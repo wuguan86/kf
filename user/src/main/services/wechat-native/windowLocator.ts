@@ -152,7 +152,7 @@ function Test-TargetWindow($info) {
     $looksLikeClass = $info.className -eq "mmui::MainWindow" -or $info.className -like "Qt*QWindowIcon*"
     $looksLikeTitle = $info.title -eq "微信" -or $info.title -like "*微信*" -or $info.title -like "*WeChat*"
   }
-  $looksLikeAssistant = $info.title -like "*AI运营助手*" -or $info.title -like "*AI 运营助手*" -or $info.title -like "*Codex*" -or $info.title -like "*Google Chrome*"
+  $looksLikeAssistant = $info.title -like "*视界AI助手*" -or $info.title -like "*AI运营助手*" -or $info.title -like "*AI 运营助手*" -or $info.title -like "*Codex*" -or $info.title -like "*Google Chrome*"
   $sizeLooksRight = $info.width -ge 500 -and $info.height -ge 500 -and $info.width -le 1800 -and $info.height -le 1400
   return $sizeLooksRight -and -not $looksLikeAssistant -and ($looksLikeProcess -or $looksLikeClass -or $looksLikeTitle)
 }

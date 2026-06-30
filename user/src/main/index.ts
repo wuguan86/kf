@@ -7,6 +7,11 @@ import { WeChatNativeDriver } from './services/wechat-native/WeChatNativeDriver'
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 const wechatNativeDriver = new WeChatNativeDriver()
+const APP_NAME = '视界AI助手'
+const APP_USER_MODEL_ID = 'com.shijie.ai-assistant'
+const APP_ICON_PATH = is.dev
+  ? join(__dirname, '../../resources/icon.ico')
+  : join(process.resourcesPath, 'icon.ico')
 
 const buildDevRendererUrl = (hash?: string): string => {
   const rendererUrl = process.env['ELECTRON_RENDERER_URL']
@@ -35,11 +40,13 @@ const clearDevRendererCache = async (): Promise<void> => {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
+    title: APP_NAME,
     width: 900,
     height: 670,
     show: false,
     frame: false, // Disable native title bar
     autoHideMenuBar: true,
+    icon: APP_ICON_PATH,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -84,6 +91,7 @@ function createCaptureWindow(): void {
   const { width, height } = screen.getPrimaryDisplay().bounds
 
   captureWindow = new BrowserWindow({
+    title: APP_NAME,
     width,
     height,
     x: 0,
@@ -96,6 +104,7 @@ function createCaptureWindow(): void {
     skipTaskbar: true,
     resizable: false,
     show: false,
+    icon: APP_ICON_PATH,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -296,7 +305,8 @@ ipcMain.handle(
 
 app.whenReady().then(async () => {
   console.info('微信交互方式已固定为新方式')
-  electronApp.setAppUserModelId('com.electron')
+  app.setName(APP_NAME)
+  electronApp.setAppUserModelId(APP_USER_MODEL_ID)
   await clearDevRendererCache()
 
   app.on('browser-window-created', (_, window) => {
