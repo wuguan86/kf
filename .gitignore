@@ -11,6 +11,7 @@
 *.iml
 .trae/
 .claude/
+.worktrees/
 
 # 忽略 Maven 编译生成的目录（最重要）
 target/
