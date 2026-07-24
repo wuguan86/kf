@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">视界之窗应用图标</title>
+  <desc id="description">蓝色放大镜与青蓝色 AI 星芒组成的桌面应用图标</desc>
+  <!-- 透明边距确保 Windows 任务栏缩放时不会裁切圆角。 -->
+  <rect x="72" y="72" width="880" height="880" rx="208" fill="#FFFFFF" stroke="#DCEAFF" stroke-width="24" />
+  <!-- 宽轮廓放大镜在 16 至 32 像素下仍保持可辨识性。 -->
+  <circle cx="420" cy="420" r="220" fill="none" stroke="#1674FF" stroke-width="112" />
+  <path d="M580 580 L774 774" fill="none" stroke="#1674FF" stroke-width="112" stroke-linecap="round" />
+  <!-- 星芒与放大镜局部叠加，用白色描边保证两种蓝色不会粘连。 -->
+  <path d="M760 150 L790 226 L866 256 L790 286 L760 362 L730 286 L654 256 L730 226 Z" fill="#38D6F7" stroke="#FFFFFF" stroke-width="24" stroke-linejoin="round" />
+</svg>
