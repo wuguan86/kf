@@ -195,6 +195,29 @@ class KnowledgeBaseCleaningServiceTest {
     assertEquals("1048576", result.fileSize());
   }
 
+  @Test
+  void toResultConvertsLegacySingleQuestionTaskToQuestionList() throws Exception {
+    KnowledgeBaseCleaningTaskEntity task = reviewTask();
+    task.setQaItemsJson("""
+        [{"question":"怎么收费？","answer":"专业版每月 299 元。","status":"NORMAL","warning":""}]
+        """);
+    KnowledgeBaseCleaningService service = new KnowledgeBaseCleaningService(
+        fakeKnowledgeBaseService(),
+        mock(KnowledgeBaseCleaningTaskMapper.class),
+        mock(KnowledgeBaseFileMapper.class),
+        new KnowledgeBaseDocumentParser(),
+        disabledExtractionService(),
+        new KnowledgeBaseQaMarkdownBuilder(),
+        new RecordingDifyClient(),
+        objectMapper,
+        Clock.systemDefaultZone());
+
+    KnowledgeBaseCleaningService.CleaningTaskResult result = service.toResult(task);
+    var serializedItem = objectMapper.valueToTree(result.items().get(0));
+
+    assertEquals("怎么收费？", serializedItem.path("questions").get(0).asText());
+  }
+
   private KnowledgeBaseCleaningTaskEntity reviewTask() throws Exception {
     KnowledgeBaseCleaningTaskEntity task = new KnowledgeBaseCleaningTaskEntity();
     task.setId(11L);

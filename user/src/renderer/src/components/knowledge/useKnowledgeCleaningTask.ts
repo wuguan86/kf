@@ -4,7 +4,7 @@ import http from '../../utils/http'
 export type CleaningStatus = 'PENDING' | 'PARSING' | 'EXTRACTING' | 'REVIEWING' | 'INDEXING' | 'COMPLETED' | 'FAILED'
 
 export type CleaningQaItem = {
-  question: string
+  questions: string[]
   answer: string
   status: 'NORMAL' | 'WARNING' | 'INCOMPLETE'
   warning: string

@@ -20,6 +20,7 @@ export default function CleaningContentPreviewModal({ fileName, items, onClose }
   const normalCount = items.filter(item => item.status === 'NORMAL').length
   const warningCount = items.filter(item => item.status === 'WARNING').length
   const incompleteCount = items.filter(item => item.status === 'INCOMPLETE').length
+  const questionCount = items.reduce((count, item) => count + item.questions.length, 0)
 
   const toggleExpand = (index: number) => {
     setExpandedIndex(current => current === index ? -1 : index)
@@ -40,7 +41,7 @@ export default function CleaningContentPreviewModal({ fileName, items, onClose }
         </div>
         <div className={styles.modalBody}>
           <div className={styles.previewStats}>
-            <span>共 {items.length} 条问答</span>
+            <span>共 {items.length} 组问答，含 {questionCount} 个问题</span>
             {normalCount > 0 && (
               <span className={styles.reviewStatusNORMAL}>正常 {normalCount}</span>
             )}
@@ -60,7 +61,7 @@ export default function CleaningContentPreviewModal({ fileName, items, onClose }
                 const isExpanded = expandedIndex === index
                 return (
                   <div
-                    key={`${item.question}-${index}`}
+                    key={`${item.questions.join('|')}-${index}`}
                     className={styles.previewQaCard}
                     onClick={() => toggleExpand(index)}
                   >
@@ -70,7 +71,7 @@ export default function CleaningContentPreviewModal({ fileName, items, onClose }
                         <div className={styles.previewQaRow}>
                           <span className={styles.previewQaLabel}>Q：</span>
                           <span className={styles.previewQaText}>
-                            {isExpanded ? item.question : truncate(item.question, 80)}
+                            {isExpanded ? item.questions.join('；') : truncate(item.questions.join('；'), 80)}
                           </span>
                         </div>
                         <div className={styles.previewQaRow}>
@@ -86,10 +87,12 @@ export default function CleaningContentPreviewModal({ fileName, items, onClose }
                     </div>
                     {isExpanded && (
                       <div className={styles.previewQaExpanded}>
-                        <div className={styles.previewQaRow}>
-                          <span className={styles.previewQaLabel}>问题：</span>
-                          <div className={styles.previewQaText}>{item.question}</div>
-                        </div>
+                        {item.questions.map((question, questionIndex) => (
+                          <div className={styles.previewQaRow} key={`${questionIndex}-${question}`}>
+                            <span className={styles.previewQaLabel}>{questionIndex === 0 ? '问题：' : '　　'}</span>
+                            <span className={styles.previewQaText}>{question}</span>
+                          </div>
+                        ))}
                         <div className={styles.previewQaRow}>
                           <span className={styles.previewQaLabel}>答案：</span>
                           <div className={styles.previewQaText}>{item.answer}</div>

@@ -26,6 +26,21 @@ export default function KnowledgeCleaningReviewTable({ items, onChange }: Props)
     onChange(items.map((item, currentIndex) => currentIndex === index ? { ...item, ...patch } : item))
   }
 
+  const updateQuestion = (itemIndex: number, questionIndex: number, question: string) => {
+    const questions = items[itemIndex].questions.map((value, currentIndex) => currentIndex === questionIndex ? question : value)
+    updateItem(itemIndex, { questions })
+  }
+
+  const addQuestion = (itemIndex: number) => {
+    updateItem(itemIndex, { questions: [...items[itemIndex].questions, ''] })
+  }
+
+  const removeQuestion = (itemIndex: number, questionIndex: number) => {
+    const questions = items[itemIndex].questions
+    if (questions.length <= 1) return
+    updateItem(itemIndex, { questions: questions.filter((_, currentIndex) => currentIndex !== questionIndex) })
+  }
+
   const deleteItem = (index: number) => {
     onChange(items.filter((_, currentIndex) => currentIndex !== index))
     setActiveIndex(current => {
@@ -54,7 +69,7 @@ export default function KnowledgeCleaningReviewTable({ items, onChange }: Props)
           </thead>
           <tbody>
             {items.map((item, index) => (
-              <Fragment key={`${item.question}-${index}`}>
+              <Fragment key={`${item.questions.join('|')}-${index}`}>
                 <tr
                   className={`${styles[`reviewRow${item.status}`]} ${activeIndex === index ? styles.reviewRowActive : ''}`}
                 >
@@ -64,7 +79,7 @@ export default function KnowledgeCleaningReviewTable({ items, onChange }: Props)
                     </span>
                   </td>
                   <td>
-                    <div className={styles.reviewCellPreview} title={item.question}>{item.question}</div>
+                    <div className={styles.reviewCellPreview} title={item.questions.join('\n')}>{item.questions.join(' / ')}</div>
                   </td>
                   <td>
                     <div className={styles.reviewCellPreview} title={item.answer}>{item.answer}</div>
@@ -116,11 +131,33 @@ export default function KnowledgeCleaningReviewTable({ items, onChange }: Props)
                           </div>
                           <label className={styles.reviewInlineField}>
                             <span className={styles.reviewEditorLabel}>问题</span>
-                            <textarea
-                              className={styles.reviewEditorTextarea}
-                              value={item.question}
-                              onChange={(event) => updateItem(index, { question: event.target.value })}
-                            />
+                            {item.questions.map((question, questionIndex) => (
+                              <div className={styles.reviewRowActions} style={{ marginBottom: '8px' }} key={`${questionIndex}-${question}`}>
+                                <textarea
+                                  className={styles.reviewEditorTextarea}
+                                  style={{ minHeight: '72px', maxHeight: '120px' }}
+                                  value={question}
+                                  onChange={(event) => updateQuestion(index, questionIndex, event.target.value)}
+                                />
+                                <button
+                                  className={`${styles.reviewActionButton} ${styles.reviewActionDanger}`}
+                                  type="button"
+                                  title="删除问题"
+                                  disabled={item.questions.length <= 1}
+                                  onClick={() => removeQuestion(index, questionIndex)}
+                                >
+                                  <TrashIcon />
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              className={styles.reviewActionButton}
+                              type="button"
+                              title="新增问题"
+                              onClick={() => addQuestion(index)}
+                            >
+                              <PlusIcon />
+                            </button>
                           </label>
                           <label className={styles.reviewInlineField}>
                             <span className={styles.reviewEditorLabel}>答案</span>
@@ -146,6 +183,10 @@ export default function KnowledgeCleaningReviewTable({ items, onChange }: Props)
 
 const EditIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+)
+
+const PlusIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
 )
 
 const TrashIcon = () => (

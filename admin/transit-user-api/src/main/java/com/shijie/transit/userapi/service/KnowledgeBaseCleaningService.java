@@ -1,7 +1,7 @@
 package com.shijie.transit.userapi.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shijie.transit.common.db.entity.KnowledgeBaseCleaningTaskEntity;
 import com.shijie.transit.common.db.entity.KnowledgeBaseEntity;
@@ -13,6 +13,7 @@ import com.shijie.transit.userapi.mapper.KnowledgeBaseFileMapper;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
@@ -252,21 +253,80 @@ public class KnowledgeBaseCleaningService {
     if (items == null || items.isEmpty()) {
       throw new IllegalArgumentException("请至少保留一条问答后再入库");
     }
-    return items.stream()
-        .filter(item -> item != null && StringUtils.hasText(item.question()) && StringUtils.hasText(item.answer()))
-        .map(item -> new KnowledgeBaseQaExtractionService.CleaningQaItem(
-            item.question().trim(),
-            item.answer().trim(),
-            normalizeStatus(item.status()),
-            item.warning() == null ? "" : item.warning().trim()))
-        .toList();
+    List<KnowledgeBaseQaExtractionService.CleaningQaItem> normalizedItems = new ArrayList<>();
+    for (KnowledgeBaseQaExtractionService.CleaningQaItem item : items) {
+      if (item == null || !StringUtils.hasText(item.answer())) {
+        continue;
+      }
+      List<String> questions = normalizeQuestions(item.questions());
+      if (questions.isEmpty()) {
+        continue;
+      }
+      normalizedItems.add(new KnowledgeBaseQaExtractionService.CleaningQaItem(
+          questions,
+          item.answer().trim(),
+          normalizeStatus(item.status()),
+          item.warning() == null ? "" : item.warning().trim()));
+    }
+    if (normalizedItems.isEmpty()) {
+      throw new IllegalArgumentException("请至少保留一条问答后再入库");
+    }
+    return normalizedItems;
   }
 
   private List<KnowledgeBaseQaExtractionService.CleaningQaItem> readItems(KnowledgeBaseCleaningTaskEntity task) throws Exception {
     if (!StringUtils.hasText(task.getQaItemsJson())) {
       return List.of();
     }
-    return objectMapper.readValue(task.getQaItemsJson(), new TypeReference<>() {});
+    JsonNode root = objectMapper.readTree(task.getQaItemsJson());
+    if (!root.isArray()) {
+      throw new IllegalArgumentException("清洗任务问答数据格式错误");
+    }
+    List<KnowledgeBaseQaExtractionService.CleaningQaItem> items = new ArrayList<>();
+    for (JsonNode node : root) {
+      items.add(new KnowledgeBaseQaExtractionService.CleaningQaItem(
+          readStoredQuestions(node),
+          readJsonText(node.path("answer")),
+          readJsonText(node.path("status")),
+          readJsonText(node.path("warning"))));
+    }
+    return items;
+  }
+
+  private List<String> normalizeQuestions(List<String> values) {
+    LinkedHashSet<String> questions = new LinkedHashSet<>();
+    if (values != null) {
+      for (String value : values) {
+        if (StringUtils.hasText(value)) {
+          questions.add(value.trim());
+        }
+      }
+    }
+    return List.copyOf(questions);
+  }
+
+  private List<String> readStoredQuestions(JsonNode node) {
+    List<String> values = new ArrayList<>();
+    JsonNode questionsNode = node.path("questions");
+    if (questionsNode.isArray()) {
+      for (JsonNode questionNode : questionsNode) {
+        values.add(readJsonText(questionNode));
+      }
+    } else if (questionsNode.isTextual()) {
+      values.add(readJsonText(questionsNode));
+    }
+    // 兼容上线前已经保存的 question 单字段任务，避免预览和再次确认失败。
+    if (values.isEmpty()) {
+      values.add(readJsonText(node.path("question")));
+    }
+    return normalizeQuestions(values);
+  }
+
+  private String readJsonText(JsonNode node) {
+    if (node == null || node.isMissingNode() || node.isNull()) {
+      return "";
+    }
+    return node.isTextual() || node.isNumber() || node.isBoolean() ? node.asText() : "";
   }
 
   private List<KnowledgeBaseQaExtractionService.CleaningQaItem> readItemsQuietly(KnowledgeBaseCleaningTaskEntity task) {

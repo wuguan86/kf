@@ -15,9 +15,9 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class MybatisPlusConfiguration {
-  // private static final Set<String> IGNORED_TABLES = Set.of(
-  //    "flyway_schema_history"
-  // );
+  private static final Set<String> IGNORED_TABLES = Set.of(
+      "desktop_release",
+      "flyway_schema_history");
 
   @Bean
   public TenantLineHandler tenantLineHandler() {
@@ -38,8 +38,7 @@ public class MybatisPlusConfiguration {
 
       @Override
       public boolean ignoreTable(String tableName) {
-        // return IGNORED_TABLES.contains(tableName);
-        return false;
+        return IGNORED_TABLES.contains(tableName);
       }
     };
   }

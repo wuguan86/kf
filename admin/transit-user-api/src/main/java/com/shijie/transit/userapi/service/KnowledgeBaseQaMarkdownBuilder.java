@@ -12,14 +12,19 @@ public class KnowledgeBaseQaMarkdownBuilder {
     }
     StringBuilder builder = new StringBuilder();
     for (KnowledgeBaseQaExtractionService.CleaningQaItem item : items) {
-      if (!StringUtils.hasText(item.question()) || !StringUtils.hasText(item.answer())) {
+      if (item == null || item.questions() == null || item.questions().isEmpty() || !StringUtils.hasText(item.answer())) {
         throw new IllegalArgumentException("问答内容不能为空");
       }
-      if (!builder.isEmpty()) {
-        builder.append("\n\n**********\n\n");
+      for (String question : item.questions()) {
+        if (!StringUtils.hasText(question)) {
+          throw new IllegalArgumentException("问答内容不能为空");
+        }
+        if (!builder.isEmpty()) {
+          builder.append("\n\n**********\n\n");
+        }
+        builder.append("Q：").append(question.trim()).append("\n");
+        builder.append("A：").append(item.answer().trim());
       }
-      builder.append("Q：").append(item.question().trim()).append("\n");
-      builder.append("A：").append(item.answer().trim());
     }
     return builder.toString();
   }

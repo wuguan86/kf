@@ -88,6 +88,7 @@ public class SecurityConfiguration {
     http.authorizeHttpRequests(auth -> auth
         .requestMatchers("/actuator/**").permitAll()
         .requestMatchers("/*.txt").permitAll()
+        .requestMatchers("/api/public/desktop-releases/**").permitAll()
         .anyRequest().denyAll());
     return http.build();
   }

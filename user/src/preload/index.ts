@@ -4,6 +4,14 @@ import { electronAPI } from '@electron-toolkit/preload'
 type CaptureCoords = { x: number; y: number; w: number; h: number }
 type CaptureResult = { dataUrl: string; bounds: CaptureCoords }
 type CaptureCallback = (result: CaptureResult) => void
+type UpdateStatus = {
+  stage: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error'
+  message: string
+  version?: string
+  progress?: number
+  mandatory?: boolean
+  releaseNotes?: string
+}
 
 const api = {
   startCapture: () => ipcRenderer.send('start-capture'),
@@ -23,6 +31,15 @@ const api = {
   notifyReplySessionFinished: (data: { sessionKey: string }) => ipcRenderer.invoke('wechat-bridge-command', { action: 'reply_session_finished', ...data }),
   waitForWeChatImage: (data: { senderId: string; messageUiId?: unknown; timestamp: number | string; timeout?: number }) =>
     ipcRenderer.invoke('wechat-wait-image', data),
+  getUpdateStatus: () => ipcRenderer.invoke('app-update:get-status') as Promise<UpdateStatus>,
+  getAppVersion: () => ipcRenderer.invoke('app-update:get-version') as Promise<string>,
+  checkForUpdates: () => ipcRenderer.invoke('app-update:check') as Promise<UpdateStatus>,
+  installUpdate: () => ipcRenderer.invoke('app-update:install') as Promise<boolean>,
+  onUpdateStatus: (callback: (status: UpdateStatus) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, status: UpdateStatus) => callback(status)
+    ipcRenderer.on('app-update:status', listener)
+    return () => ipcRenderer.removeListener('app-update:status', listener)
+  },
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close')

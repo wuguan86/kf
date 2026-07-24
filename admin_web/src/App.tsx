@@ -11,6 +11,7 @@ import AdminAccounts from './pages/admin/AdminAccounts';
 import SystemConfig from './pages/admin/SystemConfig';
 import StatisticalConfig from './pages/admin/StatisticalConfig';
 import InvitationCodes from './pages/admin/InvitationCodes';
+import DesktopReleases from './pages/admin/DesktopReleases';
 
 function App() {
   return (
@@ -32,6 +33,7 @@ function App() {
           <Route path="payment" element={<Payment />} />
           <Route path="system" element={<SystemConfig />} />
           <Route path="statistical" element={<StatisticalConfig />} />
+          <Route path="desktop-releases" element={<DesktopReleases />} />
         </Route>
       </Routes>
     </Router>

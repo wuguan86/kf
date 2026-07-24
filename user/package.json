@@ -33,6 +33,12 @@
       "icon": "resources/icon.ico",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "${env.UPDATE_FEED_URL}"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -44,6 +50,7 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "axios": "^1.6.7",
+    "electron-updater": "^6.3.9",
     "koffi": "^3.0.2",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",

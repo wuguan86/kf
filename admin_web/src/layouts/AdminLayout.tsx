@@ -12,7 +12,8 @@ import {
   Shield,
   MessageSquare,
   Ticket,
-  PieChart
+  PieChart,
+  UploadCloud
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useEffect, useState } from 'react';
@@ -57,6 +58,7 @@ const AdminLayout = () => {
     { path: '/admin/payment', label: '支付管理', icon: CreditCard },
     { path: '/admin/system', label: '客服配置', icon: MessageSquare },
     { path: '/admin/statistical', label: '统计配置', icon: PieChart },
+    { path: '/admin/desktop-releases', label: '客户端发布', icon: UploadCloud },
   ];
 
   return (

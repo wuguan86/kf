@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>视界 AI 助手图标方向</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #f4f7fb; color: #172033; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; }
+    main { width: min(1100px, calc(100% - 48px)); margin: 48px auto; }
+    h1 { margin: 0 0 10px; font-size: 28px; letter-spacing: 0; }
+    .intro { margin: 0 0 30px; color: #647087; font-size: 15px; line-height: 1.7; }
+    .options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .option { border: 1px solid #dfe6f2; background: #fff; border-radius: 10px; overflow: hidden; cursor: pointer; transition: .16s ease; }
+    .option:hover, .option.selected { border-color: #277cf6; box-shadow: 0 10px 28px rgba(33, 118, 238, .14); transform: translateY(-2px); }
+    .hero { min-height: 270px; display: flex; align-items: center; justify-content: center; }
+    .option-a .hero { background: linear-gradient(135deg, #0569ff, #61b0ff); }
+    .option-b .hero { background: linear-gradient(135deg, #0f1730, #384d83); }
+    .option-c .hero { background: linear-gradient(135deg, #00a86f, #38d6a1); }
+    .icon { width: 154px; height: 154px; position: relative; filter: drop-shadow(0 14px 20px rgba(7, 32, 72, .22)); }
+    .a-square { position: absolute; inset: 0; border-radius: 35px; background: #fff; }
+    .a-lens { position: absolute; width: 84px; height: 84px; border: 14px solid #1674ff; border-radius: 50%; top: 28px; left: 27px; }
+    .a-lens:after { content: ""; position: absolute; width: 42px; height: 14px; background: #1674ff; border-radius: 14px; transform: rotate(45deg); right: -34px; bottom: -18px; }
+    .a-spark { position: absolute; width: 21px; height: 21px; border-radius: 7px; background: #39d4f7; transform: rotate(45deg); right: 23px; top: 24px; }
+    .b-square { position: absolute; inset: 0; border-radius: 35px; background: #fff; }
+    .b-eye { position: absolute; width: 98px; height: 64px; left: 28px; top: 44px; background: #1f73f4; border-radius: 70% 30% 70% 30%; transform: rotate(-17deg); }
+    .b-pupil { position: absolute; width: 32px; height: 32px; background: #fff; border-radius: 50%; left: 62px; top: 60px; }
+    .b-ray { position: absolute; width: 11px; height: 33px; border-radius: 12px; background: #55dfff; right: 27px; top: 27px; transform: rotate(32deg); }
+    .b-ray:after { content: ""; position: absolute; width: 11px; height: 23px; border-radius: 12px; background: #55dfff; top: 39px; left: -17px; transform: rotate(58deg); }
+    .c-square { position: absolute; inset: 0; border-radius: 35px; background: #fff; }
+    .c-frame { position: absolute; inset: 31px; border: 14px solid #0aae78; border-radius: 26px; }
+    .c-bubble { position: absolute; width: 48px; height: 39px; right: 27px; top: 29px; background: #1674ff; border-radius: 20px 20px 20px 5px; }
+    .c-bubble:before, .c-bubble:after { content: ""; position: absolute; width: 7px; height: 7px; top: 16px; background: #fff; border-radius: 50%; }
+    .c-bubble:before { left: 15px; } .c-bubble:after { left: 27px; }
+    .c-cursor { position: absolute; border-left: 16px solid transparent; border-right: 16px solid transparent; border-top: 38px solid #0aae78; transform: rotate(-40deg); left: 43px; bottom: 24px; }
+    .body { padding: 19px 20px 22px; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #ebf3ff; color: #1674ff; font-size: 12px; font-weight: 700; }
+    h2 { margin: 11px 0 8px; font-size: 18px; letter-spacing: 0; }
+    p { margin: 0; color: #66738b; font-size: 14px; line-height: 1.65; }
+    .taskbar { margin-top: 28px; padding: 18px 22px; display: flex; align-items: center; gap: 18px; border-radius: 10px; background: #182235; color: #cad5e7; }
+    .taskbar strong { color: #fff; font-size: 14px; }
+    .task-icons { display: flex; align-items: center; gap: 22px; }
+    .mini { width: 34px; height: 34px; transform: scale(.84); transform-origin: center; filter: none; }
+    @media (max-width: 780px) { main { width: min(100% - 30px, 520px); margin: 28px auto; } .options { grid-template-columns: 1fr; } .taskbar { flex-wrap: wrap; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>选择更接近产品气质的图标方向</h1>
+    <p class="intro">重点按 Windows 任务栏 16-32 px 场景设计：高对比轮廓、无细小文字，并会交付完整多尺寸 ICO。</p>
+    <section class="options">
+      <article class="option option-a" data-choice="a" onclick="toggleSelect(this)">
+        <div class="hero"><div class="icon"><div class="a-square"></div><div class="a-lens"></div><div class="a-spark"></div></div></div>
+        <div class="body"><span class="badge">推荐</span><h2>A. 视界之窗</h2><p>“观察”与 AI 灵感结合。轮廓最简洁，在小尺寸任务栏中仍清晰可辨。</p></div>
+      </article>
+      <article class="option option-b" data-choice="b" onclick="toggleSelect(this)">
+        <div class="hero"><div class="icon"><div class="b-square"></div><div class="b-eye"></div><div class="b-pupil"></div><div class="b-ray"></div></div></div>
+        <div class="body"><span class="badge">品牌感</span><h2>B. 智能视线</h2><p>强化“视觉 AI”含义，识别性更强，视觉性格更鲜明。</p></div>
+      </article>
+      <article class="option option-c" data-choice="c" onclick="toggleSelect(this)">
+        <div class="hero"><div class="icon"><div class="c-square"></div><div class="c-frame"></div><div class="c-bubble"></div><div class="c-cursor"></div></div></div>
+        <div class="body"><span class="badge">业务指向</span><h2>C. 运营助手</h2><p>突出会话、协作和操控能力，与桌面工作台的功能关联最直接。</p></div>
+      </article>
+    </section>
+    <div class="taskbar"><strong>任务栏小尺寸预览</strong><div class="task-icons"><div class="icon mini"><div class="a-square"></div><div class="a-lens"></div><div class="a-spark"></div></div><div class="icon mini"><div class="b-square"></div><div class="b-eye"></div><div class="b-pupil"></div><div class="b-ray"></div></div><div class="icon mini"><div class="c-square"></div><div class="c-frame"></div><div class="c-bubble"></div><div class="c-cursor"></div></div></div></div>
+  </main>
+</body>
+</html>

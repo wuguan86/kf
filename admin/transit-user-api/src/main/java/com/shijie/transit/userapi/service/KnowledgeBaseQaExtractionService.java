@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import org.slf4j.Logger;
@@ -123,13 +124,13 @@ public class KnowledgeBaseQaExtractionService {
       }
       List<CleaningQaItem> items = new ArrayList<>();
       for (JsonNode node : root) {
-        String question = text(node.path("question"));
+        List<String> questions = readQuestions(node);
         String answer = text(node.path("answer"));
-        if (!StringUtils.hasText(question) || !StringUtils.hasText(answer)) {
+        if (questions.isEmpty() || !StringUtils.hasText(answer)) {
           throw new IllegalArgumentException("AI 清洗结果缺少问题或答案");
         }
         items.add(new CleaningQaItem(
-            question.trim(),
+            questions,
             answer.trim(),
             normalizeStatus(text(node.path("status"))),
             text(node.path("warning")).trim()));
@@ -139,6 +140,29 @@ public class KnowledgeBaseQaExtractionService {
       throw ex;
     } catch (Exception ex) {
       throw new IllegalArgumentException("AI 清洗结果不是有效 JSON", ex);
+    }
+  }
+
+  private List<String> readQuestions(JsonNode node) {
+    LinkedHashSet<String> questions = new LinkedHashSet<>();
+    JsonNode questionsNode = node.path("questions");
+    if (questionsNode.isArray()) {
+      for (JsonNode questionNode : questionsNode) {
+        addQuestion(questions, text(questionNode));
+      }
+    } else {
+      addQuestion(questions, text(questionsNode));
+    }
+    // 兼容模型偶发返回旧的单问题字段，避免一次清洗任务整体失败。
+    if (questions.isEmpty()) {
+      addQuestion(questions, text(node.path("question")));
+    }
+    return List.copyOf(questions);
+  }
+
+  private void addQuestion(LinkedHashSet<String> questions, String question) {
+    if (StringUtils.hasText(question)) {
+      questions.add(question.trim());
     }
   }
 
@@ -155,7 +179,9 @@ public class KnowledgeBaseQaExtractionService {
     return """
         你是客服知识库数据清洗助手。请从用户提供的原始文本中提取可直接用于客服问答检索的知识点。
         输出必须是 JSON Array，不要输出 Markdown，不要解释。
-        每个元素字段固定为 question、answer、status、warning。
+        每个元素字段固定为 questions、answer、status、warning；questions 必须是非空字符串数组。
+        当原文明确多个问题共用同一个答案时，把这些原文中的问题放在同一个 questions 数组中。
+        不要根据常识生成原文不存在的同义问法，也不要把不同答案的问题合并。
         status 只能是 NORMAL、WARNING、INCOMPLETE。
         如果原文存在冲突、模糊、缺少条件或时间范围，请把 status 设为 WARNING 或 INCOMPLETE，并在 warning 中写中文提示。
         """;
@@ -218,6 +244,13 @@ public class KnowledgeBaseQaExtractionService {
     return value.length() <= maxLength ? value : value.substring(0, maxLength);
   }
 
-  public record CleaningQaItem(String question, String answer, String status, String warning) {
+  public record CleaningQaItem(List<String> questions, String answer, String status, String warning) {
+    public CleaningQaItem {
+      questions = questions == null ? List.of() : List.copyOf(questions);
+    }
+
+    public CleaningQaItem(String question, String answer, String status, String warning) {
+      this(StringUtils.hasText(question) ? List.of(question.trim()) : List.of(), answer, status, warning);
+    }
   }
 }

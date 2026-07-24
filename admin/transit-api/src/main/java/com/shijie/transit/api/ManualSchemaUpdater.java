@@ -20,6 +20,7 @@ public class ManualSchemaUpdater implements ApplicationRunner {
         ensureUserIntentDailySummaryColumn();
         ensureCrmCustomerProfileAssistColumns();
         ensureKnowledgeBaseCleaningTaskTable();
+        ensureDesktopReleaseTable();
         jdbcTemplate.execute("""
             CREATE TABLE IF NOT EXISTS system_config (
               id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
@@ -171,6 +172,32 @@ public class ManualSchemaUpdater implements ApplicationRunner {
               KEY idx_kb_cleaning_user_kb_time (tenant_id, user_id, kb_id, created_at) COMMENT '索引:租户+用户+知识库+时间',
               KEY idx_kb_cleaning_user_status_time (tenant_id, user_id, task_status, created_at) COMMENT '索引:租户+用户+状态+时间'
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库文件AI清洗任务表';
+        """);
+    }
+
+    private void ensureDesktopReleaseTable() {
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS desktop_release (
+              id BIGINT NOT NULL PRIMARY KEY COMMENT '主键ID',
+              version VARCHAR(64) NOT NULL COMMENT '客户端版本号',
+              platform VARCHAR(32) NOT NULL COMMENT '目标平台',
+              architecture VARCHAR(32) NOT NULL COMMENT '目标架构',
+              channel VARCHAR(32) NOT NULL DEFAULT 'stable' COMMENT '发布通道',
+              status VARCHAR(16) NOT NULL DEFAULT 'DRAFT' COMMENT '发布状态 DRAFT/PUBLISHED/PAUSED',
+              mandatory TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否强制更新',
+              minimum_supported_version VARCHAR(64) NULL COMMENT '最低支持版本',
+              rollout_percentage INT NOT NULL DEFAULT 100 COMMENT '灰度比例',
+              release_notes TEXT NULL COMMENT '更新说明',
+              feed_url VARCHAR(1024) NULL COMMENT '版本专属更新源地址',
+              installer_url VARCHAR(1024) NULL COMMENT '安装包下载地址',
+              sha512 VARCHAR(128) NULL COMMENT '安装包SHA-512校验值',
+              file_size BIGINT NULL COMMENT '安装包字节数',
+              published_at DATETIME(3) NULL COMMENT '发布时间',
+              created_at DATETIME(3) NOT NULL COMMENT '创建时间',
+              updated_at DATETIME(3) NOT NULL COMMENT '更新时间',
+              UNIQUE KEY uk_desktop_release_target_version (version, platform, architecture, channel),
+              KEY idx_desktop_release_lookup (status, platform, architecture, channel, published_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='桌面客户端发布记录表';
         """);
     }
 

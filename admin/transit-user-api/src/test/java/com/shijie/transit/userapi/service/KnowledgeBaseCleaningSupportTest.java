@@ -48,6 +48,26 @@ class KnowledgeBaseCleaningSupportTest {
   }
 
   @Test
+  void parseQaItemsKeepsMultipleSourceQuestionsForOneAnswer() {
+    KnowledgeBaseQaExtractionService service = disabledExtractionService();
+    String json = """
+        [{
+          "questions": ["怎么收费？", "专业版价格是多少？"],
+          "answer": "专业版每月 299 元。",
+          "status": "NORMAL",
+          "warning": ""
+        }]
+        """;
+
+    List<KnowledgeBaseQaExtractionService.CleaningQaItem> items = service.parseQaItems(json);
+    var serializedItem = objectMapper.valueToTree(items.get(0));
+
+    assertEquals(1, items.size());
+    assertEquals("怎么收费？", serializedItem.path("questions").get(0).asText());
+    assertEquals("专业版价格是多少？", serializedItem.path("questions").get(1).asText());
+  }
+
+  @Test
   void parseQaItemsRejectsIncompleteRows() {
     KnowledgeBaseQaExtractionService service = disabledExtractionService();
 
@@ -97,7 +117,7 @@ class KnowledgeBaseCleaningSupportTest {
     List<KnowledgeBaseQaExtractionService.CleaningQaItem> items = service.extractQaItems("收费标准：专业版每月 299 元。");
 
     assertEquals(1, items.size());
-    assertEquals("怎么收费？", items.get(0).question());
+    assertEquals("怎么收费？", items.get(0).questions().get(0));
     server.verify();
   }
 
@@ -117,6 +137,31 @@ class KnowledgeBaseCleaningSupportTest {
 
         Q：几天可以退货？
         A：支持 7 天无理由退货。
+        """.trim(), markdown);
+  }
+
+  @Test
+  void buildMarkdownExpandsSharedAnswerToIndependentDifyQuestions() {
+    KnowledgeBaseQaExtractionService service = disabledExtractionService();
+    List<KnowledgeBaseQaExtractionService.CleaningQaItem> items = service.parseQaItems("""
+        [{
+          "questions": ["怎么收费？", "专业版价格是多少？"],
+          "answer": "专业版每月 299 元。",
+          "status": "NORMAL",
+          "warning": ""
+        }]
+        """);
+
+    String markdown = new KnowledgeBaseQaMarkdownBuilder().buildMarkdown(items);
+
+    assertEquals("""
+        Q：怎么收费？
+        A：专业版每月 299 元。
+
+        **********
+
+        Q：专业版价格是多少？
+        A：专业版每月 299 元。
         """.trim(), markdown);
   }
 

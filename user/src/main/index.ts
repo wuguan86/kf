@@ -3,10 +3,12 @@ import { join } from 'path'
 import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { WeChatNativeDriver } from './services/wechat-native/WeChatNativeDriver'
+import { AppUpdateService } from './services/AppUpdateService'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 const wechatNativeDriver = new WeChatNativeDriver()
+const appUpdateService = new AppUpdateService()
 const APP_NAME = '视界AI助手'
 const APP_USER_MODEL_ID = 'com.shijie.ai-assistant'
 const APP_ICON_PATH = is.dev
@@ -314,6 +316,9 @@ app.whenReady().then(async () => {
   })
 
   createWindow()
+  if (mainWindow) {
+    appUpdateService.initialize(mainWindow)
+  }
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

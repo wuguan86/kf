@@ -18,6 +18,11 @@ interface ContactConfig {
 const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => {
   const { toast, showToast } = useToast()
   const [tagManagerOpen, setTagManagerOpen] = useState(false)
+  const [appVersion, setAppVersion] = useState('—')
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
+    stage: 'idle',
+    message: '尚未检查更新'
+  })
   const [contactConfig, setContactConfig] = useState<ContactConfig>({
     wechat: 'VisionTech_Support',
     wechat_qrcode: '',
@@ -41,6 +46,57 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
     }
     fetchConfig()
   }, [])
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined
+    const loadUpdateState = async () => {
+      if (!window.api) {
+        setUpdateStatus({ stage: 'error', message: '当前环境不支持客户端更新' })
+        return
+      }
+      try {
+        const [version, status] = await Promise.all([
+          window.api.getAppVersion(),
+          window.api.getUpdateStatus()
+        ])
+        setAppVersion(version)
+        setUpdateStatus(status)
+        unsubscribe = window.api.onUpdateStatus(setUpdateStatus)
+      } catch (error) {
+        console.error('加载客户端更新状态失败', error)
+        setUpdateStatus({ stage: 'error', message: '无法读取更新状态，请稍后重试' })
+      }
+    }
+    void loadUpdateState()
+    return () => unsubscribe?.()
+  }, [])
+
+  const handleUpdateAction = async () => {
+    if (!window.api) {
+      showToast('当前环境不支持客户端更新', 'error')
+      return
+    }
+    try {
+      if (updateStatus.stage === 'downloaded') {
+        const accepted = await window.api.installUpdate()
+        if (!accepted) {
+          showToast('更新包尚未准备完成，请稍后重试', 'error')
+        }
+        return
+      }
+      const status = await window.api.checkForUpdates()
+      setUpdateStatus(status)
+    } catch (error) {
+      console.error('手动检查客户端更新失败', error)
+      showToast('检查更新失败，请稍后重试', 'error')
+    }
+  }
+
+  const updateButtonText = updateStatus.stage === 'downloaded'
+    ? '立即重启更新'
+    : updateStatus.stage === 'checking' || updateStatus.stage === 'downloading'
+      ? '更新处理中'
+      : '检查更新'
 
   const getImageUrl = (path: string) => {
     if (!path) return ''
@@ -68,13 +124,18 @@ const SystemSettingsPage: React.FC<SystemSettingsPageProps> = ({ onLogout }) => 
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
             </div>
             <div className={styles.versionText}>
-              <h3>当前版本: v2.4.8 (Enterprise)</h3>
-              <p>最后更新时间: 2026-02-15</p>
+              <h3>当前版本: v{appVersion}</h3>
+              <p>{updateStatus.message}</p>
+              {updateStatus.releaseNotes && <p className={styles.releaseNotes}>更新内容：{updateStatus.releaseNotes}</p>}
             </div>
           </div>
-          <button className={styles.checkUpdateBtn}>
+          <button
+            className={styles.checkUpdateBtn}
+            onClick={() => void handleUpdateAction()}
+            disabled={updateStatus.stage === 'checking' || updateStatus.stage === 'downloading'}
+          >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>
-            检查更新
+            {updateButtonText}
           </button>
         </div>
       </section>
