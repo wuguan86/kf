@@ -440,12 +440,12 @@ function testTextInputBackendsKeepClipboardLongEnoughForWechatPaste() {
   assert.match(powerShellPasteSource, /WECHAT_TEXT_SEND_SETTLE_MS/)
 }
 
-function testWechatNativeDriverUsesScreenshotScaleForUnreadClickPath() {
+function testWechatNativeDriverUsesDisplayScaleForUnreadClickPath() {
   const driverSource = readFileSync(resolve('src/main/services/wechat-native/WeChatNativeDriver.ts'), 'utf8')
   const readSnapshotSource = driverSource.slice(driverSource.indexOf('private async readSnapshotIfChanged'), driverSource.indexOf('private normalizeBackendSnapshot'))
 
-  assert.match(readSnapshotSource, /window\.scaleFactor\s*=\s*screenshot\.scaleFactor\s*\|\|\s*1/)
-  assert.doesNotMatch(readSnapshotSource, /window\.scaleFactor\s*=\s*getWindowScreenScaleFactor\(window\)/)
+  assert.match(readSnapshotSource, /window\.scaleFactor\s*=\s*getWindowScreenScaleFactor\(window\)/)
+  assert.doesNotMatch(readSnapshotSource, /window\.scaleFactor\s*=\s*screenshot\.scaleFactor\s*\|\|\s*1/)
 }
 
 await testUsesNativeBackendFirstOnWindows()
@@ -470,4 +470,4 @@ testMessageInputBackendsNormalizeClickPointBeforeNativeInput()
 testUnreadConversationClickBackendsNormalizeClickPointBeforeNativeInput()
 testUnreadConversationClickPointTargetsRowBodyInsteadOfRedBadge()
 testTextInputBackendsKeepClipboardLongEnoughForWechatPaste()
-testWechatNativeDriverUsesScreenshotScaleForUnreadClickPath()
+testWechatNativeDriverUsesDisplayScaleForUnreadClickPath()

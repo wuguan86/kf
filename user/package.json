@@ -1,6 +1,6 @@
 {
   "name": "shijie-ai-assistant",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Electron + React + Vision Model + Dify AI Assistant",
   "main": "out/main/index.js",
   "author": "Trae",
@@ -33,12 +33,6 @@
       "icon": "resources/icon.ico",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
-    "publish": [
-      {
-        "provider": "generic",
-        "url": "${env.UPDATE_FEED_URL}"
-      }
-    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

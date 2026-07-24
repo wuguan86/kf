@@ -2864,8 +2864,9 @@ export class WeChatNativeDriver {
   private async readSnapshotIfChanged(window: WindowBounds): Promise<ParsedWeChatSnapshot | null> {
     const previousScreenshotPng = this.lastScreenshotPng
     let screenshot = await captureWeChatWindow(window)
-    // 截图裁剪坐标与 Win32 窗口坐标同尺度，未读会话点击必须沿用该比例，避免 125% 显示缩放下重复换算。
-    window.scaleFactor = screenshot.scaleFactor || 1
+    // 截图像素比例仅用于本地图像识别；鼠标注入必须使用显示器 DPI。
+    // 两者在 Windows 125% 缩放下可能不同，不能再用截图裁剪比例覆盖点击坐标的缩放比例。
+    window.scaleFactor = getWindowScreenScaleFactor(window)
     await saveVisionDebugImage({
       stage: 'window',
       image: screenshot,
@@ -2969,7 +2970,8 @@ export class WeChatNativeDriver {
               await wait(settleMs)
               const previousPng = screenshot.png
               screenshot = await captureWeChatWindow(window)
-              window.scaleFactor = screenshot.scaleFactor || 1
+              // 重新截图不会改变鼠标坐标系，继续使用显示器 DPI 进行后续点击和输入。
+              window.scaleFactor = getWindowScreenScaleFactor(window)
               diff = comparePngSnapshots(previousPng, screenshot.png)
               currentChatRegionResult = this.buildCurrentChatSnapshotRegion(window, screenshot)
               await this.saveCurrentChatRegionDebugImage(screenshot, window, currentChatRegionResult.region, {

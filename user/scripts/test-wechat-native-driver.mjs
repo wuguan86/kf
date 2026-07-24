@@ -5272,11 +5272,57 @@ async function testMarketingCommentSkipsUnsafeGeneratedContent() {
   }
 }
 
+async function testUnreadConversationClickUsesDisplayDpiWhenScreenshotScaleIsOne() {
+  let clickedWindow = null
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => ({ ...testWindow }),
+    getWindowScreenScaleFactor: () => 1.25,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=dpi-unread',
+      png: Buffer.from('dpi-unread'),
+      width: 900,
+      height: 700,
+      // 截图裁剪与逻辑窗口同尺寸时，不能将其比例误用为鼠标 DPI。
+      scaleFactor: 1
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'dpi-unread', changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'unread-dpi-125',
+      x: 144,
+      y: 182,
+      width: 15,
+      height: 15,
+      centerX: 152,
+      centerY: 190,
+      score: 143
+    }],
+    clickConversationCandidate: async (window) => {
+      clickedWindow = { ...window }
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'dpi-unread-after',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.poll()
+
+  assert.equal(clickedWindow?.scaleFactor, 1.25)
+}
+
 await testStartSavesWindowSnapshotWhenVisionDebugCaptureIsEnabled()
 await testStopDiscardsInFlightPollMessages()
 await testSpecialConversationGetsSkippedBeforeClick()
 await testSpecialConversationNameFallbackSkipsBeforeClick()
 await testCustomerServiceConversationNameFallbackSkipsBeforeClick()
+await testUnreadConversationClickUsesDisplayDpiWhenScreenshotScaleIsOne()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
 await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testUnreadConversationLockedContactOverridesGenericVisionContact()
