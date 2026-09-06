@@ -68,8 +68,9 @@ export default function KnowledgeCleaningReviewTable({ items, onChange }: Props)
             </tr>
           </thead>
           <tbody>
+            {/* 可编辑文本不能参与 key，否则中文输入法组合输入时会因节点重建而中断。 */}
             {items.map((item, index) => (
-              <Fragment key={`${item.questions.join('|')}-${index}`}>
+              <Fragment key={index}>
                 <tr
                   className={`${styles[`reviewRow${item.status}`]} ${activeIndex === index ? styles.reviewRowActive : ''}`}
                 >
@@ -132,7 +133,7 @@ export default function KnowledgeCleaningReviewTable({ items, onChange }: Props)
                           <label className={styles.reviewInlineField}>
                             <span className={styles.reviewEditorLabel}>问题</span>
                             {item.questions.map((question, questionIndex) => (
-                              <div className={styles.reviewRowActions} style={{ marginBottom: '8px' }} key={`${questionIndex}-${question}`}>
+                              <div className={styles.reviewRowActions} style={{ marginBottom: '8px' }} key={questionIndex}>
                                 <textarea
                                   className={styles.reviewEditorTextarea}
                                   style={{ minHeight: '72px', maxHeight: '120px' }}
