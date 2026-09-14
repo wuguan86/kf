@@ -1045,7 +1045,7 @@ function AssistantPage(props: Props): JSX.Element {
         id: `step-${screenshotDataUrl ? 'vision' : 'intent'}-${Date.now()}`,
         step: screenshotDataUrl ? 'VISION' : 'INTENT',
         status: 'running',
-        content: screenshotDataUrl ? '正在识别微信截图里的最新客户消息...' : '正在分析用户意图...',
+        content: screenshotDataUrl ? '正在识别最新客户消息..' : '正在分析用户意图...',
         timestamp: new Date().toLocaleTimeString()
       }]
 
