@@ -18,9 +18,14 @@ import org.springframework.util.StringUtils;
 @Service
 public class UserAccountService {
   private final UserAccountMapper userAccountMapper;
+  private final MembershipEntitlementService membershipEntitlementService;
+  private final RoleService roleService;
 
-  public UserAccountService(UserAccountMapper userAccountMapper) {
+  public UserAccountService(UserAccountMapper userAccountMapper,
+      MembershipEntitlementService membershipEntitlementService, RoleService roleService) {
     this.userAccountMapper = userAccountMapper;
+    this.membershipEntitlementService = membershipEntitlementService;
+    this.roleService = roleService;
   }
 
   /**
@@ -61,6 +66,9 @@ public class UserAccountService {
       entity.setAvatarUrl(safeAvatarUrl);
       entity.setIsInitialized(false);
       userAccountMapper.insert(entity);
+      // 仅在新账号插入成功后发放，随账号事务提交；重复登录和知识库初始化重试均不再赠送。
+      membershipEntitlementService.grantSignupPoints(entity.getId());
+      roleService.createDefaultRole(entity.getId());
       return new UpsertResult(entity, true, true);
     }
 

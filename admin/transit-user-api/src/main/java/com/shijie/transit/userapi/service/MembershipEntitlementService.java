@@ -19,12 +19,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 @Service
 public class MembershipEntitlementService {
+  private static final Logger log = LoggerFactory.getLogger(MembershipEntitlementService.class);
   private final MembershipPlanMapper membershipPlanMapper;
   private final UserMembershipMapper userMembershipMapper;
   private final PointsLedgerMapper pointsLedgerMapper;
@@ -172,6 +176,13 @@ public class MembershipEntitlementService {
     grantPointsByAmount(userId, null, delta, referenceId);
   }
 
+  // 必须加入账号创建事务，避免独立调用导致新手积分重复发放。
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void grantSignupPoints(long userId) {
+    grantPointsByAmount(userId, null, 3000, "signup:" + userId, "新用户注册赠送");
+    log.info("新用户积分已写入，等待注册事务提交 tenantId={} userId={} points=3000", TenantContext.getTenantId(), userId);
+  }
+
   @Transactional
   public boolean deductPoints(long userId, int amount, String reason, String refId) {
     if (amount <= 0) return true;
@@ -272,6 +283,10 @@ public class MembershipEntitlementService {
   }
 
   private void grantPointsByAmount(long userId, Long planId, int points, String referenceId) {
+    grantPointsByAmount(userId, planId, points, referenceId, "points_package_grant");
+  }
+
+  private void grantPointsByAmount(long userId, Long planId, int points, String referenceId, String reason) {
     int delta = Math.max(0, points);
     LocalDateTime now = LocalDateTime.now(clock);
     UserMembershipEntity membership = new UserMembershipEntity();
@@ -284,7 +299,7 @@ public class MembershipEntitlementService {
     membership.setPointsBalance(delta);
     userMembershipMapper.insert(membership);
     if (delta > 0) {
-      insertLedger(userId, delta, delta, "points_package_grant", buildLedgerRef(referenceId, membership.getId()));
+      insertLedger(userId, delta, delta, reason, buildLedgerRef(referenceId, membership.getId()));
     }
   }
 
