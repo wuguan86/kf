@@ -742,6 +742,51 @@ async function testActiveReplySessionBlocksSwitchingUnreadConversation() {
   assert.deepEqual(clickedCandidates, [])
 }
 
+async function testSemiManagedModeDoesNotSwitchUnreadConversation() {
+  const clickedCandidates = []
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => ({
+      dataUrl: 'data:image/png;base64=semi-mode',
+      png: Buffer.from('semi-mode-window'),
+      width: 900,
+      height: 700
+    }),
+    comparePngSnapshots: () => ({ changed: false, digest: 'semi-mode-unchanged', changedRatio: 0 }),
+    findUnreadConversationCandidates: () => [{
+      id: 'semi-mode-unread',
+      x: 82,
+      y: 132,
+      width: 14,
+      height: 14,
+      centerX: 89,
+      centerY: 139,
+      score: 16
+    }],
+    clickConversationCandidate: async (_window, candidate) => {
+      clickedCandidates.push(candidate.id)
+      return true
+    },
+    parseWeChatSnapshotWithVision: async () => ({
+      contact: '客户A',
+      messages: [],
+      snapshotDigest: 'semi-mode-parse',
+      conversationType: 'SINGLE',
+      accountCategory: 'NORMAL'
+    }),
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  await driver.start()
+  await driver.command({ action: 'set_managed_mode', mode: 'semi' })
+  const result = await driver.poll()
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.messages, [])
+  assert.deepEqual(clickedCandidates, [])
+}
+
 async function testReplySessionUnlockAllowsSwitchingUnreadConversation() {
   const clickedCandidates = []
   let parseCount = 0
@@ -2159,6 +2204,45 @@ async function testPersonalScreenshotCandidateIsSkippedDuringActiveReplySession(
   assert.equal(firstResult.messages.length, 1)
   assert.equal(firstResult.messages[0].trigger_reply, true)
   assert.equal(secondResult.messages.length, 0)
+}
+
+async function testSemiModeProcessesUserSwitchedConversationDuringActiveReply() {
+  let captureCount = 0
+  const { WeChatNativeDriver } = loadNativeDriver({
+    findWeChatWindow: async () => testWindow,
+    captureWeChatWindow: async () => {
+      captureCount += 1
+      return {
+        dataUrl: `data:image/png;base64=semi-manual-switch-${captureCount}`,
+        png: Buffer.from(`semi-manual-switch-window-${captureCount}`),
+        width: 900,
+        height: 700,
+        scaleFactor: 1
+      }
+    },
+    comparePngSnapshots: () => ({ changed: true, digest: `semi-manual-switch-digest-${captureCount}`, changedRatio: 0.02 }),
+    comparePngSnapshotRegion: () => ({ changed: true, digest: `semi-manual-switch-chat-${captureCount}`, changedRatio: 0.02 }),
+    parseWeChatSnapshotWithVision: async () => {
+      throw new Error('半托管个人微信仍应使用后端截图流')
+    },
+    parseWeChatReplyTriggerWithVision: async () => {
+      throw new Error('半托管个人微信不应调用旧回复触发解析')
+    },
+    pasteAndSendText: async () => true
+  })
+  const driver = new WeChatNativeDriver()
+
+  driver.configure({ backendBaseUrl: 'http://127.0.0.1:18080', token: 'token', tenantId: '1', channel: 'personal' })
+  await driver.start()
+  disableStartupBaselineForTest(driver)
+  driver.seenMessageFingerprints.add('existing-baseline')
+  await driver.command({ action: 'set_managed_mode', mode: 'semi' })
+  await driver.command({ action: 'reply_session_started', sessionKey: '旧会话' })
+  const result = await driver.poll()
+
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].trigger_reply, true)
+  assert.equal(result.messages[0].contact, '客户A')
 }
 
 async function testReplyTriggerRecognitionCreatesSingleAutoReplyMessage() {
@@ -5324,6 +5408,7 @@ await testSpecialConversationNameFallbackSkipsBeforeClick()
 await testCustomerServiceConversationNameFallbackSkipsBeforeClick()
 await testUnreadConversationClickUsesDisplayDpiWhenScreenshotScaleIsOne()
 await testActiveReplySessionBlocksSwitchingUnreadConversation()
+await testSemiManagedModeDoesNotSwitchUnreadConversation()
 await testReplySessionUnlockAllowsSwitchingUnreadConversation()
 await testUnreadConversationLockedContactOverridesGenericVisionContact()
 await testReliableConversationContactSurvivesLockedContactTtl()
@@ -5337,6 +5422,7 @@ await testPersonalChannelEmitsScreenshotCandidateWithoutMainVisionReplyParse()
 await testPersonalScreenshotCandidateTriggersForTinyCurrentChatChange()
 await testPersonalBackendScreenshotStreamClicksUnreadBeforeTinyCurrentChatChange()
 await testPersonalScreenshotCandidateIsSkippedDuringActiveReplySession()
+await testSemiModeProcessesUserSwitchedConversationDuringActiveReply()
 await testReplyTriggerRecognitionCreatesSingleAutoReplyMessage()
 await testOldVisibleCustomerMessageIsNotReportedAgainAfterDedupeWindow()
 await testRepliedCustomerMessageWithChangedUiIdDoesNotTriggerAfterRestart()

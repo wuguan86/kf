@@ -28,6 +28,7 @@ export interface ProcessVisualizerProps {
   onUpdateItem?: (id: string, newContent: string) => void
   onStoreItem?: (id: string, content: string) => void
   onSendItem?: (id: string, content: string, attachments: ProcessAttachment[]) => void
+  onMarkSentItem?: (id: string) => void
 }
 
 const StepIcons: Record<ProcessStep, React.ReactNode> = {
@@ -124,6 +125,12 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
     }
   }
 
+  const handleMarkSent = (item: ProcessItem) => {
+    if (onMarkSentItem) {
+      onMarkSentItem(item.id)
+    }
+  }
+
   if (items.length === 0) {
     return (
       <div className={styles.processVisualizerEmpty}>
@@ -213,6 +220,9 @@ export const ProcessVisualizer: React.FC<ProcessVisualizerProps> = ({ items, man
                     </button>
                     <button className={`${styles.actionBtn} ${styles.sendBtn}`} onClick={() => handleSend(item)}>
                       {ActionIcons.SEND} 发送
+                    </button>
+                    <button className={styles.actionBtn} onClick={() => handleMarkSent(item)}>
+                      {ActionIcons.CHECK} 已手动发送
                     </button>
                   </div>
                 )}

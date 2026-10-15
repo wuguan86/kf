@@ -2909,13 +2909,25 @@ export class WeChatNativeDriver {
       currentChatDiff.changedRatio >= minorCurrentChatChangeRatio
     const shouldParseCurrentChatChange = currentChatDiff.changed || shouldParseMinorCurrentChatChange
     let switchedUnreadConversation = false
-    if (shouldParseCurrentChatChange && this.shouldUseBackendScreenshotReplyStream() && this.activeReplySessionKey) {
+    if (
+      shouldParseCurrentChatChange &&
+      this.shouldUseBackendScreenshotReplyStream() &&
+      this.activeReplySessionKey &&
+      this.managedMode !== 'semi'
+    ) {
       console.info('当前会话仍在回复中，已跳过本轮截图自动回复触发', {
         activeReplySessionKey: this.activeReplySessionKey,
         digest: currentChatDiff.digest,
         changedRatio: currentChatDiff.changedRatio
       })
       return null
+    }
+    if (shouldParseCurrentChatChange && this.managedMode === 'semi' && this.activeReplySessionKey) {
+      console.info('半托管检测到当前聊天区变化，按用户手动切换处理新会话', {
+        previousReplySessionKey: this.activeReplySessionKey,
+        digest: currentChatDiff.digest,
+        changedRatio: currentChatDiff.changedRatio
+      })
     }
     this.lastScreenshotPng = screenshot.png
     if (shouldParseMinorCurrentChatChange) {
@@ -2947,7 +2959,12 @@ export class WeChatNativeDriver {
         return !this.isSkippedCandidateCoolingDown(item)
       })
       if (candidate) {
-        if (this.activeReplySessionKey) {
+        if (this.managedMode === 'semi') {
+          // 半托管由用户自行决定会话切换，程序只处理用户当前打开的会话。
+          console.info('半托管模式检测到未读会话，等待用户手动切换，不自动点击', {
+            candidateId: candidate.id
+          })
+        } else if (this.activeReplySessionKey) {
           console.info('当前会话仍在回复中，本轮仅扫描未读但不点击', {
             activeReplySessionKey: this.activeReplySessionKey,
             candidateId: candidate.id

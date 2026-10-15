@@ -495,7 +495,7 @@ public class DifyClient {
 
   public String runWorkflow(String apiKey, ObjectNode inputs, String user) {
     try {
-      log.info("Dify runWorkflow user={}", user);
+      log.info("调用Dify工作流，用户标识={}", user);
       ObjectNode request = objectMapper.createObjectNode();
       request.set("inputs", inputs);
       request.put("response_mode", "blocking");
@@ -508,7 +508,7 @@ public class DifyClient {
           .retrieve()
           .body(String.class);
       
-      log.info("Dify runWorkflow responseSize={}", responseJson == null ? 0 : responseJson.length());
+      log.info("Dify工作流响应长度={}", responseJson == null ? 0 : responseJson.length());
       
       if (responseJson == null) {
         return null;
@@ -517,26 +517,62 @@ public class DifyClient {
       JsonNode root = objectMapper.readTree(responseJson);
       if (root.hasNonNull("data") && root.get("data").hasNonNull("outputs")) {
         JsonNode outputs = root.get("data").get("outputs");
-        if (outputs.hasNonNull("text")) {
-            return outputs.get("text").asText();
-        } else if (outputs.hasNonNull("result")) {
-            JsonNode resultNode = outputs.get("result");
-            if (resultNode.isContainerNode()) {
-                return resultNode.toString();
-            }
-            return resultNode.asText();
-        } else {
-             // Fallback: return the whole outputs as string if we can't find specific field
-             return outputs.toString();
+        String workflowText = extractWorkflowText(outputs);
+        if (StringUtils.hasText(workflowText)) {
+          return workflowText;
         }
+        log.warn("Dify提示词优化工作流未返回有效文本，outputs={}", outputs);
       }
       return null;
     } catch (Exception ex) {
       if (ex instanceof RestClientResponseException rex) {
           throw toTransitException(rex);
       }
-      throw new RuntimeException("Failed to run workflow", ex);
+      throw new RuntimeException("调用Dify工作流失败", ex);
     }
+  }
+
+  /**
+   * 从工作流输出中提取文本，兼容不同 Dify 节点的输出字段，避免将空对象写回业务表单。
+   */
+  private String extractWorkflowText(JsonNode node) {
+    if (node == null || node.isMissingNode() || node.isNull()) {
+      return null;
+    }
+    if (node.isTextual()) {
+      String text = node.asText();
+      return StringUtils.hasText(text) && !"{}".equals(text.trim()) && !"[]".equals(text.trim())
+          ? text
+          : null;
+    }
+    if (node.isArray()) {
+      for (JsonNode item : node) {
+        String text = extractWorkflowText(item);
+        if (StringUtils.hasText(text)) {
+          return text;
+        }
+      }
+      return null;
+    }
+    if (node.isObject()) {
+      String[] preferredKeys = {
+          "text", "result", "output", "output_text", "optimizedPrompt", "optimized_prompt", "content", "answer"
+      };
+      for (String key : preferredKeys) {
+        String text = extractWorkflowText(node.get(key));
+        if (StringUtils.hasText(text)) {
+          return text;
+        }
+      }
+      Iterator<JsonNode> values = node.elements();
+      while (values.hasNext()) {
+        String text = extractWorkflowText(values.next());
+        if (StringUtils.hasText(text)) {
+          return text;
+        }
+      }
+    }
+    return null;
   }
 
   private RestClient restClient(String apiKey) {

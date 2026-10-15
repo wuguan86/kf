@@ -35,6 +35,75 @@ interface KnowledgeBase {
   status: string
 }
 
+const optimizedPromptKeys = [
+  'text',
+  'result',
+  'output',
+  'output_text',
+  'optimizedPrompt',
+  'optimized_prompt',
+  'content',
+  'answer',
+  'data',
+  'outputs'
+]
+
+/**
+ * 从不同版本的工作流响应中提取有效文本，避免把空对象或元数据写入角色设定。
+ */
+function extractOptimizedPrompt(value: unknown, depth = 0): string | null {
+  if (depth > 6 || value === null || value === undefined) {
+    return null
+  }
+
+  if (typeof value === 'string') {
+    const text = value.trim()
+    if (!text || text === '{}' || text === '[]') {
+      return null
+    }
+
+    if (text.startsWith('{') || text.startsWith('[') || text.startsWith('"')) {
+      try {
+        const parsed = JSON.parse(text) as unknown
+        const parsedText = extractOptimizedPrompt(parsed, depth + 1)
+        if (parsedText) {
+          return parsedText
+        }
+      } catch {
+        // 优化内容本身可能以 JSON 示例开头，解析失败时仍保留原始文本。
+      }
+    }
+
+    return value.replace(/\\n/g, '\n').trim()
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractOptimizedPrompt(item, depth + 1)
+      if (text) {
+        return text
+      }
+    }
+    return null
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    for (const key of optimizedPromptKeys) {
+      const text = extractOptimizedPrompt(record[key], depth + 1)
+      if (text) {
+        return text
+      }
+    }
+    const values = Object.values(record)
+    if (values.length === 1) {
+      return extractOptimizedPrompt(values[0], depth + 1)
+    }
+  }
+
+  return null
+}
+
 export default function SettingsPage(props: Props): JSX.Element {
   const { backendBaseUrl, tenantId, userToken } = props
   const { toast, showToast } = useToast()
@@ -222,60 +291,12 @@ export default function SettingsPage(props: Props): JSX.Element {
       }, { timeout: 60000 })
       console.log('【DEBUG】Dify 提示词优化响应:', response)
       
-      let optimizedText = ''
-      if (response && typeof response === 'string') {
-        optimizedText = response
-      } else if (response && typeof response === 'object') {
-        if (response.text) {
-          optimizedText = response.text
-        } else if (response.result) {
-          optimizedText = response.result
-        } else if (response.data) {
-          if (typeof response.data === 'string') {
-            optimizedText = response.data
-          } else if (response.data.text) {
-            optimizedText = response.data.text
-          } else if (response.data.data && response.data.data.text) {
-            optimizedText = response.data.data.text
-          }
-        }
-      }
+      const optimizedText = extractOptimizedPrompt(response)
 
       console.log('【DEBUG】提取到的优化文本:', optimizedText)
 
       if (optimizedText) {
-        // 尝试解析可能嵌套的 JSON 或带引号的字符串
-        try {
-          if (typeof optimizedText === 'string' && (optimizedText.trim().startsWith('{') || optimizedText.trim().startsWith('"'))) {
-            const parsed = JSON.parse(optimizedText)
-            if (typeof parsed === 'string') {
-              optimizedText = parsed
-            } else if (typeof parsed === 'object' && parsed !== null) {
-              if (parsed.text) optimizedText = parsed.text
-              else if (parsed.result) optimizedText = parsed.result
-              else if (parsed.output) optimizedText = parsed.output
-              else if (parsed.output_text) optimizedText = parsed.output_text
-              else if (parsed.data) optimizedText = typeof parsed.data === 'string' ? parsed.data : JSON.stringify(parsed.data)
-              else {
-                const firstKey = Object.keys(parsed)[0]
-                if (firstKey && typeof parsed[firstKey] === 'string') {
-                  optimizedText = parsed[firstKey]
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('【DEBUG】优化结果 JSON 解析失败，保留原始字符串:', e)
-        }
-        
-        // 处理可能遗留的转义换行符
-        if (typeof optimizedText === 'string') {
-          optimizedText = optimizedText.replace(/\\n/g, '\n')
-        }
-        
         console.log('【DEBUG】最终写入表单的优化文本:', optimizedText)
-        
-        // 直接更新表单数据
         setFormData(prev => ({
           ...prev,
           content: optimizedText
@@ -451,7 +472,6 @@ export default function SettingsPage(props: Props): JSX.Element {
                     onClick={handleOptimizePrompt}
                     disabled={isOptimizing}
                   >
-                    <span className={styles.pillIcon}>{isOptimizing ? '...' : 'AI'}</span>
                     {isOptimizing ? '优化中...' : 'AI优化'}
                   </button>
                 </div>

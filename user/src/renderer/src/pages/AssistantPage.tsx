@@ -663,6 +663,8 @@ function AssistantPage(props: Props): JSX.Element {
   const lastProcessedByContactRef = useRef<Map<string, { text: string; at: number }>>(new Map())
   const outputStoreContextRef = useRef<Map<string, { contactKey: string; contact: string; customerMessage: string; source: 'personal' | 'enterprise'; attachments?: ProcessAttachment[] }>>(new Map())
   const streamAbortControllersRef = useRef<Map<string, AbortController>>(new Map())
+  // 半托管模式下，AI 已生成回复但用户尚未确认发送时，必须继续锁定当前会话。
+  const pendingSemiReplySessionsRef = useRef<Set<string>>(new Set())
   const pollFailureCountRef = useRef(0)
   const wechatChannelRef = useRef<WeChatChannel>('personal')
 
@@ -1292,6 +1294,11 @@ function AssistantPage(props: Props): JSX.Element {
                   source,
                   attachments: pendingAttachments
                 })
+                if (managedModeRef.current === 'semi') {
+                  // 输出完成只代表待发送内容准备好，半托管必须等用户确认发送后才能切换会话。
+                  pendingSemiReplySessionsRef.current.add(sessionKey)
+                  console.info('半托管回复已生成，继续锁定当前会话等待确认发送', { sessionKey })
+                }
               }
 
               const reply = cleanOutput
@@ -1442,13 +1449,18 @@ function AssistantPage(props: Props): JSX.Element {
     } finally {
       setIsSending(false)
       streamAbortControllersRef.current.delete(sessionKey)
-      try {
-        const api = (window as any).api
-        if (api?.notifyReplySessionFinished) {
-          await api.notifyReplySessionFinished({ sessionKey })
+      const waitingForSemiSend = managedModeRef.current === 'semi' && pendingSemiReplySessionsRef.current.has(sessionKey)
+      if (waitingForSemiSend) {
+        console.info('半托管回复仍待用户确认发送，暂不释放当前会话锁', { sessionKey })
+      } else {
+        try {
+          const api = (window as any).api
+          if (api?.notifyReplySessionFinished) {
+            await api.notifyReplySessionFinished({ sessionKey })
+          }
+        } catch (unlockError) {
+          console.warn('通知主进程释放回复会话失败', { sessionKey, unlockError })
         }
-      } catch (unlockError) {
-        console.warn('通知主进程释放回复会话失败', { sessionKey, unlockError })
       }
       eventBus.emit('points-updated')
     }
@@ -1748,6 +1760,17 @@ function AssistantPage(props: Props): JSX.Element {
           trigger_reply: false
         })
       }
+      try {
+        if (api?.notifyReplySessionFinished) {
+          await api.notifyReplySessionFinished({ sessionKey: sourceContext.contactKey })
+        }
+        pendingSemiReplySessionsRef.current.delete(sourceContext.contactKey)
+      } catch (unlockError) {
+        console.warn('半托管确认发送后释放回复会话失败', {
+          sessionKey: sourceContext.contactKey,
+          unlockError
+        })
+      }
       setLastReplied({
         contact: sourceContext.contact,
         text: normalizedReply || `[附件] ${safeAttachments.map(item => item.name || item.materialId).join(', ')}`,
@@ -1758,6 +1781,34 @@ function AssistantPage(props: Props): JSX.Element {
       const reason = error?.message || String(error || '未知原因')
       console.error('半托管确认发送失败', { sessionKey: sourceContext.contactKey, reason, error })
       showToast(`发送失败：${reason}`, 'error')
+    }
+  }
+
+  const handleMarkSemiReplySent = async (id: string) => {
+    if (managedModeRef.current !== 'semi') {
+      return
+    }
+    const sourceContext = outputStoreContextRef.current.get(id)
+    if (!sourceContext?.contactKey) {
+      showToast('无法标记：缺少会话上下文', 'error')
+      return
+    }
+    const api = (window as any).api
+    try {
+      if (api?.notifyReplySessionFinished) {
+        await api.notifyReplySessionFinished({ sessionKey: sourceContext.contactKey })
+      }
+      pendingSemiReplySessionsRef.current.delete(sourceContext.contactKey)
+      console.info('用户已确认手动发送，释放半托管当前会话锁', {
+        sessionKey: sourceContext.contactKey
+      })
+      showToast('已标记发送完成，可以处理新的消息', 'success')
+    } catch (error: any) {
+      console.error('标记半托管手动发送完成失败', {
+        sessionKey: sourceContext.contactKey,
+        error
+      })
+      showToast(`标记发送完成失败：${error?.message || '未知错误'}`, 'error')
     }
   }
 
@@ -1790,6 +1841,7 @@ function AssistantPage(props: Props): JSX.Element {
           }
         })
         streamAbortControllersRef.current.clear()
+        pendingSemiReplySessionsRef.current.clear()
         await syncManagedModeToBridge('full')
         await api.stopWeChatBridge()
       } catch (e) {
@@ -1961,6 +2013,7 @@ function AssistantPage(props: Props): JSX.Element {
                       onUpdateItem={handleUpdateProcessItem}
                       onStoreItem={handleStoreProcessItem}
                       onSendItem={handleSendProcessItem}
+                      onMarkSentItem={handleMarkSemiReplySent}
                     />
                   ) : (
                     <div className={styles.aiResponseBox}>
